@@ -137,7 +137,7 @@ func TestPruneCountsCascadedEventsAndSamples(t *testing.T) {
 			t.Fatalf("append events failed: %v", err)
 		}
 		if err := store.AppendRunSamples(ctx, run.ID, []task.Sample{
-			{At: time.Now(), Current: 1, RatePerMinute: 60},
+			{At: time.Now(), Current: 1, ThroughputPerMinute: 60},
 		}); err != nil {
 			t.Fatalf("append samples failed: %v", err)
 		}
@@ -187,8 +187,8 @@ func TestPruneSampleAgeLeavesTheRunInPlace(t *testing.T) {
 	run := createRun(t, store, ensureTask(t, store, 1), task.StatusRunning, 1)
 
 	if err := store.AppendRunSamples(ctx, run.ID, []task.Sample{
-		{At: time.Now().Add(-8 * 24 * time.Hour), Current: 1, RatePerMinute: 10},
-		{At: time.Now(), Current: 9, RatePerMinute: 90},
+		{At: time.Now().Add(-8 * 24 * time.Hour), Current: 1, ThroughputPerMinute: 10},
+		{At: time.Now(), Current: 9, ThroughputPerMinute: 90},
 	}); err != nil {
 		t.Fatalf("append samples failed: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestPruneWithNonPositivePolicyRemovesNothing(t *testing.T) {
 				run := finishRun(t, store, createRun(t, store, taskID, task.StatusRunning, int64(i)),
 					task.StatusCompleted, ancient)
 				if err := store.AppendRunSamples(ctx, run.ID, []task.Sample{
-					{At: ancient, Current: 1, RatePerMinute: 60},
+					{At: ancient, Current: 1, ThroughputPerMinute: 60},
 				}); err != nil {
 					t.Fatalf("append samples failed: %v", err)
 				}

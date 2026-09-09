@@ -30,14 +30,15 @@ const (
 )
 
 // RunSample 是吞吐曲线上的一个点：那一刻的计数，与**自上一个点以来**的吞吐。
-//
-// RatePerMinute 与运行卡片上那个 rate_per_minute 不是同一个数，两者答的不是同一个问题：
-// 卡片上那个是这次运行至今的平均速率（分母里扣掉了**暂停**），这里这个是那一段窗口的吞吐
-// （分母就是墙上时间）。暂停期间一条都没处理，因此这里如实是 0——那正是曲线要显示的东西。
 type RunSample struct {
-	At            time.Time `json:"at"`
-	Current       int       `json:"current"`
-	RatePerMinute float64   `json:"rate_per_minute"`
+	At      time.Time `json:"at"`
+	Current int       `json:"current"`
+	// ThroughputPerMinute 量的是**自上一个点以来那一段**处理了多少条，折成每分钟多少条。
+	//
+	// **分母就是那一段的墙上时间**，暂停一秒都不扣：那几段里一条都没处理，它因此如实是 0——
+	// 那正是曲线要显示的东西。运行卡片上那个 rate_per_minute（RunStatus.RatePerMinute）是这次
+	// 运行至今的平均速率、分母里扣掉暂停，两者答的不是同一个问题，名字因此也不同。
+	ThroughputPerMinute float64 `json:"throughput_per_minute"`
 }
 
 // RunSamplesResponse 是运行详情那条吞吐曲线按需拉回来的东西。
@@ -149,9 +150,9 @@ func (e *taskEngine) runSamples(ctx context.Context, runID int64, retentionDays 
 	points := make([]RunSample, 0, len(samples))
 	for _, sample := range samples {
 		points = append(points, RunSample{
-			At:            sample.At,
-			Current:       sample.Current,
-			RatePerMinute: sample.RatePerMinute,
+			At:                  sample.At,
+			Current:             sample.Current,
+			ThroughputPerMinute: sample.ThroughputPerMinute,
 		})
 	}
 	// 截断时一律不提过期：头上那一刀是**我们自己截的**，与保留期无关，而界面另有一句话说它。

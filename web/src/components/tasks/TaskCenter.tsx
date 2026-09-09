@@ -706,11 +706,11 @@ function RunThroughputCurve({ data }: { data: RunSamplesResponse }) {
   const to = new Date(samples[samples.length - 1].at).getTime();
   // 单点（或同一毫秒里的几个点）跨度为零：夹到 1 只是别让除法炸掉，画出来仍是最左边一个点。
   const span = Math.max(1, to - from);
-  const peak = samples.reduce((max, sample) => Math.max(max, sample.rate_per_minute), 0);
+  const peak = samples.reduce((max, sample) => Math.max(max, sample.throughput_per_minute), 0);
   const pointsOf = (segment: RunSample[]) => segment
     .map((sample) => {
       const x = ((new Date(sample.at).getTime() - from) / span) * CURVE_WIDTH;
-      const y = CURVE_HEIGHT - (peak > 0 ? (sample.rate_per_minute / peak) * CURVE_HEIGHT : 0);
+      const y = CURVE_HEIGHT - (peak > 0 ? (sample.throughput_per_minute / peak) * CURVE_HEIGHT : 0);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(' ');

@@ -126,7 +126,7 @@ export interface RunEventsResponse {
 export interface RunSample {
   at: string;
   current: number;
-  rate_per_minute: number;
+  throughput_per_minute: number;
 }
 
 export interface RunSamplesResponse {

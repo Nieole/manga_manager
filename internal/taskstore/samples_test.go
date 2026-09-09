@@ -1,6 +1,6 @@
 // 这些用例守的是只有真 SQLite 才答得出的那一半：**采样**点的每一格原样读得回来、
-// 读回顺序是时刻升序（曲线按它画），以及条数上限截的是**最近的**那一段。
-// 采样随运行级联删除由 cascade_test.go 守，按时长裁剪由 prune_test.go 守。
+// 读回顺序是时刻升序（曲线按它画）、条数上限截的是**最近的**那一段，以及存量库上
+// 吞吐那一列改得过来。级联删除由 cascade_test.go 守，按时长裁剪由 prune_test.go 守。
 
 package taskstore
 
@@ -18,9 +18,9 @@ func appendSampleSeries(t *testing.T, store *Store, runID int64, at time.Time, s
 	samples := make([]task.Sample, 0, count)
 	for i := 1; i <= count; i++ {
 		samples = append(samples, task.Sample{
-			At:            at.Add(time.Duration(i) * step),
-			Current:       i,
-			RatePerMinute: float64(i),
+			At:                  at.Add(time.Duration(i) * step),
+			Current:             i,
+			ThroughputPerMinute: float64(i),
 		})
 	}
 	if err := store.AppendRunSamples(context.Background(), runID, samples); err != nil {
@@ -40,8 +40,8 @@ func TestRunSamplesRoundTripEveryColumn(t *testing.T) {
 
 	at := time.Now().Truncate(time.Millisecond).UTC()
 	want := []task.Sample{
-		{At: at, Current: 12, RatePerMinute: 72.5},
-		{At: at.Add(10 * time.Second), Current: 12, RatePerMinute: 0},
+		{At: at, Current: 12, ThroughputPerMinute: 72.5},
+		{At: at.Add(10 * time.Second), Current: 12, ThroughputPerMinute: 0},
 	}
 	if err := store.AppendRunSamples(ctx, run.ID, want); err != nil {
 		t.Fatalf("落采样失败: %v", err)
@@ -134,5 +134,57 @@ func TestRunSamplesOfAnotherRunNeverLeakIn(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("读回 %d 个点, want 2 —— 别的运行的点混进来了", len(got))
+	}
+}
+
+// TestMigrateRenamesTheThroughputColumn 守存量库上吞吐那一列改得过来，且改名不带走已经落下的点。
+//
+// 存量库停在旧列名上，而写入面已经按新名字插入：少了改名那一步，这些库每落一个点都会撞上
+// 「没有这一列」——而采样写不进去只告警，症状是曲线毫无声息地一直空着。
+func TestMigrateRenamesTheThroughputColumn(t *testing.T) {
+	ctx := context.Background()
+	db := newDBForTest(t)
+	if err := Migrate(db); err != nil {
+		t.Fatalf("首次迁移失败: %v", err)
+	}
+	// 把库退回改名之前的样子。RENAME 是这一步唯一忠实的写法：别的列、索引与那条外键都原样留着，
+	// 手抄一份建表 DDL 只会另建一张形状可能已经漂了的表。
+	if _, err := db.Exec(
+		`ALTER TABLE run_samples RENAME COLUMN throughput_per_minute TO rate_per_minute`); err != nil {
+		t.Fatalf("退回改名前的形状失败: %v", err)
+	}
+
+	store := New(db)
+	taskID := ensureTask(t, store, 1)
+	run := createRun(t, store, taskID, task.StatusRunning, 1)
+	at := time.Now().Truncate(time.Millisecond).UTC()
+	if _, err := db.Exec(`INSERT INTO run_samples (run_id, at, current, rate_per_minute) VALUES (?, ?, ?, ?)`,
+		run.ID, at.UnixMilli(), 12, 72.5); err != nil {
+		t.Fatalf("按旧形状落一个点失败: %v", err)
+	}
+
+	// 跑两次：第二次时列已经叫新名字，改名那一句必须放过它。
+	for i := 1; i <= 2; i++ {
+		if err := Migrate(db); err != nil {
+			t.Fatalf("第 %d 次迁移失败: %v", i, err)
+		}
+	}
+
+	got, err := store.ListRunSamples(ctx, run.ID, 0)
+	if err != nil {
+		t.Fatalf("读回采样失败: %v", err)
+	}
+	want := task.Sample{At: at, Current: 12, ThroughputPerMinute: 72.5}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("改名之后读回 %+v，想要 [%+v]", got, want)
+	}
+	var leftover int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('run_samples') WHERE name = 'rate_per_minute'`,
+	).Scan(&leftover); err != nil {
+		t.Fatalf("读 run_samples 的列失败: %v", err)
+	}
+	if leftover != 0 {
+		t.Fatalf("旧列名还留在表上：改名成了加列，同一个数会分头落在两列里")
 	}
 }

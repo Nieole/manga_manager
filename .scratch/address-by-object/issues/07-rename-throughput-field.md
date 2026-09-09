@@ -8,12 +8,12 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 采样载荷上的每分钟速率字段改名为 `throughput_per_minute`；运行卡片上那个**不改**
-- [ ] 领域侧、落盘侧与 api 侧的对应字段名一起改
-- [ ] 两处符号 doc 各写明自己量的是什么、分母是什么
-- [ ] `go run ./cmd/tsgen` 重生契约，CI 漂移检查过；前端曲线组件跟着改
-- [ ] `CHANGELOG.md` 记一条——这是一次对外 JSON 字段变更（v1.6.2 已发布），唯一消费方是本仓自己的前端
-- [ ] 曲线渲染行为不变，既有用例全绿
-- [ ] 后端与前端门禁全绿
+- [x] 采样载荷上的每分钟速率字段改名为 `throughput_per_minute`；运行卡片上那个**不改**
+- [x] 领域侧、落盘侧与 api 侧的对应字段名一起改
+- [x] 两处符号 doc 各写明自己量的是什么、分母是什么
+- [x] `go run ./cmd/tsgen` 重生契约，CI 漂移检查过；前端曲线组件跟着改
+- [x] `CHANGELOG.md` 记一条——这是一次对外 JSON 字段变更（v1.6.2 已发布），唯一消费方是本仓自己的前端
+- [x] 曲线渲染行为不变，既有用例全绿
+- [x] 后端与前端门禁全绿

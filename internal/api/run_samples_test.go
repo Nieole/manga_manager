@@ -75,9 +75,9 @@ func TestRunSamplesDrawTheThroughputOfThisRun(t *testing.T) {
 	}{{120, 720}, {120, 0}, {180, 360}}
 	for i, expected := range want {
 		got := payload.Samples[i]
-		if got.Current != expected.current || got.RatePerMinute != expected.rate {
+		if got.Current != expected.current || got.ThroughputPerMinute != expected.rate {
 			t.Errorf("第 %d 个点是 %d 条 / %.2f 每分钟，想要 %d 条 / %.2f 每分钟",
-				i+1, got.Current, got.RatePerMinute, expected.current, expected.rate)
+				i+1, got.Current, got.ThroughputPerMinute, expected.current, expected.rate)
 		}
 	}
 }
@@ -254,7 +254,7 @@ func TestRunSamplesAreNotPushed(t *testing.T) {
 		t.Fatalf("取一次点投出了 %d 帧，想要 0 帧：%v", len(frames)-before, frames[before:])
 	}
 	for _, frame := range frames {
-		if strings.Contains(frame, "rate_per_minute\":") && strings.Contains(frame, "samples") {
+		if strings.Contains(frame, "throughput_per_minute\":") && strings.Contains(frame, "samples") {
 			t.Fatalf("推送通道上出现了采样载荷: %s", frame)
 		}
 	}

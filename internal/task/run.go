@@ -237,12 +237,14 @@ type Event struct {
 	Count int64
 }
 
-// Sample 是按固定间隔对一次运行的计数与速率取的一个点，连起来是吞吐曲线。
+// Sample 是按固定间隔对一次运行的计数与吞吐取的一个点，连起来是吞吐曲线。
 // 它只用来看趋势：计数的事实来源是运行行本身，任何判断都不得依赖采样。
 type Sample struct {
-	At            time.Time
-	Current       int
-	RatePerMinute float64
+	At      time.Time
+	Current int
+	// ThroughputPerMinute 是**自上一个点以来那一段**的吞吐，分母是墙上时间（算它的是 throughput，
+	// 分母为什么不扣暂停也写在那里）。
+	ThroughputPerMinute float64
 }
 
 // SideData 是一次运行的侧数据读回来的形状：四张键值侧表各占一格。

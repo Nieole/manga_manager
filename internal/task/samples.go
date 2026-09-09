@@ -94,9 +94,9 @@ func (e *Engine) sampleRunLocked(ctx context.Context, run Run, now time.Time, in
 	}
 	e.samples[run.ID] = sampleGate{at: now, current: run.Current}
 	sample := Sample{
-		At:            now,
-		Current:       run.Current,
-		RatePerMinute: throughput(run.Current-previous.current, window),
+		At:                  now,
+		Current:             run.Current,
+		ThroughputPerMinute: throughput(run.Current-previous.current, window),
 	}
 	if err := e.store.AppendRunSamples(ctx, run.ID, []Sample{sample}); err != nil {
 		slog.Warn("Failed to persist a run sample", "run_id", run.ID, "error", err)
