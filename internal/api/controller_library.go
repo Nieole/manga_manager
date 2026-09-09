@@ -283,8 +283,10 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool, tri
 
 // startLibraryScanRun 与 launchLibraryScanTask 是同一次发起，另外交回这次发起落地成了什么。
 //
-// 只有文件监听器需要它：它要等这次扫描跑完（见 runWatchedLibraryScan），而**合并**掉的那次
-// 发起任务体根本不会执行，等在它身上就是永远等下去。
+// 两类调用方需要它，理由是同一条——被**合并**掉的那次，任务体根本不会执行：文件监听器要等这次
+// 扫描跑完（见 runWatchedLibraryScan），等在它身上就是永远等下去；手动扫描端点要据此回话
+// （见 scanLibrary），不看这一格就只能无条件回「已发起」。其余调用方发起完就不过问结果，
+// 走那层薄壳即可。
 func (c *Controller) startLibraryScanRun(lib database.Library, force bool, trigger task.Trigger) (task.Launched, error) {
 	cfg := c.currentConfig()
 	storagePolicy := config.ResolveStoragePolicy(cfg, lib.Path)
@@ -328,6 +330,28 @@ func (c *Controller) startLibraryScanRun(lib database.Library, force bool, trigg
 	})
 }
 
+// scanCoalescedNoticeCode 交出这次资料库扫描发起该回给用户的那句话的 i18n **文案码**，
+// 空串表示没有话要回、照常答「已发起」。
+//
+// 三个条件缺一不可，而**发起方**是最容易漏掉的那一个：守护扫描与监听扫描同样会被**合并**，
+// 但它们没有人在等一句回话——守护 tick 什么都不做，监听器按既有的约定出口重新排期
+// （见 awaitWatchedRun）。不带**强制**的手动发起也不回：并进的那条跑的正是同一件事，
+// 用户要的东西已经排在那里了；只有强制那一次是「跑的和我要的不是一回事」。
+func scanCoalescedNoticeCode(launched task.Launched, force bool, trigger task.Trigger) string {
+	if !launched.Coalesced || !force || trigger != task.TriggerManual {
+		return ""
+	}
+	return "library.scan.force_coalesced"
+}
+
+// scanLibrary 是手动扫描端点。它走 startLibraryScanRun 而不是那层薄壳，因为这里有人在等答案。
+//
+// 这个库已经排着一条扫描时，本次发起被**合并**进那一条：本次的声明与任务体一起作废，跑的是
+// 先排上那份。带着**强制**来的用户因此什么都没得到——他要的重扫并没有发生，而排在前面那条
+// 不是强制的。这一种回一句说明，其余照常回「已发起」。
+//
+// 合并的语义在这里一个字不改：不顶替排队那条的声明、不新建第二条运行、不把**强制**立成**变体**。
+// 变了的只有这次发起交回给用户的那句话。
 func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libID, err := parseID(r, "libraryId")
@@ -344,8 +368,16 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 
 	forceParam := r.URL.Query().Get("force")
 	isForce := forceParam == "true"
-	if err := c.launchLibraryScanTask(lib, isForce, task.TriggerManual); err != nil {
+	launched, err := c.startLibraryScanRun(lib, isForce, task.TriggerManual)
+	if err != nil {
 		writeTaskLaunchError(w, err, "A library scan is already running", "Failed to start library scan")
+		return
+	}
+	if code := scanCoalescedNoticeCode(launched, isForce, task.TriggerManual); code != "" {
+		jsonResponse(w, http.StatusOK, map[string]string{
+			"status":  "Scan coalesced",
+			"message": apiText(requestLocale(r), code),
+		})
 		return
 	}
 
