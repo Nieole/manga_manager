@@ -4,7 +4,7 @@
  * 丢过一帧就少一条，而少一条数出来的槽位占用不会报错，只会静静少 1。
  */
 
-import type { RunLive, RunLiveSummary, RunStatus } from '../api/generated';
+import type { RunLive, RunLiveSummary, RunSnapshot } from '../api/generated';
 import { isLiveRunStatus } from './runStatus';
 
 /**
@@ -13,7 +13,7 @@ import { isLiveRunStatus } from './runStatus';
  * 判据与后端 `task.OrderManualFirst` 逐字同形：只有**发起方**恰好是手动的那一组排在前。
  * 每条运行都带发起方（它是运行行上的必填列），缺了的按「其余」算，与后端 SQL 一致。
  */
-function manualFirstRank(run: RunStatus): number {
+function manualFirstRank(run: RunSnapshot): number {
   return run.trigger === 'manual' ? 0 : 1;
 }
 
@@ -26,7 +26,7 @@ function manualFirstRank(run: RunStatus): number {
  * 去重键是**运行标识**而不是**任务键**：同一个任务键如今有多条运行，按键去重会让新一次运行的
  * 每一帧把上一次那条摘掉。那几个汇总数不在这里改——它们由**实况汇总**帧说了算。
  */
-export function applyRunToLive(live: RunLive, run: RunStatus): RunLive {
+export function applyRunToLive(live: RunLive, run: RunSnapshot): RunLive {
   const withoutRun = live.runs.filter((item) => item.run_id !== run.run_id);
   // sort 是稳定的：同一组里的相对次序（最近有动静的在前）原样保留。
   const runs = isLiveRunStatus(run.status)

@@ -36,7 +36,7 @@ type RunSample struct {
 	// ThroughputPerMinute 量的是**自上一个点以来那一段**处理了多少条，折成每分钟多少条。
 	//
 	// **分母就是那一段的墙上时间**，暂停一秒都不扣：那几段里一条都没处理，它因此如实是 0——
-	// 那正是曲线要显示的东西。运行卡片上那个 rate_per_minute（RunStatus.RatePerMinute）是这次
+	// 那正是曲线要显示的东西。运行卡片上那个 rate_per_minute（RunSnapshot.RatePerMinute）是这次
 	// 运行至今的平均速率、分母里扣掉暂停，两者答的不是同一个问题，名字因此也不同。
 	ThroughputPerMinute float64 `json:"throughput_per_minute"`
 }

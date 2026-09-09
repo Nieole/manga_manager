@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { Activity, RefreshCw } from 'lucide-react';
-import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskRunHistory, type TaskTarget, type RunDetailView, type RunLive, type RunStatus, type TaskSummary } from '../components/tasks/TaskCenter';
+import { TaskCenter, type TaskAction, type TaskCenterFilters, type TaskRunHistory, type TaskTarget, type RunDetailView, type RunLive, type RunSnapshot, type TaskSummary } from '../components/tasks/TaskCenter';
 import type { RunEventsResponse, RunPush, RunSamplesResponse } from '../api/generated';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useToast } from '../components/ToastProvider';
@@ -42,7 +42,7 @@ interface BackgroundTasksProps {
   embedded?: boolean;
   // onViewRawLogs 是「原始日志」那个入口：按**这一次运行**过滤全局日志。详情面板不走它——
   // 曲线与事件流是这条运行自己的东西，本页按需取回后交给任务中心渲染。
-  onViewRawLogs?: (run: RunStatus) => void;
+  onViewRawLogs?: (run: RunSnapshot) => void;
 }
 
 export default function BackgroundTasks({ embedded = false, onViewRawLogs }: BackgroundTasksProps = {}) {
@@ -134,7 +134,7 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
     historyRequestIDRef.current = requestID;
     setHistory({ taskId, loading: true });
     try {
-      const res = await apiClient.get<RunStatus[]>(`/api/system/tasks?task_id=${taskId}&limit=20`);
+      const res = await apiClient.get<RunSnapshot[]>(`/api/system/tasks?task_id=${taskId}&limit=20`);
       if (requestID !== historyRequestIDRef.current) return;
       setHistory({ taskId, runs: Array.isArray(res.data) ? res.data : [] });
     } catch (error) {
@@ -176,7 +176,7 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
 
   // 再点一次同一张卡片就是关掉它，并让在途的响应作废。认卡片而不是认运行：同一条运行会同时
   // 出现在实况区与展开着的历次运行里，认运行的话两张卡片下面各画一份。
-  const toggleRunDetail = useCallback((run: RunStatus, cardId: string) => {
+  const toggleRunDetail = useCallback((run: RunSnapshot, cardId: string) => {
     if (detail?.cardId === cardId) {
       detailRequestIDRef.current += 1;
       setDetail(undefined);
@@ -259,7 +259,7 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
   // 三个控制动作作用在**运行**上，按运行 id 寻址；重试作用在**任务**上，按**任务 id** 寻址。
   // 同一个任务此刻可以有两条仍会变化的运行（一条在跑、一条排队），按任务发控制请求就答不出
   // 用户按的是哪一张卡片上的按钮。忙碌标记同理按运行分，否则一条排队会把在跑那条的按钮一起灰掉。
-  const runTaskAction = async (run: RunStatus, action: TaskAction) => {
+  const runTaskAction = async (run: RunSnapshot, action: TaskAction) => {
     const onTask = action === 'retry';
     setTaskActionKey(onTask ? `${run.task_id}:${action}` : `${run.run_id}:${action}`);
     try {

@@ -66,7 +66,7 @@ type taskSeed struct {
 	// 可播报进度。否则取 completed / cancelled / failed 之一，播种返回时该**终态**已经落定。
 	Terminal string
 
-	// TerminalCode 与 TerminalParams 是终态文案；FailError 只在失败终态下生效，落进 RunStatus.Error。
+	// TerminalCode 与 TerminalParams 是终态文案；FailError 只在失败终态下生效，落进 RunSnapshot.Error。
 	TerminalCode   string
 	TerminalParams map[string]string
 	FailError      string

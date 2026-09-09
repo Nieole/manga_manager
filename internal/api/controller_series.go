@@ -473,7 +473,7 @@ type SeriesContextResponse struct {
 	Relations         []SeriesRelation        `json:"relations"`
 	MetadataReview    metadataReviewResponse  `json:"metadata_review"`
 	MetadataSummary   SeriesMetadataSummary   `json:"metadata_summary"`
-	FailedTasks       []RunStatus             `json:"failed_tasks"`
+	FailedTasks       []RunSnapshot           `json:"failed_tasks"`
 	FailedTaskSummary SeriesFailedTaskSummary `json:"failed_task_summary"`
 	Continue          SeriesContinue          `json:"continue"`
 	// MetadataVersion 是本次下发的元数据版本，用户按下保存时原样带回（见 seriesMetadataVersion）。
@@ -584,7 +584,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		metadataReview = emptyMetadataReviewResponse()
 	}
 
-	failedTasks, err := c.taskEngine.listRunStatuses(ctx, taskFilters{
+	failedTasks, err := c.taskEngine.listRunSnapshots(ctx, taskFilters{
 		Status:  "failed",
 		Scope:   taskScopeSeries,
 		ScopeID: &seriesID,
@@ -592,10 +592,10 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("Failed to fetch failed tasks for context", "series_id", seriesID, "error", err)
-		failedTasks = []RunStatus{}
+		failedTasks = []RunSnapshot{}
 	}
 	if failedTasks == nil {
-		failedTasks = []RunStatus{}
+		failedTasks = []RunSnapshot{}
 	}
 
 	jsonResponse(w, http.StatusOK, SeriesContextResponse{
@@ -728,7 +728,7 @@ func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []Seri
 	return items
 }
 
-func summarizeFailedTasks(tasks []RunStatus) SeriesFailedTaskSummary {
+func summarizeFailedTasks(tasks []RunSnapshot) SeriesFailedTaskSummary {
 	summary := SeriesFailedTaskSummary{Count: len(tasks)}
 	for _, task := range tasks {
 		if summary.LatestAt == nil || task.UpdatedAt.After(*summary.LatestAt) {

@@ -23,7 +23,7 @@ import (
 //
 // 「重启」是拿同一份存储另起一个 Controller：**运行时句柄**不跨实例，新实例只能从库里读回那条
 // 还写着活动态的运行——正是重启恢复要处置的东西。
-func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)) RunStatus {
+func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)) RunSnapshot {
 	t.Helper()
 	controller, store, _, tempDir := newTestController(t)
 
@@ -49,7 +49,7 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)
 // 真实请求把任务列表读回来。解析结果与原始载荷一起交出：某个字段在不在，只有载荷答得出。
 //
 // 断言库里此刻只剩那一条运行：多出来的那条会让调用方的下标断言落在别的运行上，而它们都只看 [0]。
-func restartAndListInterrupted(t *testing.T, prev *Controller, store database.Store, tempDir string) ([]RunStatus, string) {
+func restartAndListInterrupted(t *testing.T, prev *Controller, store database.Store, tempDir string) ([]RunSnapshot, string) {
 	t.Helper()
 	reloaded := restartController(t, prev, store, tempDir)
 	disableResume(reloaded)
@@ -62,7 +62,7 @@ func restartAndListInterrupted(t *testing.T, prev *Controller, store database.St
 	}
 	body := rec.Body.String()
 
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.Unmarshal([]byte(body), &tasks); err != nil {
 		t.Fatalf("解析任务列表失败: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestInterruptedRunIsNotListedTwice(t *testing.T) {
 	disableResume(reloaded)
 	reloaded.taskEngine.markInterrupted(context.Background())
 
-	tasks, err := reloaded.taskEngine.listRunStatuses(context.Background(), taskFilters{})
+	tasks, err := reloaded.taskEngine.listRunSnapshots(context.Background(), taskFilters{})
 	if err != nil {
 		t.Fatalf("列任务失败: %v", err)
 	}

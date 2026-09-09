@@ -6,10 +6,10 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { RunLive, RunStatus } from '../api/generated';
+import type { RunLive, RunSnapshot } from '../api/generated';
 import { applyLiveSummary, applyRunToLive } from './runLive';
 
-function run(overrides: Partial<RunStatus>): RunStatus {
+function run(overrides: Partial<RunSnapshot>): RunSnapshot {
   return {
     run_id: 1,
     task_id: 1,

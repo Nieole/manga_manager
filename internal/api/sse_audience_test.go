@@ -197,7 +197,7 @@ func (r *sseAudienceRig) runFailingTask(t *testing.T, secretPath string) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		ok := taskExists(t, r.controller.taskEngine, key)
-		var task RunStatus
+		var task RunSnapshot
 		if ok {
 			task = currentTask(t, r.controller.taskEngine, key)
 		}

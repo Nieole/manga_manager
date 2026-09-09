@@ -413,3 +413,165 @@
 - **不处理会怎样：** 留着就是 `?task=undefined` 这类形状。选 B 是新功能，属于另一张票。
 - **归谁裁：** 下一次结算
 - **状态：** open
+
+## D31 · 票 04 · 改名扫到哪：把类型名拼进自己名字的那几个函数
+
+- **问：** 票面第 1 条只点名「运行快照结构体」。但 `internal/api` 里有几个标识符把旧类型名
+  逐字拼在自己名字里：`taskEngine.listRunStatuses`、`taskEngine.runStatusFrom`、
+  用例里的 `TestRunStatusTracksScrapeMetricsAndLabels`。它们不是那个结构体，却会让
+  `grep RunStatus` 继续在 `internal/api` 里命中，也就继续答不出「这是快照还是状态枚举」。
+- **已做：** 这三个跟着改（`listRunSnapshots` / `runSnapshotFrom` /
+  `TestRunSnapshotTracksScrapeMetricsAndLabels`），理由与 D51 采纳的那条一样——按「是不是那个
+  结构体本身」切一刀，会在同一个包里留下两个名字。`runSnapshotFrom` 里那个装返回值的局部变量
+  原名 `status`，一并改成 `snap`：它与同一个复合字面量里的 `Status:` 字段正是票面立论说的
+  「同一个函数里看见两个」。**没跟着改的三类**：`statusesFrom` / `firstStatusFor` /
+  `latestStatusByKey`（名字里只有 `Status`，没有类型名）、`waitForRunStatus`（它等的是
+  状态串，对上的是留下不改的 `task.RunStatus`）、`web/src/utils/runStatus.ts` 那一族
+  `isActiveRunStatus` / `isLiveRunStatus` / `isTerminalRunStatus`（同理，判的是状态串）。
+- **选项：** A 把逐字拼了类型名的一并改（**已采纳**，改完 `internal/api` 里 `grep '\bRunStatus\b'`
+  只剩包限定的 `task.RunStatus`，全是那个状态枚举，读的人不必再分辨）｜
+  B 严格按票面只改结构体，那三个留旧名（diff 更小，代价是包里长期并存两套叫法）。
+- **不处理会怎样：** 选 B 的话，`statusesFrom` 这一族与 `listRunStatuses` 会一直混在同一个文件里，
+  下一张动这批文件的票（05）要再撞一次同样的岔口。翻案是一次符号改名。
+- **顺带一记：** 票面的四个数没有一个对得上实测。给命令不给数：
+  `grep -rho --include='*.go' '\bRunStatus\b' $(grep -rln --include='*.go' '\bRunStatus\b' internal/api cmd | grep -v _test.go) | wc -l`
+  量非用例侧，`grep -rn '\bRunSnapshot\b' web/src | wc -l` 量前端侧。按实测做的，不按票面那几个数。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D32 · 票 04 · 状态文案的 i18n 键实为九条，第九条是「全部状态」
+
+- **问：** 票面第 4 条写「八条运行状态文案的 i18n 键」。八条状态之外还有第九条
+  `logs.taskStatus.all`（全部状态 / All statuses），它不是运行状态，是筛选框里的「不筛」选项。
+  票面没说它算不算。
+- **已做：** 九条一起搬到 `logs.runStatus.*`。理由是拼串处只有一个前缀——
+  `web/src/components/tasks/TaskCenter.tsx` 里既有 `t('logs.runStatus.all')` 这样的定值键，
+  也有 ``t(`logs.runStatus.${run.status}`)`` 这样的拼串；把 `.all` 留在旧前缀等于让同一个
+  下拉框的九个选项挂在两个键族下。
+- **选项：** A 九条一起搬（**已采纳**，同一个控件的键族不该被切开）｜
+  B 只搬八条状态，`logs.taskStatus.all` 原地不动（更贴票面字面，代价是留下一个只剩一条词条的
+  `logs.taskStatus.*` 键族，两份 locale 里都得留着）。
+- **不处理会怎样：** 无论选哪边用户看到的文案一个字不变（两份 locale 的值都没动）。
+  翻案是把两份 locale 与一处 `option` 里的四行键名改回去。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D33 · 票 04 · 浏览器自定义事件改叫什么：票面只给了「与 SSE 事件名同形」
+
+- **问：** 票面第 5 条要求那条浏览器内部事件「改名与 SSE 事件名同形」，但没给名字。
+  同一处已有的兄弟事件叫 `manga-manager:run-push`，而后端的两个 SSE 前缀是
+  `internal/api/task_engine.go` 的 `runSnapshotEventPrefix`（`run_snapshot:`）与
+  `runLiveEventPrefix`。「同形」有两种读法：与兄弟事件同名，或与 SSE 前缀同名。
+- **已做：** 取 `manga-manager:run-snapshot` / `manga-manager:run-snapshot-override`，
+  对齐 `runSnapshotEventPrefix`。与兄弟事件同名这条读法直接不成立：两条事件的 `detail`
+  不是一份东西——`run-push` 送的是整个信封（`RunPush`），这一条送的是信封里的
+  `frame.run`（`RunSnapshot`），同名会让两边的监听方互相收到对方的形状。
+- **选项：** A 取 SSE 前缀的名字（**已采纳**，它与载荷类型逐字同名，这一跳与上一跳因此讲同一个词）｜
+  B 取 `manga-manager:run-progress`（更贴「进度」这个旧语义，代价是仓库里从此有第三个词
+  指同一份载荷）。
+- **不处理会怎样：** 无论选哪边行为一样，派发方与两个监听方都在 `web/src` 里、一次改到底。
+  翻案是四个字符串字面量。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D34 · 票 04 · 覆盖变体那条事件没有任何派发方
+
+- **问：** `web/src/components/layout/useTaskBubbles.ts` 监听
+  `manga-manager:run-snapshot-override`（改名前是 `manga-manager:task-progress-override`），
+  但 `grep -rn 'run-snapshot-override' web/src` 只有这一处监听，全仓没有任何派发点。
+  它上面那句注释说的「系列详情页在触发操作后乐观更新气泡」这条路已经不存在了。
+- **已做：** 只改名，一行没删。票是纯改名票，删一条监听是行为改动。
+- **选项：** A 原样改名留着（**已采纳**，本票不改行为；且留着的成本是一个 `useEffect`）｜
+  B 连同 `handleOverride`、那段注释与 `RunSnapshotPayload` 里只有它用得到的字段一起删掉
+  （代码少一截，但它是行为改动，得有用例证明确实没人派发）。
+- **不处理会怎样：** 留着的是一个永远不触发的监听器加一段描述不存在的路径的注释，
+  下一个读 `useTaskBubbles` 的人要花一次全仓 grep 才能确认它是死的。
+- **归谁裁：** 用户
+- **状态：** open
+
+## D35 · 票 04 · 改名扫到文档：ADR 与 `AGENTS.md` 跟着改了，`docs/changelog/` 没有
+
+- **问：** 票面九条只讲代码与契约，没讲文档。而 `AGENTS.md` 的重生契约那句拿
+  `api.RunStatus` 当例子，`docs/adr/0007-task-key-retires-from-addressing.md` 两处写
+  `RunStatus.Key`。`docs/changelog/` 里没有 `RunStatus`，有的是更早那一代的 `TaskStatus`
+  （`grep -rn 'TaskStatus' docs/changelog`）——正是上一次同类改名留下的先例。
+- **已做：** 改 `AGENTS.md` 与 ADR 0007，不动 `docs/changelog/`。依据两条：
+  `docs/agents/doc-style.md` 的「不会腐坏的引用」说文档引用代码写符号名就是为了「重命名时它跟着改」；
+  而上一次同类改名（`TaskStatus` → `RunStatus`）留下的先例正是——`AGENTS.md` 跟着改了，
+  changelog 里的 `TaskStatus` 一个没动。changelog 的读者是用户、内容是版本史，改它等于改历史。
+- **选项：** A 活文档跟着改、历史不动（**已采纳**）｜
+  B ADR 也算历史、一并不动（代价是 ADR 0007 里的 `RunStatus.Key` 会指向一个仍然存在、
+  却从来没有 `.Key` 字段的类型——`task.RunStatus` 那个状态枚举，比没改还容易误导）。
+- **不处理会怎样：** 选 B 的话，`grep RunStatus.Key` 找不到任何代码，而 ADR 说它「已删除」，
+  读的人分不出是删干净了还是文档烂了。翻案是三处字符串。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D36 · 票 04 · 被推翻的那条关键决定只写进了提交信息，没有就地标注
+
+- **问：** 本票推翻 `task-run-model` 规格的关键决定 16（那条逐字写着把 `TaskStatus` 改名为
+  `RunStatus`）。票面第 8 条只要求「提交信息写明它推翻了关键决定 16 及原因」，没要求去动那份规格。
+  于是那份规格里现在留着一条已经不成立的决定，而唯一记着它被推翻的地方是一条提交信息。
+- **已做：** 照票面办——只写进提交信息，`.scratch/task-run-model/spec.md` 一个字没动。
+  那是另一个 effort 的规格，改它伸出了本票。
+- **选项：** A 只写提交信息（**已采纳**，票面明写，且改别的 effort 的规格是越界）｜
+  B 在关键决定 16 下面补一行「本条已被 address-by-object 票 04 推翻，见该票」
+  （代价是动了一份不归本票管的文件，好处是读那份规格的人当场就看得到）。
+- **不处理会怎样：** 那份规格会一直说「`TaskStatus` → `RunStatus`」，而代码里叫 `RunSnapshot`。
+  下一个照那份规格核对符号名的人会以为代码漂了。翻案是加两行。
+- **归谁裁：** 用户
+- **状态：** open
+
+## D37 · 票 04 · `RunSnapshot` 这个名字在仓库里现在也有两个主人
+
+- **问：** 票面指定的新名字 `RunSnapshot` 已经被占用了一半：`internal/task/control.go` 上有
+  `func (e *Engine) RunSnapshot(ctx, runID) (Snapshot, error)`，取一条运行此刻的领域快照。
+  改完之后 `internal/api` 里既有类型 `RunSnapshot`，又有 `…engine.RunSnapshot(…)` 这样的调用
+  （`internal/api/task_queue_test.go` 与 `internal/api/task_retry_dispatch_test.go` 里的用例装置）。
+  票面没预见到这一点——它预见到的是本包内两个**类型**同名。
+- **已做：** 照票面用 `RunSnapshot`，`task.(*Engine).RunSnapshot` 一个字没动。两者的歧义
+  比原来那对弱一档：一个是类型、一个是方法，语法位置不同（后者永远写成 `x.RunSnapshot(...)`），
+  且分处两个包；实测那几处调用与类型引用没有落在同一个函数里。
+- **选项：** A 原样（**已采纳**，票面指定了名字，且这一对分得开）｜
+  B 把领域侧那个方法改名（`task.(*Engine).SnapshotOf` 之类），四个调用点全在用例里，
+  改动比重命名类型小一个数量级——真要收干净该动的是它，不是本票刚落地的类型名。
+- **不处理会怎样：** `grep -rn '\bRunSnapshot\b' internal` 会同时命中一个类型和一个方法，
+  读的人要多看一眼接收者。翻案（选 B）是四处调用点加一处声明，不碰本票的成果。
+- **归谁裁：** 用户
+- **状态：** open
+
+## D38 · 票 04 · 前端那条路的载荷名与接入函数名：`/code-review` 判本票口径没盖住
+
+- **问：** D31 给自己定的口径是「名字里逐字拼了旧类型名的才跟着改」。前端有两个标识符
+  不满足这条口径，却是同一处误名：`web/src/components/layout/useTaskBubbles.ts` 里
+  接事件载荷的 `TaskProgressPayload`，与它的接入函数 `ingestProgress`——
+  `web/src/components/Layout.tsx` 在解构时把后者别名成 `ingestTaskProgress` 再调用。
+  两个名字都说「任务进度」，而载荷是一份**运行快照**。`/code-review` 的两轴都点了这一处：
+  规格轴判它「落在 D31 自定口径之外」，标准轴判在调用点起别名是「遮住不一致而不是消除它」。
+- **已做：** 载荷类型改 `RunSnapshotPayload`，hook 上的方法改 `ingestRunSnapshot`，
+  `Layout.tsx` 里那个别名整个撤掉——两端从此是同一个名字。用例
+  `web/src/components/layout/useTaskBubbles.test.ts` 三处调用跟着改。
+- **选项：** A 两端都改成 `ingestRunSnapshot`、别名撤掉（**已采纳**，事件叫 `run-snapshot`、
+  载荷类型叫 `RunSnapshot`，接它的函数再叫「任务进度」就是本票要消灭的那种歧义）｜
+  B 原样留 `ingestProgress` 与 `TaskProgressPayload`，只改事件名字符串（最贴票面第 5 条的字面，
+  代价是派发点那一行同时出现 `run-snapshot` 与 `TaskProgress` 两个词）。
+- **不处理会怎样：** 选 B 行为一样，留下的是「事件改了名、接它的东西没改」。
+  翻案是四个文件里的一族标识符改名，不碰行为。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D39 · 票 04 · 改名把两处结构体 tag 的对齐撑歪了，`gofmt` 没跟着跑
+
+- **问：** 新名 `RunSnapshot` 比 `RunStatus` 长两个字符，`internal/api/controller.go` 的
+  `RunPush.Run` 与 `internal/api/controller_series.go` 的
+  `SeriesFailedTaskSummary` 那一族字段的 tag 对齐因此不再是 `gofmt` 的产物。基线 `e1b0e09`
+  上这两个文件是干净的，是本次引入的。`.golangci.yml` 的 `formatters` 里开着 `gofmt`，CI 必红。
+- **已做：** `gofmt -w` 那两个文件，改完 `gofmt -l ./cmd ./internal` 为空，
+  `golangci-lint run` 也过。核对过 `gofmt` 只动了那两行的空格，没有顺带重排别的地方。
+- **选项：** A 跑 `gofmt -w`（**已采纳**，工具认的格式没有第二种写法）｜
+  B 手工补空格（同一个结果，但下一次改名还会漏）。
+- **不处理会怎样：** 已经处理了。留这条是因为**纯改名的批量替换会撑歪对齐，而门禁清单里
+  没有 `gofmt`/`golangci-lint` 这一步**——票 05 动的是同一批文件，同一个坑就在那儿等着。
+  建议把 `gofmt -l ./cmd ./internal` 加进这批票的门禁。
+- **归谁裁：** 下一次结算
+- **状态：** open

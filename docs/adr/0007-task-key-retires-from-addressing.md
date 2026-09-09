@@ -1,13 +1,13 @@
 # 任务键退出寻址，留在日志里
 
 状态：已实施（2026-09-09）。重试改按**任务 id** 寻址，两处关键词搜索改判在**作用域**显示名上，
-`RunStatus.Key`、`RunFilter.Key` 与按键取「最近那一条」的取数函数都已删除，`runs.task_key`
+`RunSnapshot.Key`、`RunFilter.Key` 与按键取「最近那一条」的取数函数都已删除，`runs.task_key`
 连同 `idx_runs_task_key` 由一条幂等的掉列迁移撤掉。`RunSpec.Key` 留着，仍经 ctx 注入的
 slog handler 写在每一行日志上。
 
 ADR 0004 判定身份由类型、**作用域**、作用域 id 与**变体**四项决定，**任务键**只是由它们拼出来的
 一个串。分家落地之后仍剩一处按键寻址：重试端点 `POST /api/system/tasks/{taskKey}/retry`、
-`RunFilter.Key` 与 `latestRunFilterFor`、对外契约上的 `RunStatus.Key`、`runs.task_key` 那一列与
+`RunFilter.Key` 与 `latestRunFilterFor`、对外契约上的 `RunSnapshot.Key`、`runs.task_key` 那一列与
 `idx_runs_task_key`，以及两处关键词搜索把它串进了匹配串。
 
 **决定：键退出寻址，不退出日志。** 上面那一整串连同列与索引删除，重试改按**任务 id** 寻址；

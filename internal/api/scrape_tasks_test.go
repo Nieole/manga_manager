@@ -91,7 +91,7 @@ func (p *scrapeTestProvider) SearchMetadata(context.Context, string, int, int) (
 
 // newScrapeTaskRig 拼出两个刮削任务体需要的那几样：任务引擎（仍经它唯一的 seam 构造，后台能力
 // 换成同步执行版）、存储与刮削源工厂。
-func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, func() []RunStatus) {
+func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, func() []RunSnapshot) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	provider.clock = clock

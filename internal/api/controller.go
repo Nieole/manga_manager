@@ -103,7 +103,7 @@ type Controller struct {
 	franchiseRebuilder *franchiseRebuilder
 }
 
-type RunStatus struct {
+type RunSnapshot struct {
 	// RunID 是这一条**运行**的标识：同一个任务在列表里可以出现多条，各是一次运行。
 	// 暂停 / 恢复 / 取消按它寻址，重试从此不再抹掉上一次，因此它是必需的。
 	RunID int64 `json:"run_id"`
@@ -210,7 +210,7 @@ type RunLive struct {
 	// 前端要写两套读法。JSON 里内嵌是摊平的，因此对外的形状与抄一遍完全相同。
 	RunLiveSummary
 	// Runs 是常驻置顶的那批运行：**活动态**与**排队中**，仍会变化的都在里面。
-	Runs []RunStatus `json:"runs"`
+	Runs []RunSnapshot `json:"runs"`
 }
 
 // RunPush 是推送通道上的一帧信封：一个序号、上一帧的序号，加上这一帧真正的载荷。
@@ -228,7 +228,7 @@ type RunPush struct {
 	// Run 与 Live 恰有一个非空：前者是一帧全量运行快照，后者是一帧**实况汇总**。
 	// 快照始终是全量的，不发增量——增量的合并逻辑要前后端各维护一套，而合并错一个字段不会报错，
 	// 只会让界面安静地停在错值上。
-	Run  *RunStatus      `json:"run,omitempty"`
+	Run  *RunSnapshot    `json:"run,omitempty"`
 	Live *RunLiveSummary `json:"live,omitempty"`
 }
 
@@ -259,7 +259,7 @@ type TaskSummary struct {
 	// 改完设置之后两边立刻对不上。
 	StallReason string `json:"stall_reason,omitempty"`
 	// LastRun 是「上次跑成什么样」。一次运行都没有的任务为 nil。
-	LastRun *RunStatus `json:"last_run,omitempty"`
+	LastRun *RunSnapshot `json:"last_run,omitempty"`
 }
 
 type TaskRuntime struct {

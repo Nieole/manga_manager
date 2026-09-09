@@ -99,7 +99,7 @@ func (s *maintenanceStore) UpdateBookIdentity(_ context.Context, arg database.Up
 // 同步执行版）、存储与配置。扫描器按需另装，只有缩略图清理会用到。
 // newMaintenanceRig 拼出维护任务体需要的那几样。tune 可改写配置——全量哈希回填是否跟着配置里的
 // 匹配模式走，只有把它改掉才看得出来。
-func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*Controller, func() []RunStatus, *fakeClock) {
+func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*Controller, func() []RunSnapshot, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 
@@ -291,7 +291,7 @@ func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 		t.Fatalf("存储画像标签没落地：%v", task.Labels)
 	}
 
-	// IO 参数走的是另一条通道（RunStatus.Params），存储 IO 面板按参数名读它；
+	// IO 参数走的是另一条通道（RunSnapshot.Params），存储 IO 面板按参数名读它；
 	// 它与上面那一帧各自投递一次，因此要推过节流窗口才看得见。
 	clock.advance(taskProgressPublishInterval * 2)
 	reportHashProgress(progress, 8, 40, "task.msg.rebuild_file_identities.progress", metrics)

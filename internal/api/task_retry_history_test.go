@@ -15,13 +15,13 @@ import (
 )
 
 // runsForKey 取这个**任务键**名下的全部运行，由新到旧。
-func runsForKey(t *testing.T, c *Controller, key string) []RunStatus {
+func runsForKey(t *testing.T, c *Controller, key string) []RunSnapshot {
 	t.Helper()
-	items, err := c.taskEngine.listRunStatuses(context.Background(), taskFilters{})
+	items, err := c.taskEngine.listRunSnapshots(context.Background(), taskFilters{})
 	if err != nil {
 		t.Fatalf("列任务失败: %v", err)
 	}
-	matched := make([]RunStatus, 0, 2)
+	matched := make([]RunSnapshot, 0, 2)
 	for _, item := range items {
 		if belongsToKey(t, item, key) {
 			matched = append(matched, item)
@@ -56,7 +56,7 @@ func TestRetryKeepsThePreviousRun(t *testing.T) {
 	}
 
 	// 上一次那条一字未动：状态、失败原因与它的运行标识都还在。
-	var previous *RunStatus
+	var previous *RunSnapshot
 	for i := range after {
 		if after[i].RunID == before[0].RunID {
 			previous = &after[i]

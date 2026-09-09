@@ -65,7 +65,7 @@ func (s *externalTaskStore) ListExternalTransferBooksBySeries(context.Context, [
 // 管理器，以及资料库与外部库两个真实目录——传输任务真的在拷文件。
 type externalRig struct {
 	c           *Controller
-	snapshots   func() []RunStatus
+	snapshots   func() []RunSnapshot
 	libraryID   int64
 	externalDir string
 }

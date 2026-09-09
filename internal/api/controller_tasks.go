@@ -28,7 +28,7 @@ import (
 //
 // **发起方由调用方给**：用户点重试是手动，重启之后的续跑是**恢复**。它不是这里的默认值——
 // 猜错的话，半夜自己接着跑的那条运行会在界面上写着「手动」，而那正是用户要的答案。
-type taskRelauncher func(ctx context.Context, run RunStatus, trigger task.Trigger) error
+type taskRelauncher func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error
 
 // taskDispatch 是一个（类型，**变体**）在「再发起一次」这件事上的全部声明：怎么发起，
 // 以及重启之后**没人看着**时可不可以自己发起。
@@ -89,7 +89,7 @@ func (c *Controller) libraryScopeName(libraryID int64) string {
 // taskParam 读一个**任务参数**，缺了给空串。**重启函数**靠它读回原始入参：一个任务重试时
 // 除了作用域就只剩这些参数，读丢了不会有编译错误，后果是重试静默换了跑法（换成默认刮削源、
 // 换个语种、丢掉发起理由）。
-func taskParam(run RunStatus, key string) string {
+func taskParam(run RunSnapshot, key string) string {
 	if run.Params == nil {
 		return ""
 	}
@@ -106,17 +106,17 @@ func taskParam(run RunStatus, key string) string {
 // **不可续跑**的那几个（清理资料库、外部库扫描与传输、ComicInfo 回写、刮削、AI 分组）
 // 各自的理由都写在它那一行上：要么改磁盘内容、要么花钱。它们照样可重试——那是用户按下的那一下。
 func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
-	libraryID := func(run RunStatus) (int64, error) {
+	libraryID := func(run RunSnapshot) (int64, error) {
 		if run.ScopeID == nil {
 			return 0, fmt.Errorf("task %d missing library id", run.TaskID)
 		}
 		return *run.ScopeID, nil
 	}
-	forceParam := func(run RunStatus) bool {
+	forceParam := func(run RunSnapshot) bool {
 		return taskParam(run, "force") == "true"
 	}
 	return map[taskDispatchKey]taskDispatch{
-		{Type: "scan_library", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "scan_library", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			id, err := libraryID(run)
 			if err != nil {
 				return err
@@ -131,21 +131,21 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 		}},
 		// 封面生成的重启函数不认领任何批（进程里那一批随重启一起没了），
 		// 而是把这个库里还缺封面的书重新排一遍，见 launchCoverRun。
-		{Type: "generate_covers", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "generate_covers", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			id, err := libraryID(run)
 			if err != nil {
 				return err
 			}
 			return c.launchCoverRun(id, trigger, true)
 		}},
-		{Type: "scan_series", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "scan_series", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			if run.ScopeID == nil {
 				return fmt.Errorf("task %d missing series id", run.TaskID)
 			}
 			return c.launchSeriesScanTask(*run.ScopeID, forceParam(run), trigger)
 		}},
 		// 不可续跑：它删的是记录，而「这些记录该不该删」在无人看着时没人裁决。
-		{Type: "cleanup_library", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "cleanup_library", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			id, err := libraryID(run)
 			if err != nil {
 				return err
@@ -153,20 +153,20 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 			return c.launchCleanupLibraryTask(id, trigger)
 		}},
 		// 不可续跑：它重灌完索引还要**同步等一次全量扫描**，白名单里没有这一条。
-		{Type: "rebuild_index", Variant: variantSole}: {Relaunch: func(ctx context.Context, _ RunStatus, trigger task.Trigger) error {
+		{Type: "rebuild_index", Variant: variantSole}: {Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchRebuildIndexTask(trigger)
 		}},
-		{Type: "rebuild_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunStatus, trigger task.Trigger) error {
+		{Type: "rebuild_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchRebuildThumbnailsTask(trigger)
 		}},
-		{Type: "cleanup_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunStatus, trigger task.Trigger) error {
+		{Type: "cleanup_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchCleanupThumbnailsTask(trigger)
 		}},
 		// 刮削两个变体都不可续跑：它们要调外部源，有的按次计费。
-		{Type: "scrape", Variant: variantScrapeAllLibraries}: {Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "scrape", Variant: variantScrapeAllLibraries}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			return c.launchBatchScrapeAllSeriesTask(ctx, taskParam(run, "provider"), trigger)
 		}},
-		{Type: "scrape", Variant: variantScrapeOneLibrary}: {Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "scrape", Variant: variantScrapeOneLibrary}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			id, err := libraryID(run)
 			if err != nil {
 				return err
@@ -174,7 +174,7 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 			return c.launchLibraryScrapeTask(ctx, id, taskParam(run, "provider"), trigger)
 		}},
 		// 不可续跑：它调 LLM，那是花钱的。
-		{Type: "ai_grouping", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "ai_grouping", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			id, err := libraryID(run)
 			if err != nil {
 				return err
@@ -183,20 +183,20 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 			locale := firstNonEmptyTaskValue(taskParam(run, "locale"), metadata.LocaleFromContext(ctx))
 			return c.launchAIGroupingTask(id, firstNonEmptyTaskValue(locale, "zh-CN"), trigger)
 		}},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunStatus, trigger task.Trigger) error {
+		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchRebuildBookHashesTask(trigger)
 		}},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: {Resumable: true, Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
+		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			// 发起理由是这个变体的原始入参，再发起一次要沿用而不是另编一个。
 			return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(taskParam(run, "reason"), "manual_retry"), trigger)
 		}},
-		{Type: "rebuild_file_identities", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunStatus, trigger task.Trigger) error {
+		{Type: "rebuild_file_identities", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchRebuildFileIdentitiesTask(trigger)
 		}},
-		{Type: "reconcile_koreader_progress", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunStatus, trigger task.Trigger) error {
+		{Type: "reconcile_koreader_progress", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchReconcileKOReaderProgressTask(trigger)
 		}},
-		{Type: "refresh_koreader_matching", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunStatus, trigger task.Trigger) error {
+		{Type: "refresh_koreader_matching", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchRefreshKOReaderMatchingTask(trigger)
 		}},
 	}
@@ -287,7 +287,7 @@ func taskFiltersFromQuery(r *http.Request) taskFilters {
 
 // listTasks 取一页**运行**。任务中心展开某一行时带上 task_id，取回的就是那个任务的历次运行。
 func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
-	items, err := c.taskEngine.listRunStatuses(r.Context(), taskFiltersFromQuery(r))
+	items, err := c.taskEngine.listRunSnapshots(r.Context(), taskFiltersFromQuery(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list tasks")
 		return

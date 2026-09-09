@@ -33,7 +33,7 @@ describe('useTaskBubbles 的终态清理', () => {
     const { result } = renderHook(() => useTaskBubbles());
 
     act(() => {
-      result.current.ingestProgress({ task_id: TASK_ID, type: 'scan_library', status });
+      result.current.ingestRunSnapshot({ task_id: TASK_ID, type: 'scan_library', status });
     });
     expect(result.current.entries[TASK_ID]).toBeTruthy();
 
@@ -47,7 +47,7 @@ describe('useTaskBubbles 的终态清理', () => {
     const { result } = renderHook(() => useTaskBubbles());
 
     act(() => {
-      result.current.ingestProgress({ task_id: TASK_ID, type: 'scan_library', status });
+      result.current.ingestRunSnapshot({ task_id: TASK_ID, type: 'scan_library', status });
     });
     act(() => {
       result.current.clearFinished();
@@ -60,7 +60,7 @@ describe('useTaskBubbles 的终态清理', () => {
     const { result } = renderHook(() => useTaskBubbles());
 
     act(() => {
-      result.current.ingestProgress({ task_id: TASK_ID, type: 'scan_library', status: 'cancelling' });
+      result.current.ingestRunSnapshot({ task_id: TASK_ID, type: 'scan_library', status: 'cancelling' });
     });
     act(() => {
       vi.advanceTimersByTime(CLEANUP_DELAY_MS);

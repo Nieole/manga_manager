@@ -2500,7 +2500,7 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode tasks failed: %v", err)
 	}
@@ -2526,7 +2526,7 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode filtered tasks failed: %v", err)
 	}
@@ -2549,7 +2549,7 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode filtered tasks failed: %v", err)
 	}
@@ -2582,7 +2582,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode persisted tasks failed: %v", err)
 	}
@@ -2632,7 +2632,7 @@ func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode tasks failed: %v", err)
 	}
@@ -2701,7 +2701,7 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected list 200, got %d", rec.Code)
 	}
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode tasks failed: %v", err)
 	}
@@ -2941,7 +2941,7 @@ func TestScanTaskEffectiveLimitsFollowScannedPath(t *testing.T) {
 	}
 }
 
-func TestRunStatusTracksScrapeMetricsAndLabels(t *testing.T) {
+func TestRunSnapshotTracksScrapeMetricsAndLabels(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	taskKey := "scrape_library_7"
@@ -3166,7 +3166,7 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	var task RunStatus
+	var task RunSnapshot
 	for time.Now().Before(deadline) {
 		task = currentTask(t, controller.taskEngine, "rebuild_thumbnails")
 		if task.Status != "running" {
@@ -4528,11 +4528,11 @@ func TestRunProgressIsVisibleImmediately(t *testing.T) {
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_5", Identity: libraryTask("scan_library", 5, variantSole), Total: 100})
 	progress.Advance(42, 100, "", nil)
 
-	tasks, err := controller.taskEngine.listRunStatuses(context.Background(), taskFilters{})
+	tasks, err := controller.taskEngine.listRunSnapshots(context.Background(), taskFilters{})
 	if err != nil {
-		t.Fatalf("listRunStatuses failed: %v", err)
+		t.Fatalf("listRunSnapshots failed: %v", err)
 	}
-	var listed *RunStatus
+	var listed *RunSnapshot
 	for i := range tasks {
 		if belongsToKey(t, tasks[i], "scan_library_5") {
 			listed = &tasks[i]

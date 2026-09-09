@@ -31,14 +31,14 @@ func taskSummaries(t *testing.T, controller *Controller, query string) []TaskSum
 }
 
 // runsOf 打一次运行列表接口，返回取回的那一页。
-func runsOf(t *testing.T, controller *Controller, query string) []RunStatus {
+func runsOf(t *testing.T, controller *Controller, query string) []RunSnapshot {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	controller.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks"+query, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("运行列表接口的状态码为 %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
-	var runs []RunStatus
+	var runs []RunSnapshot
 	if err := json.Unmarshal(rec.Body.Bytes(), &runs); err != nil {
 		t.Fatalf("解运行列表失败: %v (raw=%s)", err, rec.Body.String())
 	}

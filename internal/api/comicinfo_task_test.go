@@ -26,7 +26,7 @@ const comicInfoSeriesID = int64(7)
 // newComicInfoRig 拼出回写任务体要的那几样：任务引擎（仍经它唯一的 seam 构造）、配置，
 // 以及引擎在构造期收下的**磁盘作业**入口。
 // 任务体不读数据库——系列、书目、标签与作者都由启动点从 HTTP 层带进来，因此这里没有存储替身。
-func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Controller, func() []RunStatus) {
+func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Controller, func() []RunSnapshot) {
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.Cache.Dir = t.TempDir()

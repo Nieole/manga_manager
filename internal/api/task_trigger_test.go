@@ -328,7 +328,7 @@ func TestInMemoryWorkCreatesNoRun(t *testing.T) {
 	controller.warmDashboardStatsCacheAsync("test")
 	controller.invalidateDashboardStatsCache("test")
 
-	runs, err := controller.taskEngine.listRunStatuses(context.Background(), taskFilters{Limit: 50})
+	runs, err := controller.taskEngine.listRunSnapshots(context.Background(), taskFilters{Limit: 50})
 	if err != nil {
 		t.Fatalf("列运行失败: %v", err)
 	}

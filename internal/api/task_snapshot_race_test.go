@@ -1,6 +1,6 @@
 // 守「投递与列表交出去的那份快照，与仍在被写入的那份不是同一批 map」。Params/Metrics/Labels/
 // MessageParams 都是 map，而结构体拷贝共享同一 map header：进度上报在引擎的临界区里写，
-// listRunStatuses 交出去的快照则在锁外被 json.Marshal 遍历。共享一份就会撞成
+// listRunSnapshots 交出去的快照则在锁外被 json.Marshal 遍历。共享一份就会撞成
 // `fatal error: concurrent map read and map write`——runtime throw，recover 拦不住，整个进程退出。
 
 package api
@@ -51,7 +51,7 @@ func TestTaskSnapshotsAreClonedAcrossCriticalSection(t *testing.T) {
 	go func() {
 		defer readers.Done()
 		for range 200 {
-			items, err := controller.taskEngine.listRunStatuses(context.Background(), taskFilters{Limit: 50})
+			items, err := controller.taskEngine.listRunSnapshots(context.Background(), taskFilters{Limit: 50})
 			if err != nil {
 				continue
 			}

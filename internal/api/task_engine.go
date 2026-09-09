@@ -1,5 +1,5 @@
 // 任务子域在 api 这一侧的**适配层**：把控制端点（暂停 / 恢复 / 取消按**运行 id** 寻址，
-// 重试与禁用按**任务 id**，清除仍按筛选条件，全部暂停 / 全部恢复作用在全体运行上）、对外那份 RunStatus 形状与
+// 重试与禁用按**任务 id**，清除仍按筛选条件，全部暂停 / 全部恢复作用在全体运行上）、对外那份 RunSnapshot 形状与
 // **重启函数**注册表，接到 `internal/task` 的领域引擎与 `internal/taskstore` 的落盘上。
 // **事实来源只有库，这一层不留任务表**（去留的论证见 taskEngine 的符号 doc）。
 // 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
@@ -252,8 +252,8 @@ func (e *taskEngine) publisher(publish func(string)) func(task.Snapshot) {
 		return nil
 	}
 	return func(snapshot task.Snapshot) {
-		status := e.runStatusFrom(snapshot, e.cachedIdentity(snapshot.Run.TaskID))
-		e.push(publish, runSnapshotEventPrefix, RunPush{Sequence: status.Sequence, Run: &status})
+		snap := e.runSnapshotFrom(snapshot, e.cachedIdentity(snapshot.Run.TaskID))
+		e.push(publish, runSnapshotEventPrefix, RunPush{Sequence: snap.Sequence, Run: &snap})
 	}
 }
 
@@ -372,11 +372,11 @@ func (e *taskEngine) buildResumePolicy() task.ResumePolicy {
 
 // ---- 查询 ----
 
-// listRunStatuses 按谓词取一页运行。
+// listRunSnapshots 按谓词取一页运行。
 //
 // 只有一个来源——库。旧引擎在这里要把内存表盖在库记录上，因此筛选谓词必须在合并之后判；
 // 现在筛选整条下推到 SQL，Limit 截断的就是过滤之后的那一页。
-func (e *taskEngine) listRunStatuses(ctx context.Context, filters taskFilters) ([]RunStatus, error) {
+func (e *taskEngine) listRunSnapshots(ctx context.Context, filters taskFilters) ([]RunSnapshot, error) {
 	snapshots, err := e.engine.ListSnapshots(ctx, runFilterFrom(filters, task.OrderLiveFirst))
 	if err != nil {
 		return nil, err
@@ -464,7 +464,7 @@ func (e *taskEngine) listTaskSummaries(ctx context.Context, filters taskFilters)
 			StallReason: string(e.engine.StallOf(owner.TaskAttributes)),
 		}
 		if snapshot, ok := latest[owner.ID]; ok {
-			run := e.runStatusFrom(snapshot, identity)
+			run := e.runSnapshotFrom(snapshot, identity)
 			summary.ScopeName = run.ScopeName
 			summary.LastRun = &run
 		}
@@ -474,7 +474,7 @@ func (e *taskEngine) listTaskSummaries(ctx context.Context, filters taskFilters)
 }
 
 // statusesFrom 把一批领域快照翻成对外形状，身份一次批量取回。
-func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot) ([]RunStatus, error) {
+func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot) ([]RunSnapshot, error) {
 	taskIDs := make([]int64, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		taskIDs = append(taskIDs, snapshot.Run.TaskID)
@@ -483,9 +483,9 @@ func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot
 	if err != nil {
 		return nil, err
 	}
-	items := make([]RunStatus, 0, len(snapshots))
+	items := make([]RunSnapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
-		items = append(items, e.runStatusFrom(snapshot, identities[snapshot.Run.TaskID]))
+		items = append(items, e.runSnapshotFrom(snapshot, identities[snapshot.Run.TaskID]))
 	}
 	return items, nil
 }
@@ -494,17 +494,17 @@ func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot
 //
 // 「一条都没有」交回布尔值而不是某个哨兵错误：符合与否是查询的正常结果，而「这该翻成哪一句话」
 // 各调用方答得不一样——重试要分「任务不存在」与「它一次都还没跑完」，用例只想知道在不在。
-func (e *taskEngine) firstStatusFor(ctx context.Context, filter task.RunFilter) (status RunStatus, found bool, err error) {
+func (e *taskEngine) firstStatusFor(ctx context.Context, filter task.RunFilter) (status RunSnapshot, found bool, err error) {
 	snapshots, err := e.engine.ListSnapshots(ctx, filter)
 	if err != nil {
-		return RunStatus{}, false, err
+		return RunSnapshot{}, false, err
 	}
 	if len(snapshots) == 0 {
-		return RunStatus{}, false, nil
+		return RunSnapshot{}, false, nil
 	}
 	items, err := e.statusesFrom(ctx, snapshots)
 	if err != nil {
-		return RunStatus{}, false, err
+		return RunSnapshot{}, false, err
 	}
 	return items[0], true, nil
 }
@@ -513,7 +513,7 @@ func (e *taskEngine) firstStatusFor(ctx context.Context, filter task.RunFilter) 
 //
 // 不按**任务键**寻址（ADR 0007）：键是同一身份历次运行共用的一个串，而队列一开，同一个键此刻
 // 可以有两条仍会变化的运行——「最近那一条」由序号决定、序号每有一帧就换一次主人，寻址对象
-// 本身因此是不确定的。任务 id 是界面上那张卡片自己带着的（RunStatus.TaskID），按它寻址没有第二种解释。
+// 本身因此是不确定的。任务 id 是界面上那张卡片自己带着的（RunSnapshot.TaskID），按它寻址没有第二种解释。
 //
 // 只挑**终态**：重试的意思是「那次跑完的，再跑一次」，而**排队中**与**活动态**的运行还没跑完，
 // 身上没有可重放的东西。不挑的话，只要这个任务有一条排队中的运行，它就永远是「最近那一条」
@@ -526,7 +526,7 @@ func (e *taskEngine) firstStatusFor(ctx context.Context, filter task.RunFilter) 
 //
 // 旧引擎在这里要先查内存表再退回查库，因为内存表是有上限的缓存、重启后更是空的，而**中断**任务
 // 恰恰只在库里。现在只有库一个来源，这条分岔随之消失。
-func (e *taskEngine) snapshotForRetry(ctx context.Context, taskID int64) (RunStatus, error) {
+func (e *taskEngine) snapshotForRetry(ctx context.Context, taskID int64) (RunSnapshot, error) {
 	status, found, err := e.firstStatusFor(ctx, task.RunFilter{
 		TaskID:   taskID,
 		Statuses: task.TerminalStatuses(),
@@ -534,19 +534,19 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, taskID int64) (RunSta
 		Limit:    1,
 	})
 	if err != nil {
-		return RunStatus{}, err
+		return RunSnapshot{}, err
 	}
 	if found {
 		return status, nil
 	}
 	owners, err := e.runStore.LoadTasks(ctx, []int64{taskID})
 	if err != nil {
-		return RunStatus{}, err
+		return RunSnapshot{}, err
 	}
 	if _, ok := owners[taskID]; !ok {
-		return RunStatus{}, errTaskNotFound
+		return RunSnapshot{}, errTaskNotFound
 	}
-	return RunStatus{}, errNoRetryableRun
+	return RunSnapshot{}, errNoRetryableRun
 }
 
 // latestTaskByTypes 返回给定类型中最近**开跑过**的那一次运行；无匹配返回 nil。
@@ -554,7 +554,7 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, taskID int64) (RunSta
 //
 // **排队中**的运行不算：它没有开始时刻，那几个速率一个都答不出，而它的序号恰恰是最新的
 // （入队与每次**合并**都取一个），不排除的话它会顶掉真正在跑的那条，面板上的数静默变成 0。
-func (e *taskEngine) latestTaskByTypes(types ...string) *RunStatus {
+func (e *taskEngine) latestTaskByTypes(types ...string) *RunSnapshot {
 	ctx := context.Background()
 	domainTypes := make([]task.Type, 0, len(types))
 	for _, taskType := range types {
@@ -614,7 +614,7 @@ func (e *taskEngine) setTaskDisabled(ctx context.Context, taskID int64, disabled
 //
 // 不按**任务键**：队列出现之后，同一个键此刻可以有两条仍会变化的运行（一条在跑、一条排队），
 // 而「这个键最近的那一次」在两者之间来回跳——序号每有一帧就换一次主人。用户按下的是排队那条
-// 卡片上的取消，动到的却可能是正在跑的那条。运行 id 是界面上那张卡片自己带着的（RunStatus.RunID），
+// 卡片上的取消，动到的却可能是正在跑的那条。运行 id 是界面上那张卡片自己带着的（RunSnapshot.RunID），
 // 按它寻址就没有第二种解释（关键决定 15：暂停 / 恢复 / 取消作用在**运行**上）。
 //
 // 「这次运行还能不能接受这个动作」一律由领域裁决，本层不预判：预判等于把状态机抄第二遍，
