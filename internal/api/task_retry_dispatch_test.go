@@ -151,7 +151,7 @@ func TestRetryOfAnActiveTaskQueues(t *testing.T) {
 				t.Fatalf("重试并进了那条 %q 的运行 —— 合并只发生在排队中的运行上", tc.status)
 			}
 			// 在跑的那条一动不动：它没有被重新起过，也没有被这次重试改掉状态。
-			active, err := c.taskEngine.engine.RunSnapshot(context.Background(), activeID)
+			active, err := c.taskEngine.engine.SnapshotOf(context.Background(), activeID)
 			if err != nil {
 				t.Fatalf("取回那条 %q 的运行失败: %v", tc.status, err)
 			}

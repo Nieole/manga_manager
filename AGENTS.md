@@ -10,6 +10,24 @@ Run the frontend locally with `cd web && npm run dev`. Build the frontend with `
 # Use a repo-local cache directory (relative paths, works on any machine/OS):
 GOCACHE="$(pwd)/.gocache" GOTMPDIR="$(pwd)/.tmp" go test ./...
 ```
+本地门禁与 CI 对齐还差两步，`go test` 之外都要跑：`gofmt -l ./cmd ./internal`（输出必须为空）与
+`golangci-lint run`（必须 `0 issues.`）。两者都由 `.github/workflows/ci.yml` 执行，`.golangci.yml`
+的 `formatters` 开着 `gofmt`。**批量改名尤其会踩**：符号名变长或变短都会撑歪结构体 tag 的对齐，
+而 `go build` / `go vet` / `go test` 三关都看不见它。
+
+并行开多个 `git worktree` 跑活时，另有三条这台机器上实撞过的坑：
+
+- **新工作树的 `go build ./...` 第一步就死。** `web/.gitignore` 忽略 `dist`，而 `web/web.go` 的
+  `//go:embed all:dist` 硬要它，报 `pattern all:dist: no matching files found`。建树后从主工作区
+  `cp -a web/dist <树>/web/dist`（要跑前端门禁的树连 `node_modules` 一起拷）。两者都被忽略，进不了提交。
+  真要改前端的活不能吃这份拷贝，得自己 `npm run build`。
+- **`golangci-lint` 的缓存跨工作树共享，且把路径烤了进去。** 它按内容命中别的树的结果、按那棵树的
+  路径回放；那棵树一删，`.golangci.yml` 里靠读源码行生效的机制（`exclusions.rules` 的 `source:`
+  谓词、`//nolint:` 注释）整片失效，刷出一屏假阳性而代码是干净的。每棵树给一个自己的
+  `GOLANGCI_LINT_CACHE`，或撞上了跑一次 `golangci-lint cache clean`。
+- **`GOCACHE` 相反，共享纯赚。** Go 构建缓存内容寻址且并发安全，多棵树指向同一份既省盘又省时间；
+  每树一份会很快涨到十几 GB。
+
 Use `./build.sh` for a full release-style build; it installs frontend dependencies, builds `web`, and cross-compiles binaries into `build/`. 升级前端依赖前读 `web/README.md`：两条 `npm audit` high 已确认不可达，`npm audit fix --force` 会把 `react-router-dom` 降级 7 个小版本。
 
 ## Coding Style & Naming Conventions

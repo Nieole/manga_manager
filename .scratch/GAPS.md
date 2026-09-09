@@ -49,6 +49,21 @@
   带时刻的「已暂停」。补它可以拿事件流的暂停/恢复时刻在曲线上叠一层底色（两份数据本来就在
   同一次打开里并发取回）。〔task-run-model D121〕
 
+- **资料库改名之后，它的历史运行按新名字搜不到。** 任务中心的搜索改判在 `runs.scope_name` 上，
+  而那一列是启动点用 `lib.Name` / `series.Name` 一次性写死的快照，此后不再刷新。把库从「旧名」
+  改成「新名」，搜「新名」找不到改名前的运行、搜「旧名」反而找得到。改口径之前判的是任务键、
+  键同样是快照，所以这不是新问题——但它第一次变得用户看得见，因为用户现在打的是界面上那个
+  （已经改过的）名字。当时的取舍是「搜得到的与那一行显示的是同一个串」：任务中心显示的也是这份
+  快照。补它要在两处谓词上各加一次连表按 `t.scope` + `t.scope_id` 取当前名字，代价是搜的与
+  显示的从此对不上，除非显示也跟着改。〔address-by-object D2〕
+
+- **名字里带大写非 ASCII 字母的资料库，按名字搜不到自己的运行。** 两处关键词谓词把查询串在 Go 侧
+  经 `strings.ToLower` 折过整个 Unicode，列侧用 SQLite 的 `LOWER`——**它只折 ASCII**。这是单边折叠：
+  库名 `Éditions Manga` 之下，`éditions` / `ÉDITIONS` / `Éditions` / `editions` 四种打法一个都不中，
+  同一行搜 `manga` 正常。中日文没有大小写、不受影响；带重音的拉丁文、西里尔、希腊字母会踩到。
+  当时按现状落地并把边界写进 `taskstore.keywordClause` 的 doc。补它要么给 modernc.org/sqlite
+  注册一个 Unicode 版 `LOWER`，要么写入时另存一列 `scope_name_folded`。〔address-by-object D1〕
+
 ## 前端取数
 
 - **实况帧的取数没有世代号。** `BackgroundTasks.fetchLive` 直接 `setLive(res.data)`，

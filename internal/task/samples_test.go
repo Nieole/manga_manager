@@ -202,7 +202,7 @@ func TestNoJudgementReadsTheSampleTable(t *testing.T) {
 	h.clock.advance(DefaultSampleInterval)
 	h.engine.SampleActiveRuns(ctx)
 
-	if _, err := h.engine.RunSnapshot(ctx, run.ID); err != nil {
+	if _, err := h.engine.SnapshotOf(ctx, run.ID); err != nil {
 		t.Fatalf("取运行快照失败: %v", err)
 	}
 	if _, err := h.engine.ListSnapshots(ctx, RunFilter{}); err != nil {

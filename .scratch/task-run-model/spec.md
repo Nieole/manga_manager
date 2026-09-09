@@ -260,6 +260,9 @@ run_args      run_id, key, value
     `taskrun.Handle` → **运行句柄**、SSE `task_progress` → `run_snapshot`。
     `TaskRuntime` 这个名字继续指引擎内部登记的 ctx + 闸门 + cancel，不让给别的类型。
     前端生成契约随之重生。
+    > **本条中 `TaskStatus` → `RunStatus` 那一格已被推翻**（`address-by-object` 票 04，2026-09-09）：
+    > 落地时发现 `internal/api` 里会同时出现两个 `RunStatus`——交给前端的运行快照结构体，
+    > 与 `internal/task` 那个运行状态字符串枚举。快照那个最终叫 `RunSnapshot`，枚举保留 `RunStatus`。
 
 17. **迁移是 `DROP TABLE tasks`，不转换。** 老表一个任务键只有一行，转过来也只是每个任务孤零零
     一条运行，而那段解析代码只跑一次却要连测试一起维护。后果可自愈：资料库的扫描模式与间隔不在

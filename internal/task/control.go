@@ -18,8 +18,8 @@ var (
 	ErrRunNotControllable = errors.New("run has no live control handle")
 )
 
-// RunSnapshot 取一条运行此刻的快照：运行行加上它的控制能力。
-func (e *Engine) RunSnapshot(ctx context.Context, runID int64) (Snapshot, error) {
+// SnapshotOf 取一条运行此刻的快照：运行行加上它的控制能力。
+func (e *Engine) SnapshotOf(ctx context.Context, runID int64) (Snapshot, error) {
 	run, err := e.store.LoadRun(ctx, runID)
 	if err != nil {
 		return Snapshot{}, err

@@ -220,7 +220,7 @@ func TestQueuedRunCanBeCancelledThroughTheEndpoint(t *testing.T) {
 		t.Fatalf("取消排队中的运行返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
 
-	snapshot, err := controller.taskEngine.engine.RunSnapshot(context.Background(), queuedID)
+	snapshot, err := controller.taskEngine.engine.SnapshotOf(context.Background(), queuedID)
 	if err != nil {
 		t.Fatalf("取回被取消的运行失败: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestQueuedRunCanBeCancelledThroughTheEndpoint(t *testing.T) {
 		t.Fatalf("排队中被取消后状态为 %q, want cancelled", snapshot.Run.Status)
 	}
 	// 同一个键上在跑的那条一动不动：按运行寻址就是为了这条。
-	active, err := controller.taskEngine.engine.RunSnapshot(context.Background(), activeID)
+	active, err := controller.taskEngine.engine.SnapshotOf(context.Background(), activeID)
 	if err != nil {
 		t.Fatalf("取回在跑的运行失败: %v", err)
 	}
