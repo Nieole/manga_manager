@@ -28,6 +28,9 @@ func TestTaskListFiltersArePushedDown(t *testing.T) {
 		{"按状态筛：只留已失败那条", taskFilters{Status: "failed"}, []string{failedKey}},
 		{"按状态筛：只留正在跑那条", taskFilters{Status: "running"}, []string{runningKey}},
 		{"按关键词筛：错误串只落在失败那条上", taskFilters{Query: "disk full"}, []string{failedKey}},
+		{"按关键词筛：打作用域显示名筛得到那个库", taskFilters{Query: "manga vault"}, []string{failedKey}},
+		{"按关键词筛：打类型名仍筛得到，那来自文案码", taskFilters{Query: "scan_library"}, []string{failedKey, runningKey}},
+		{"按关键词筛：任务键那种内部串筛不出东西", taskFilters{Query: failedKey}, nil},
 		{"按类型筛：两条同类型，都留下", taskFilters{Type: "scan_library"}, []string{failedKey, runningKey}},
 		{"按类型筛：换个类型，一条都不剩", taskFilters{Type: "scrape_series"}, nil},
 		{"按作用域 id 筛：只留那个库的", taskFilters{Scope: "library", ScopeID: &runningScopeID}, []string{runningKey}},
@@ -39,11 +42,13 @@ func TestTaskListFiltersArePushedDown(t *testing.T) {
 
 			seedTask(t, controller.taskEngine, taskSeed{
 				Key: failedKey, Identity: libraryTask("scan_library", 7, variantSole),
-				Total: 100, Terminal: "failed", FailError: "disk full",
+				ScopeName: "Manga Vault", Total: 100,
+				Terminal: "failed", TerminalCode: "task.msg.scan_library.failed", FailError: "disk full",
 			})
 			seedTask(t, controller.taskEngine, taskSeed{
 				Key: runningKey, Identity: libraryTask("scan_library", 8, variantSole),
-				Total: 100, CanCancel: true, CanPause: true,
+				ScopeName: "Doujin Shelf", Total: 100, StartCode: "task.msg.scan_library.started",
+				CanCancel: true, CanPause: true,
 			})
 
 			items, err := controller.taskEngine.listRunStatuses(context.Background(), tc.filters)
