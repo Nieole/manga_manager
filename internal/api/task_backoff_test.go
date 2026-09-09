@@ -33,11 +33,12 @@ func setBackoff(t testing.TB, c *Controller, factor, maxHours, stopAfter int) {
 }
 
 // autoLaunchRequest 打一次禁用 / 启用端点，返回状态码。路由经 chi 走一遍而不是直接调 handler：
-// 这两个端点与按**任务键**寻址的重试端点占着同一段路径，参数名不同，得确认它们各自取到的是自己那个。
+// 这两个端点与重试端点占着同一段路径，只在末段动词上分岔。
+// 三条各取各的参数由 TestTaskEndpointsTakeTheirOwnPathParam 在**真路由**上守着。
 func autoLaunchRequest(t *testing.T, controller *Controller, taskID int64, action string) int {
 	t.Helper()
 	router := chi.NewRouter()
-	router.Post("/api/system/tasks/{taskKey}/retry", controller.retryTask)
+	router.Post("/api/system/tasks/{taskID}/retry", controller.retryTask)
 	router.Post("/api/system/tasks/{taskID}/disable", controller.disableTask)
 	router.Post("/api/system/tasks/{taskID}/enable", controller.enableTask)
 

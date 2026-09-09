@@ -25,11 +25,11 @@ const (
 var (
 	activeStatuses = []RunStatus{StatusRunning, StatusPaused, StatusCancelling}
 	liveStatuses   = []RunStatus{StatusQueued, StatusRunning, StatusPaused, StatusCancelling}
+	// terminalStatuses 是**终态**的四种：这次运行已经跑完了，不会再变。
+	terminalStatuses = []RunStatus{StatusCompleted, StatusCancelled, StatusFailed, StatusInterrupted}
 	// startedStatuses 是「已经开跑过」的七种：活动态三种加终态四种，也就是**排队中之外**的全部。
-	startedStatuses = []RunStatus{
-		StatusRunning, StatusPaused, StatusCancelling,
-		StatusCompleted, StatusCancelled, StatusFailed, StatusInterrupted,
-	}
+	// 它由那两组拼出来而不是再抄一遍：抄的那一份只要漏掉一个新取值，「除排队中之外」就悄悄少了一种。
+	startedStatuses = append(append([]RunStatus{}, activeStatuses...), terminalStatuses...)
 )
 
 // ActiveStatuses 返回**活动态**的三种取值，供落盘端口拼出「同一任务只有一次活动运行」那条约束。
@@ -40,6 +40,12 @@ func ActiveStatuses() []RunStatus { return append([]RunStatus(nil), activeStatus
 // 排队中的运行没有开始时刻，速率、耗时与吞吐它一个都答不出。按序号取「最近那一条」而不排除它的话，
 // 一条刚排上的运行会顶掉真正在跑的那条，那几个数随之静默变成 0。
 func StartedStatuses() []RunStatus { return append([]RunStatus(nil), startedStatuses...) }
+
+// TerminalStatuses 返回**终态**的四种取值，供「只看跑完了的那些运行」那类查询使用。
+//
+// 重试按它取回可重放的那一条：**排队中**与**活动态**的运行都还没跑完，身上没有可重放的东西
+// （见 taskEngine.snapshotForRetry）。
+func TerminalStatuses() []RunStatus { return append([]RunStatus(nil), terminalStatuses...) }
 
 // LiveStatuses 返回仍会变化的四种取值（**活动态**加**排队中**），供重启时的批量转**中断**
 // 与保留裁剪的排除集合使用。
@@ -106,8 +112,9 @@ type Run struct {
 	ID     int64
 	TaskID int64
 
-	// Key 是**过渡期**字段：重试查找、清除的筛选与对外契约仍按**任务键**寻址，而新模型按运行 id
-	// 与身份四要素寻址（暂停 / 恢复 / 取消已经改过去了）。键**怎么拼**仍归 api，本包只原样携带它。
+	// Key 是**过渡期**字段：对外契约仍带着**任务键**，而新模型按运行 id 与身份四要素寻址
+	// （暂停 / 恢复 / 取消、以及重试都已经改过去了，见 ADR 0007）。
+	// 键**怎么拼**仍归 api，本包只原样携带它。
 	//
 	// 它落在运行上而不是任务上：外部库那两类的键带着会话 id，同一身份的两次运行键并不相同。
 	// 控制端点改成按对象寻址、对外契约不再带任务键之后，本字段连同它那一列一起删。

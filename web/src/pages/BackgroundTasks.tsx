@@ -256,15 +256,15 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
     return () => window.clearInterval(poll);
   }, [fetchLive, fetchTasks]);
 
-  // 三个控制动作作用在**运行**上，按运行 id 寻址；重试作用在**任务**上，仍按**任务键**。
-  // 同一个任务键此刻可以有两条仍会变化的运行（一条在跑、一条排队），按键发控制请求就答不出
+  // 三个控制动作作用在**运行**上，按运行 id 寻址；重试作用在**任务**上，按**任务 id** 寻址。
+  // 同一个任务此刻可以有两条仍会变化的运行（一条在跑、一条排队），按任务发控制请求就答不出
   // 用户按的是哪一张卡片上的按钮。忙碌标记同理按运行分，否则一条排队会把在跑那条的按钮一起灰掉。
   const runTaskAction = async (run: RunStatus, action: TaskAction) => {
     const onTask = action === 'retry';
-    setTaskActionKey(onTask ? `${run.key}:${action}` : `${run.run_id}:${action}`);
+    setTaskActionKey(onTask ? `${run.task_id}:${action}` : `${run.run_id}:${action}`);
     try {
       await apiClient.post(onTask
-        ? `/api/system/tasks/${encodeURIComponent(run.key)}/${action}`
+        ? `/api/system/tasks/${run.task_id}/${action}`
         : `/api/system/runs/${run.run_id}/${action}`);
       showToast(t(`settings.maintenance.taskAction.${action}Success`));
       await Promise.all([fetchTasks(), fetchLive()]);

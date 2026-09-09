@@ -683,6 +683,19 @@ describe('重试作用在任务上', () => {
     fireEvent.click(retries[0]);
     expect(onTaskAction).toHaveBeenCalledWith(expect.objectContaining({ run_id: 3 }), 'retry');
   });
+
+  // 忙碌态的键按**任务 id** 拼，与端点寻址的是同一个东西。按**任务键**拼的话，同一个键此刻
+  // 可以有两条仍会变化的运行，而那个键在后端已经不再寻址任何东西——按下去之后按钮不会变灰，
+  // 用户会以为没点上，于是连点几下，后台排出一串同样的运行。
+  it('重试按下之后按任务 id 认出自己那颗按钮', () => {
+    renderCenter({
+      tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3, task_id: 7, status: 'failed', retryable: true }) })],
+      taskActionKey: '7:retry',
+    });
+
+    const retry = screen.getByText('common.retry').closest('button');
+    expect(retry?.disabled).toBe(true);
+  });
 });
 
 describe('暂停的来由', () => {

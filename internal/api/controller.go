@@ -884,12 +884,12 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/tasks/summary", c.listTaskSummaries)
 		r.Post("/system/tasks/pause-all", c.pauseAllTasks)
 		r.Post("/system/tasks/resume-all", c.resumeAllTasks)
-		// 重试与禁用作用在**任务**上（前者再发起一次同一件事，后者关掉它的自动发起）：
-		// 重试仍按**过渡期**的**任务键**寻址，禁用按任务 id——禁用是身份上的长期属性，
+		// 重试与禁用作用在**任务**上（前者再发起一次同一件事，后者关掉它的自动发起），
+		// 三条一律按**任务 id** 寻址（ADR 0007：**任务键**退出寻址）——禁用是身份上的长期属性，
 		// 而外部库那两类的键带着会话 id，同一身份的两次运行键并不相同。
-		// 暂停 / 恢复 / 取消作用在**运行**上，按运行 id 寻址——同一个键此刻可以有两条仍会变化的
-		// 运行（一条在跑、一条排队），按键寻址答不出用户按的是哪一条。
-		r.Post("/system/tasks/{taskKey}/retry", c.retryTask)
+		// 暂停 / 恢复 / 取消作用在**运行**上，按运行 id 寻址——同一个任务此刻可以有两条仍会变化的
+		// 运行（一条在跑、一条排队），按任务寻址答不出用户按的是哪一条。
+		r.Post("/system/tasks/{taskID}/retry", c.retryTask)
 		r.Post("/system/tasks/{taskID}/disable", c.disableTask)
 		r.Post("/system/tasks/{taskID}/enable", c.enableTask)
 		r.Post("/system/runs/{runID}/pause", c.pauseRun)

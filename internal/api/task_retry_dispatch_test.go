@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"manga-manager/internal/config"
@@ -31,10 +32,13 @@ func newHashRebuildRetryRig(t *testing.T) (*Controller, func() []RunStatus) {
 	return c, snapshots
 }
 
+// retryTaskByKey 向重试端点发一次请求，寻址用这个**任务键**最近那次运行所属的**任务 id**——
+// 端点按任务 id 寻址（见 Controller.retryTask），而用例手里往往只有键。
 func retryTaskByKey(t *testing.T, c *Controller, key string) *httptest.ResponseRecorder {
 	t.Helper()
+	taskID := strconv.FormatInt(taskIDForKey(t, c.taskEngine, key), 10)
 	rec := httptest.NewRecorder()
-	c.retryTask(rec, requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+key+"/retry", nil, "taskKey", key))
+	c.retryTask(rec, requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+taskID+"/retry", nil, "taskID", taskID))
 	return rec
 }
 
@@ -126,7 +130,10 @@ func TestRetryOfAnActiveTaskQueues(t *testing.T) {
 			c.taskEngine.runBackground = func(func()) {}
 
 			key := lowPriorityBookHashTaskKey
-			seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: systemTask("rebuild_book_hashes", variantHashRebuildBackfill), Total: 1, CanCancel: true, CanPause: true})
+			identity := systemTask("rebuild_book_hashes", variantHashRebuildBackfill)
+			// 先播一条终态运行：重试重放的是「那次跑完的」，光有一条在跑的没有可重放的东西。
+			seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: identity, Total: 1, Terminal: "failed"})
+			seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: identity, Total: 1, CanCancel: true, CanPause: true})
 			if err := tc.control(c.taskEngine, key); err != nil {
 				t.Fatalf("把任务转入 %q 失败: %v", tc.status, err)
 			}
