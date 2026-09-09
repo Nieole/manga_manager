@@ -61,8 +61,8 @@ func TestRunSettlesByBodyError(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
-			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
-				return TaskResult{}, tc.bodyErr
+			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
+				return RunResult{}, tc.bodyErr
 			}); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
 			}
@@ -92,13 +92,13 @@ func TestRunSettlesByBodyError(t *testing.T) {
 func TestRunResultOverridesTerminalCode(t *testing.T) {
 	cases := []struct {
 		name     string
-		result   TaskResult
+		result   RunResult
 		bodyErr  error
 		wantCode string
 	}{
-		{"完成分支被覆盖", TaskResult{Code: "body.partial"}, nil, "body.partial"},
-		{"取消分支被覆盖", TaskResult{Code: "body.cancelled_in_phase_two"}, context.Canceled, "body.cancelled_in_phase_two"},
-		{"失败分支被覆盖", TaskResult{Code: "body.phase_one_failed"}, errors.New("boom"), "body.phase_one_failed"},
+		{"完成分支被覆盖", RunResult{Code: "body.partial"}, nil, "body.partial"},
+		{"取消分支被覆盖", RunResult{Code: "body.cancelled_in_phase_two"}, context.Canceled, "body.cancelled_in_phase_two"},
+		{"失败分支被覆盖", RunResult{Code: "body.phase_one_failed"}, errors.New("boom"), "body.phase_one_failed"},
 	}
 
 	for _, tc := range cases {
@@ -107,7 +107,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 
 			const key = "scan_library_1"
 			tc.result.Params = map[string]string{"written": "3"}
-			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 				return tc.result, tc.bodyErr
 			}); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -124,14 +124,14 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 	}
 }
 
-// TestRunKeepsSpecCodeWhenResultCodeEmpty 钉住零值语义：`TaskResult{}` 表示「用声明里的默认码」，
+// TestRunKeepsSpecCodeWhenResultCodeEmpty 钉住零值语义：`RunResult{}` 表示「用声明里的默认码」，
 // 而不是「把文案清空」。绝大多数任务体走的正是这条路。
 func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		return TaskResult{Params: map[string]string{"name": "Main"}}, nil
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
+		return RunResult{Params: map[string]string{"name": "Main"}}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
 	}
@@ -153,9 +153,9 @@ func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 
 	const key = "scan_library_1"
 	bodyRan := false
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		bodyRan = true
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
 	}
@@ -189,16 +189,16 @@ func TestRunQueuesDuplicateActiveKey(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		return TaskResult{}, nil
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("第一次启动返回了 %v，应为 nil", err)
 	}
 
 	secondBodyRan := false
-	err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		secondBodyRan = true
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	})
 	if err != nil {
 		t.Fatalf("同键重复启动返回 %v, want 进排队", err)
@@ -221,8 +221,8 @@ func TestRunQueuesWhileCancelling(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		return TaskResult{}, nil
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("第一次启动返回了 %v，应为 nil", err)
 	}
@@ -230,8 +230,8 @@ func TestRunQueuesWhileCancelling(t *testing.T) {
 		t.Fatalf("取消失败: %v", err)
 	}
 
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		return TaskResult{}, nil
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("取消中的任务键再次发起返回 %v, want 进排队", err)
 	}
@@ -248,12 +248,12 @@ func TestRunQueuesWhileCancelling(t *testing.T) {
 func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 	cases := []struct {
 		name string
-		body func(context.Context, *runhandle.Handle) (TaskResult, error)
+		body func(context.Context, *runhandle.Handle) (RunResult, error)
 	}{
-		{"完成", func(context.Context, *runhandle.Handle) (TaskResult, error) { return TaskResult{}, nil }},
-		{"已取消", func(context.Context, *runhandle.Handle) (TaskResult, error) { return TaskResult{}, context.Canceled }},
-		{"失败", func(context.Context, *runhandle.Handle) (TaskResult, error) { return TaskResult{}, errors.New("boom") }},
-		{"panic", func(context.Context, *runhandle.Handle) (TaskResult, error) { panic("boom") }},
+		{"完成", func(context.Context, *runhandle.Handle) (RunResult, error) { return RunResult{}, nil }},
+		{"已取消", func(context.Context, *runhandle.Handle) (RunResult, error) { return RunResult{}, context.Canceled }},
+		{"失败", func(context.Context, *runhandle.Handle) (RunResult, error) { return RunResult{}, errors.New("boom") }},
+		{"panic", func(context.Context, *runhandle.Handle) (RunResult, error) { panic("boom") }},
 	}
 
 	for _, tc := range cases {
@@ -282,7 +282,7 @@ func TestRunPanicStillMarksTaskFailed(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		panic("boom")
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
@@ -308,9 +308,9 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	spec := specForTest(key)
 	spec.ScopeName = "Main Library"
 	spec.Metadata = map[string]string{"force": "true", "scan_profile": "balanced"}
-	spec.Limits = TaskLimits{ScanProfile: "balanced", ScanConcurrency: 4}
-	if err := e.Run(libraryTask("scan_library", 7, variantSole), task.TriggerManual, spec, func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		return TaskResult{}, nil
+	spec.Limits = RunLimits{ScanProfile: "balanced", ScanConcurrency: 4}
+	if err := e.Run(libraryTask("scan_library", 7, variantSole), task.TriggerManual, spec, func(context.Context, *runhandle.Handle) (RunResult, error) {
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
 	}
@@ -350,8 +350,8 @@ func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		return TaskResult{}, nil
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
 	}
@@ -369,7 +369,7 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	e.now = clock.Now
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (RunResult, error) {
 		handle.Advance(3, 20, "progress.scanning", map[string]string{"current": "3"})
 		if task := lastPublishedTask(t, snapshots(), key); task.Current != 3 || task.Total != 20 || task.Phase != "" {
 			t.Fatalf("计数推进之后 current=%d total=%d phase=%q，它不该碰阶段", task.Current, task.Total, task.Phase)
@@ -402,7 +402,7 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 			t.Fatalf("条目名与指标动了不属于它们的字段：phase=%q current=%d total=%d code=%q",
 				task.Phase, task.Current, task.Total, task.MessageCode)
 		}
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
 	}
@@ -415,9 +415,9 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 
 	const key = "scan_library_1"
 	var captured *runhandle.Handle
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (RunResult, error) {
 		captured = handle
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
 	}

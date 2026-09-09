@@ -188,8 +188,8 @@ func (r *sseAudienceRig) runFailingTask(t *testing.T, secretPath string) {
 		Key:       key,
 		ScopeName: "资料库A",
 		Metadata:  map[string]string{"library_path": secretPath},
-	}, func(context.Context, *runhandle.Handle) (TaskResult, error) {
-		return TaskResult{}, &taskTestError{msg: secretPath + ": permission denied"}
+	}, func(context.Context, *runhandle.Handle) (RunResult, error) {
+		return RunResult{}, &taskTestError{msg: secretPath + ": permission denied"}
 	})
 	if err != nil {
 		t.Fatalf("启动任务失败: %v", err)

@@ -2812,7 +2812,7 @@ func TestRunDisplayStateRoundTripsThroughStore(t *testing.T) {
 		Key: key, Identity: libraryTask("scan_library", 7, variantSole), Total: 10,
 		CanCancel: true, CanPause: true,
 		Labels: map[string]string{"current_library": "Main"},
-		Limits: TaskLimits{ScannerWorkersEffective: 1, StorageProfile: "hdd_external", VolumeKey: "e:"},
+		Limits: RunLimits{ScannerWorkersEffective: 1, StorageProfile: "hdd_external", VolumeKey: "e:"},
 	})
 	current := 5
 	progress.Report(runhandle.Frame{
@@ -2864,7 +2864,7 @@ func TestScanTaskEffectiveLimitsUseExternalHDDPolicy(t *testing.T) {
 	config.NormalizeConfig(&cfg)
 	controller.config.Replace(&cfg)
 
-	limit := controller.taskLimitsForPath(libraryPath)
+	limit := controller.runLimitsForPath(libraryPath)
 	if limit.ScanProfile != string(scanner.ScanProfileIdentity) {
 		t.Fatalf("expected identity scan profile, got %+v", limit)
 	}
@@ -2916,7 +2916,7 @@ func TestScanTaskEffectiveLimitsFollowScannedPath(t *testing.T) {
 	}
 
 	cfg := applyProfile(t, scanner.ScanProfileMetadata)
-	onPath := controller.taskLimitsForPath(libraryPath)
+	onPath := controller.runLimitsForPath(libraryPath)
 	if onPath.StorageProfile != config.StorageProfileCustom || onPath.ArchiveOpenConcurrency != 4 {
 		t.Fatalf("按库策略没生效：%+v", onPath)
 	}
@@ -2924,14 +2924,14 @@ func TestScanTaskEffectiveLimitsFollowScannedPath(t *testing.T) {
 		t.Fatalf("面板报 %d，扫描器起 %d", onPath.ScannerWorkersEffective, want)
 	}
 
-	globalDefault := controller.taskLimitsForPath("")
+	globalDefault := controller.runLimitsForPath("")
 	if globalDefault.ScannerWorkersEffective == onPath.ScannerWorkersEffective {
 		t.Fatalf("空路径与库路径报出同一个数 %d —— 徽章没跟着被扫的路径走", onPath.ScannerWorkersEffective)
 	}
 
 	// 档位是从配置里取的，不是钉死的：加码到 identity 之后哈希并发这一步开始收窄，数字必须更小。
 	applyProfile(t, scanner.ScanProfileIdentity)
-	identity := controller.taskLimitsForPath(libraryPath)
+	identity := controller.runLimitsForPath(libraryPath)
 	if identity.ScanProfile != string(scanner.ScanProfileIdentity) {
 		t.Fatalf("档位没跟着配置走：%+v", identity)
 	}

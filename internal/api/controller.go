@@ -140,7 +140,7 @@ type RunSnapshot struct {
 	// RatePerMinute 是这次运行**至今的平均速率**：已处理的条数折成每分钟多少条。
 	//
 	// **分母是这次运行真正在干活的那一段**——从开跑量到此刻（终态量到结束时刻），
-	// 并把**暂停**逐段扣掉（见 enrichTaskProgress）。它答的是「这次运行整体跑多快」，
+	// 并把**暂停**逐段扣掉（见 enrichRunProgress）。它答的是「这次运行整体跑多快」，
 	// 因此卡住时只缓慢下滑；「它此刻还在不在产出」由曲线上那个 RunSample.ThroughputPerMinute
 	// 答，分母是墙上时间。两个数都对，但不是同一个数。
 	RatePerMinute float64    `json:"rate_per_minute,omitempty"`
@@ -167,7 +167,7 @@ type RunSnapshot struct {
 	CoalescedCount int               `json:"coalesced_count,omitempty"`
 	Phase          string            `json:"phase,omitempty"`
 	CurrentItem    string            `json:"current_item,omitempty"`
-	EffectiveLimit *TaskLimits       `json:"effective_limit,omitempty"`
+	EffectiveLimit *RunLimits        `json:"effective_limit,omitempty"`
 	Metrics        map[string]int64  `json:"metrics,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 	Params         map[string]string `json:"params,omitempty"`
@@ -269,7 +269,7 @@ type TaskRuntime struct {
 	StartedAt time.Time
 }
 
-type TaskLimits struct {
+type RunLimits struct {
 	ScanProfile                string `json:"scan_profile,omitempty"`
 	ScannerWorkersConfigured   int    `json:"scanner_workers_configured,omitempty"`
 	ScannerWorkersEffective    int    `json:"scanner_workers_effective,omitempty"`

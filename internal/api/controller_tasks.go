@@ -231,16 +231,16 @@ func taskIOMetricsParams(handleIO runhandle.IOMetrics) map[string]string {
 	return params
 }
 
-// taskLimitsForPath 拼出任务面板上那块并发徽章：这条路径上的存储画像，加上 scanner.WorkerCount
+// runLimitsForPath 拼出任务面板上那块并发徽章：这条路径上的存储画像，加上 scanner.WorkerCount
 // 在它上面给出的 worker 数。
 //
 // 入参必须是一条**真的会被扫**的库路径，否则报出来的数字没有对应的实物——只有扫描任务调它，
 // 别的后台任务受**磁盘作业**按工种裁定的上限约束，与扫描 worker 数无关。
-func (c *Controller) taskLimitsForPath(path string) TaskLimits {
+func (c *Controller) runLimitsForPath(path string) RunLimits {
 	cfg := c.currentConfig()
 	profile := scanner.NormalizeScanProfile(cfg.Scanner.ScanProfile)
 	policy := config.ResolveStoragePolicy(cfg, path)
-	return TaskLimits{
+	return RunLimits{
 		ScanProfile:                string(profile),
 		ScannerWorkersConfigured:   cfg.Scanner.Workers,
 		ScannerWorkersEffective:    scanner.WorkerCount(cfg, path, scanner.ScanOptions{Profile: profile}),

@@ -4,7 +4,7 @@
  * 重新生成：`go run ./cmd/tsgen`；CI 会校验其与源一致。
  */
 
-export interface TaskLimits {
+export interface RunLimits {
   scan_profile?: string;
   scanner_workers_configured?: number;
   scanner_workers_effective?: number;
@@ -47,7 +47,7 @@ export interface RunSnapshot {
   coalesced_count?: number;
   phase?: string;
   current_item?: string;
-  effective_limit?: TaskLimits;
+  effective_limit?: RunLimits;
   metrics?: Record<string, number>;
   labels?: Record<string, string>;
   params?: Record<string, string>;

@@ -162,7 +162,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 // launchAIGroupingTask 把资料库里尚未归入合集的系列交给 LLM 智能分组，走引擎的启动入口。
 //
 // 它的**完成**分支有三个（生成了审阅单 / 全都已分组 / 没产出可审阅的合集），失败分支有三个，
-// 取消分支只有一个：都由任务体经 TaskResult 覆盖任务声明里的默认码表达。
+// 取消分支只有一个：都由任务体经 RunResult 覆盖任务声明里的默认码表达。
 func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger task.Trigger) error {
 	scopeName := c.libraryScopeName(libID)
 
@@ -181,7 +181,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 		FailCode:     "task.msg.ai_grouping.fail_generate",
 	}
 
-	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		ctx := metadata.WithLocale(taskCtx, locale)
 
 		handle.Phase("collecting_series", "task.msg.ai_grouping.collecting_series", nil)
@@ -198,10 +198,10 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 		slog.InfoContext(ctx, "AI grouping: fetched candidate series", "library_id", libID, "count", len(seriesRows))
 
 		if len(seriesRows) == 0 {
-			return TaskResult{Code: "task.msg.ai_grouping.all_already_grouped"}, nil
+			return RunResult{Code: "task.msg.ai_grouping.all_already_grouped"}, nil
 		}
 		if err := handle.Checkpoint(ctx); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 
 		chunkSize := 50
@@ -235,7 +235,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 			if !errors.Is(err, context.Canceled) {
 				slog.ErrorContext(ctx, "Failed to generate grouping", "library_id", libID, "error", err)
 			}
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 
 		done := 1
@@ -252,11 +252,11 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 			return taskFailure("task.msg.ai_grouping.fail_create_review", err), err
 		}
 		if reviewCollections == 0 {
-			return TaskResult{Code: "task.msg.ai_grouping.no_review_collections"}, nil
+			return RunResult{Code: "task.msg.ai_grouping.no_review_collections"}, nil
 		}
 
 		c.PublishEvent("refresh")
-		return TaskResult{Params: map[string]string{
+		return RunResult{Params: map[string]string{
 			"reviewId": strconv.FormatInt(review.ID, 10),
 			"count":    strconv.Itoa(reviewCollections),
 		}}, nil

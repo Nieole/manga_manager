@@ -142,7 +142,7 @@ func (c *Controller) startCoverRun(libraryID int64, trigger task.Trigger, backfi
 	}
 
 	return c.taskEngine.start(libraryTask("generate_covers", libraryID, variantSole), trigger, spec,
-		func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 			batches := c.coverRuns.claim(libraryID)
 			if backfill {
 				missing, err := c.scanner.QueueMissingCovers(ctx, libraryID)
@@ -159,11 +159,11 @@ func (c *Controller) startCoverRun(libraryID int64, trigger task.Trigger, backfi
 				// 只算前面几批会让终态文案报出一个比实际小的数。
 				observer.fixate()
 				if err != nil {
-					return TaskResult{Params: map[string]string{"name": lib.Name}}, err
+					return RunResult{Params: map[string]string{"name": lib.Name}}, err
 				}
 			}
 			c.PublishEvent("refresh_thumbnails")
-			return TaskResult{Params: map[string]string{
+			return RunResult{Params: map[string]string{
 				"name":      lib.Name,
 				"generated": strconv.FormatInt(observer.generated(), 10),
 			}}, nil

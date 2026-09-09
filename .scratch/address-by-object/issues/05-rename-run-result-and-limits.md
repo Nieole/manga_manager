@@ -8,13 +8,13 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `TaskResult` 改名为 `RunResult`（约 124 处：它是每个任务体的返回类型）
-- [ ] `TaskLimits` 改名为 `RunLimits`（约 17 处）
-- [ ] 相关函数名跟着改：取最近若干类型的运行、给进度补料、算至今暂停了多久
-- [ ] `TaskIdentity` 与 `TaskVariant` **保留原名**
-- [ ] `cmd/tsgen` 的受管契约清单跟着改（`TaskLimits` 是生成目标）；重生并通过 CI 漂移检查
-- [ ] 前端该类型的引用跟着改
-- [ ] 纯改名：没有一条行为断言需要改动，既有用例全绿即是验收
-- [ ] 后端与前端门禁全绿
+- [x] `TaskResult` 改名为 `RunResult`（约 124 处：它是每个任务体的返回类型）
+- [x] `TaskLimits` 改名为 `RunLimits`（约 17 处）
+- [x] 相关函数名跟着改：取最近若干类型的运行、给进度补料、算至今暂停了多久
+- [x] `TaskIdentity` 与 `TaskVariant` **保留原名**
+- [x] `cmd/tsgen` 的受管契约清单跟着改（`TaskLimits` 是生成目标）；重生并通过 CI 漂移检查
+- [x] 前端该类型的引用跟着改
+- [x] 纯改名：没有一条行为断言需要改动，既有用例全绿即是验收
+- [x] 后端与前端门禁全绿

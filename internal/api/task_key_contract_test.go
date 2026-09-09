@@ -38,7 +38,7 @@ func TestPublishedRunSnapshotCarriesNoTaskKey(t *testing.T) {
 		libraryTask("scan_library", 1, variantSole),
 		task.TriggerManual,
 		RunSpec{Key: "scan_library_1", ScopeName: "Main", StartCode: "task.msg.scan.start"},
-		func(context.Context, *runhandle.Handle) (TaskResult, error) { return TaskResult{}, nil },
+		func(context.Context, *runhandle.Handle) (RunResult, error) { return RunResult{}, nil },
 	)
 	if err != nil {
 		t.Fatalf("发起任务失败: %v", err)
