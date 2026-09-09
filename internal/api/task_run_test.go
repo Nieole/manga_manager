@@ -369,24 +369,24 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	e.now = clock.Now
 
 	const key = "scan_library_1"
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		tp.Advance(3, 20, "progress.scanning", map[string]string{"current": "3"})
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		handle.Advance(3, 20, "progress.scanning", map[string]string{"current": "3"})
 		if task := lastPublishedTask(t, snapshots(), key); task.Current != 3 || task.Total != 20 || task.Phase != "" {
 			t.Fatalf("计数推进之后 current=%d total=%d phase=%q，它不该碰阶段", task.Current, task.Total, task.Phase)
 		}
 
-		tp.Phase("hashing", "progress.hashing", nil)
+		handle.Phase("hashing", "progress.hashing", nil)
 		if task := lastPublishedTask(t, snapshots(), key); task.Phase != "hashing" || task.Current != 3 || task.Total != 20 {
 			t.Fatalf("阶段播报之后 phase=%q current=%d total=%d，它不该碰计数与总数", task.Phase, task.Current, task.Total)
 		}
 
 		// 条目名、指标与标签都不改变展示态，因而会被节流水位吞掉；越过窗口才看得到它们的那一帧。
 		clock.advance(taskProgressPublishInterval * 2)
-		tp.Report(runhandle.Frame{Item: "volume_03.cbz"})
+		handle.Report(runhandle.Frame{Item: "volume_03.cbz"})
 		clock.advance(taskProgressPublishInterval * 2)
-		tp.Report(runhandle.Frame{Metrics: map[string]int64{"hashed_files": 12}})
+		handle.Report(runhandle.Frame{Metrics: map[string]int64{"hashed_files": 12}})
 		clock.advance(taskProgressPublishInterval * 2)
-		tp.Report(runhandle.Frame{Labels: map[string]string{"provider_name": "Bangumi"}})
+		handle.Report(runhandle.Frame{Labels: map[string]string{"provider_name": "Bangumi"}})
 
 		task := lastPublishedTask(t, snapshots(), key)
 		if task.CurrentItem != "volume_03.cbz" {
@@ -414,15 +414,15 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
-	var handle *runhandle.Handle
-	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		handle = tp
+	var captured *runhandle.Handle
+	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		captured = handle
 		return TaskResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动入口返回了 %v，应为 nil", err)
 	}
 
-	handle.Phase("hashing", "progress.hashing", nil)
+	captured.Phase("hashing", "progress.hashing", nil)
 	task := lastPublishedTask(t, snapshots(), key)
 	if task.Status != "completed" || task.Phase == "hashing" {
 		t.Fatalf("终态之后的迟到进度改写了任务：status=%q phase=%q", task.Status, task.Phase)

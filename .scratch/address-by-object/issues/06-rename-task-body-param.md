@@ -5,10 +5,10 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `internal/api` 里任务体的**运行句柄**形参由 `tp` 改为 `handle`（约 74 处）
-- [ ] 纯局部改名，不动任何签名的类型、不动任何行为
-- [ ] 既有用例全绿即是验收，不新增用例
-- [ ] 不重生 `generated.ts`（形参名不进契约）
-- [ ] 后端门禁全绿
+- [x] `internal/api` 里任务体的**运行句柄**形参由 `tp` 改为 `handle`（约 74 处）
+- [x] 纯局部改名，不动任何签名的类型、不动任何行为
+- [x] 既有用例全绿即是验收，不新增用例
+- [x] 不重生 `generated.ts`（形参名不进契约）
+- [x] 后端门禁全绿

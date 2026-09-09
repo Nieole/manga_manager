@@ -105,7 +105,7 @@ func (c *Controller) launchCleanupRunHistoryTask() error {
 	}
 
 	return c.taskEngine.Run(systemTask(cleanupRunHistoryTaskKey, variantSole), task.TriggerChained, spec,
-		func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+		func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 			result, err := c.taskEngine.pruneHistory(ctx, policy)
 			if err != nil {
 				return TaskResult{}, err
@@ -113,7 +113,7 @@ func (c *Controller) launchCleanupRunHistoryTask() error {
 			// 清了多少既进**指标**（可聚合查询），也进终态文案的占位参数（用户直接读得到）。
 			// 一次运行只裁一次，因此这一帧握着的就是全量当前值。
 			done := 1
-			tp.Report(runhandle.Frame{
+			handle.Report(runhandle.Frame{
 				Current: &done,
 				Total:   &done,
 				Phase:   "cleanup",

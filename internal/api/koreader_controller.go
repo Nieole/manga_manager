@@ -792,9 +792,9 @@ func (c *Controller) launchRebuildBookHashesTask(trigger task.Trigger) error {
 		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildForeground), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildForeground), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
-		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, koreaderFingerprintHandle{Handle: tp})
+		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, koreaderFingerprintHandle{Handle: handle})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -818,8 +818,8 @@ func (c *Controller) launchReconcileKOReaderProgressTask(trigger task.Trigger) e
 		FailCode:     "task.msg.reconcile_koreader_progress.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("reconcile_koreader_progress", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, koreaderReconcileHandle{Handle: tp})
+	return c.taskEngine.Run(systemTask("reconcile_koreader_progress", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		updated, total, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize, koreaderReconcileHandle{Handle: handle})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -850,11 +850,11 @@ func (c *Controller) launchRefreshKOReaderMatchingTask(trigger task.Trigger) err
 		FailCode:     "task.msg.refresh_koreader_matching.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("refresh_koreader_matching", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		tp.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
+	return c.taskEngine.Run(systemTask("refresh_koreader_matching", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		handle.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
 		opts := ksvc.RebuildOptions{BatchSize: koreaderTaskBatchSize}
 		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts,
-			koreaderFingerprintHandle{Handle: tp, holdStepCount: true})
+			koreaderFingerprintHandle{Handle: handle, holdStepCount: true})
 		if err != nil {
 			return taskFailure("task.msg.refresh_koreader_matching.rebuild_failed", err), err
 		}
@@ -862,14 +862,14 @@ func (c *Controller) launchRefreshKOReaderMatchingTask(trigger task.Trigger) err
 		// 阶段跃迁与阶段计数是同一件事，必须一帧报出：分成两次的话，先出去的那条载荷带着
 		// 新计数与旧阶段名，而补齐的那条会被水位吞掉（阶段与文案码此时已经一字未变）。
 		reconcileStep := 1
-		tp.Report(runhandle.Frame{
+		handle.Report(runhandle.Frame{
 			Current: &reconcileStep,
 			Phase:   "reconciling_progress",
 			Code:    "task.msg.refresh_koreader_matching.reconcile_start",
 			Params:  map[string]string{"updated": strconv.Itoa(updatedBooks), "total": strconv.Itoa(totalBooks)},
 		})
 		updatedProgress, totalProgress, err := c.koreader.ReconcileProgress(ctx, koreaderTaskBatchSize,
-			koreaderReconcileHandle{Handle: tp, holdStepCount: true})
+			koreaderReconcileHandle{Handle: handle, holdStepCount: true})
 		if err != nil {
 			return taskFailure("task.msg.refresh_koreader_matching.reconcile_failed", err), err
 		}
