@@ -483,7 +483,7 @@ export default function SeriesDetailPage() {
         onApplyMetadataReview={metaReview.apply}
         onRejectMetadataReview={metaReview.reject}
         failedTasks={ctx.failedTasks}
-        retryingTaskKey={failedTasks.retryingTaskKey}
+        retryingTaskId={failedTasks.retryingTaskId}
         onRetryFailedTask={failedTasks.retry}
         taskTypeLabel={taskTypeLabel}
       />

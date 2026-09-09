@@ -1,5 +1,5 @@
 // 任务子域在 api 这一侧的**适配层**：把控制端点（暂停 / 恢复 / 取消按**运行 id** 寻址，
-// 重试与清除仍按**任务键**，全部暂停 / 全部恢复作用在全体运行上）、对外那份 RunStatus 形状与
+// 重试与禁用按**任务 id**，清除仍按筛选条件，全部暂停 / 全部恢复作用在全体运行上）、对外那份 RunStatus 形状与
 // **重启函数**注册表，接到 `internal/task` 的领域引擎与 `internal/taskstore` 的落盘上。
 // **事实来源只有库，这一层不留任务表**（去留的论证见 taskEngine 的符号 doc）。
 // 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
@@ -30,6 +30,10 @@ var (
 	errTaskNotCancelable     = errors.New("task cannot be cancelled")
 	errTaskGateUnavailable   = errors.New("task pause gate is not available")
 	errTaskCancelUnavailable = errors.New("task cancellation is not available")
+	// errNoRetryableRun 是「这个任务一条跑完的运行都没有」，与「任务不存在」分开：
+	// 一个正在跑、还没跑完过的任务照样答不出「再跑一次哪一次」，而它就列在任务中心里。
+	// 合成一条的话，用户对着屏幕上明明白白的那一行被告知任务不存在。
+	errNoRetryableRun = errors.New("no finished run to retry")
 )
 
 // taskPanicMessageCode 是 panic 兜底下发的失败文案码，taskInterruptedMessageCode 是重启时
@@ -483,45 +487,63 @@ func (e *taskEngine) statusesFrom(ctx context.Context, snapshots []task.Snapshot
 	return items, nil
 }
 
-// latestRunFilterFor 是「这个**任务键**最近的那一次运行」的谓词。
+// firstStatusFor 取符合这条谓词的第一条运行的对外快照；一条都不符合即 found 为 false。
 //
-// 「最近」判的是序号而不是时间列：序号由引擎在临界区里单调发放，而每一次会被用户看见的变化都取一个，
-// 因此同一个键上活着的那一条恒排在它自己的历史之前。
-func latestRunFilterFor(key string) task.RunFilter {
-	return task.RunFilter{Key: key, Order: task.OrderSequenceDesc, Limit: 1}
-}
-
-// latestRunByKey 取这个任务键最近的那一次运行；查不到即 errTaskNotFound。
-//
-// 只取运行行，不装快照：控制动作要的只是一个运行 id，而装快照要连带把四张侧表读一遍。
-func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Run, error) {
-	runs, err := e.runStore.ListRuns(ctx, latestRunFilterFor(key))
+// 「一条都没有」交回布尔值而不是某个哨兵错误：符合与否是查询的正常结果，而「这该翻成哪一句话」
+// 各调用方答得不一样——重试要分「任务不存在」与「它一次都还没跑完」，用例只想知道在不在。
+func (e *taskEngine) firstStatusFor(ctx context.Context, filter task.RunFilter) (status RunStatus, found bool, err error) {
+	snapshots, err := e.engine.ListSnapshots(ctx, filter)
 	if err != nil {
-		return task.Run{}, err
-	}
-	if len(runs) == 0 {
-		return task.Run{}, errTaskNotFound
-	}
-	return runs[0], nil
-}
-
-// snapshotForRetry 取回任务快照供重试：按**任务键**取它最近的那一次运行。
-//
-// 旧引擎在这里要先查内存表再退回查库，因为内存表是有上限的缓存、重启后更是空的，而**中断**任务
-// 恰恰只在库里。现在只有库一个来源，这条分岔随之消失。
-func (e *taskEngine) snapshotForRetry(ctx context.Context, key string) (RunStatus, error) {
-	snapshots, err := e.engine.ListSnapshots(ctx, latestRunFilterFor(key))
-	if err != nil {
-		return RunStatus{}, err
+		return RunStatus{}, false, err
 	}
 	if len(snapshots) == 0 {
-		return RunStatus{}, errTaskNotFound
+		return RunStatus{}, false, nil
 	}
 	items, err := e.statusesFrom(ctx, snapshots)
 	if err != nil {
+		return RunStatus{}, false, err
+	}
+	return items[0], true, nil
+}
+
+// snapshotForRetry 取回任务快照供重试：按**任务 id** 取它最近一条进入**终态**的运行。
+//
+// 不按**任务键**寻址（ADR 0007）：键是同一身份历次运行共用的一个串，而队列一开，同一个键此刻
+// 可以有两条仍会变化的运行——「最近那一条」由序号决定、序号每有一帧就换一次主人，寻址对象
+// 本身因此是不确定的。任务 id 是界面上那张卡片自己带着的（RunStatus.TaskID），按它寻址没有第二种解释。
+//
+// 只挑**终态**：重试的意思是「那次跑完的，再跑一次」，而**排队中**与**活动态**的运行还没跑完，
+// 身上没有可重放的东西。不挑的话，只要这个任务有一条排队中的运行，它就永远是「最近那一条」
+// ——序号在入队与每次**合并**时都会重取——于是用户点的是那条刚失败的卡片，重放的却是它的入参。
+//
+// 「最近」判的是序号而不是时间列：序号由引擎在临界区里单调发放，而每一次会被用户看见的变化都取一个。
+//
+// 一条都没挑出来时再问一次这个任务在不在，好把两种来路分开：不存在的 id 与「存在、但一次都还
+// 没跑完」答的不是同一句话，而后者就列在任务中心里正跑着。多的这一次查询只落在失败路径上。
+//
+// 旧引擎在这里要先查内存表再退回查库，因为内存表是有上限的缓存、重启后更是空的，而**中断**任务
+// 恰恰只在库里。现在只有库一个来源，这条分岔随之消失。
+func (e *taskEngine) snapshotForRetry(ctx context.Context, taskID int64) (RunStatus, error) {
+	status, found, err := e.firstStatusFor(ctx, task.RunFilter{
+		TaskID:   taskID,
+		Statuses: task.TerminalStatuses(),
+		Order:    task.OrderSequenceDesc,
+		Limit:    1,
+	})
+	if err != nil {
 		return RunStatus{}, err
 	}
-	return items[0], nil
+	if found {
+		return status, nil
+	}
+	owners, err := e.runStore.LoadTasks(ctx, []int64{taskID})
+	if err != nil {
+		return RunStatus{}, err
+	}
+	if _, ok := owners[taskID]; !ok {
+		return RunStatus{}, errTaskNotFound
+	}
+	return RunStatus{}, errNoRetryableRun
 }
 
 // latestTaskByTypes 返回给定类型中最近**开跑过**的那一次运行；无匹配返回 nil。

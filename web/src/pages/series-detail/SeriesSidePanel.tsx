@@ -38,14 +38,14 @@ interface SeriesSidePanelProps {
   onRejectMetadataReview: (id: number) => void;
 
   failedTasks: SeriesFailedTask[];
-  retryingTaskKey: string | null;
-  onRetryFailedTask: (taskKey: string) => void;
+  retryingTaskId: number | null;
+  onRetryFailedTask: (taskId: number) => void;
   taskTypeLabel: (type: string) => string;
 }
 
 export function SeriesSidePanel(props: SeriesSidePanelProps) {
   const { t, formatDateTime } = useI18n();
-  // 重试落在 POST /api/system/tasks/{key}/retry，整片 /api/system/ 后端都只给管理员；
+  // 重试落在 POST /api/system/tasks/{taskID}/retry，整片 /api/system/ 后端都只给管理员；
   // 失败任务本身是只读信息，仍留给普通用户看。
   const { isAdmin } = useAuth();
 
@@ -219,11 +219,11 @@ export function SeriesSidePanel(props: SeriesSidePanelProps) {
                         {task.retryable && isAdmin && (
                           <button
                             type="button"
-                            onClick={() => props.onRetryFailedTask(task.key)}
-                            disabled={props.retryingTaskKey === task.key}
+                            onClick={() => props.onRetryFailedTask(task.task_id)}
+                            disabled={props.retryingTaskId === task.task_id}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-100 transition-colors disabled:opacity-60"
                           >
-                            {props.retryingTaskKey === task.key ? (
+                            {props.retryingTaskId === task.task_id ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
                               <Repeat2 className="w-3.5 h-3.5" />

@@ -370,12 +370,43 @@ func TestSeededRunCarriesItsRunID(t *testing.T) {
 	}
 }
 
-// ---- 按**任务键**寻址的控制动作（仅用例） ----
+// ---- 按**任务键**寻址（仅用例） ----
 //
-// 生产按**运行 id** 寻址（见 taskEngine.pauseRun）：同一个键此刻可以有两条仍会变化的运行，
-// 键答不出用例按的是哪一条。而用例手里往往只有键，因此在这里补一道解析：取这个键最近的那一次
-// 运行再控制它——正是这三个方法从生产里搬走之前的口径。要指名道姓控制某一条的用例，
-// 直接调 pauseRun / resumeRun / cancelRun。
+// 生产一条按键的寻址都没有了（ADR 0007）：控制动作按**运行 id**，重试与禁用按**任务 id**。
+// 而用例手里往往只有键——播种声明上写的就是它——因此在这里补一道解析：取这个键最近的那一次运行，
+// 再从它身上取运行 id 或任务 id。这几个连同 RunFilter.Key 那条谓词一起，由删任务键那张票带走。
+
+// latestRunFilterFor 是「这个**任务键**最近的那一次运行」的谓词。
+//
+// 「最近」判的是序号而不是时间列：序号由引擎在临界区里单调发放，而每一次会被用户看见的变化都取一个，
+// 因此同一个键上活着的那一条恒排在它自己的历史之前。
+func latestRunFilterFor(key string) task.RunFilter {
+	return task.RunFilter{Key: key, Order: task.OrderSequenceDesc, Limit: 1}
+}
+
+// latestRunByKey 取这个任务键最近的那一次运行；查不到即 errTaskNotFound。
+//
+// 只取运行行，不装快照：控制动作要的只是一个运行 id，而装快照要连带把四张侧表读一遍。
+func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Run, error) {
+	runs, err := e.runStore.ListRuns(ctx, latestRunFilterFor(key))
+	if err != nil {
+		return task.Run{}, err
+	}
+	if len(runs) == 0 {
+		return task.Run{}, errTaskNotFound
+	}
+	return runs[0], nil
+}
+
+// taskIDForKey 取这个**任务键**最近那次运行所属的**任务 id**，供按任务寻址的端点用例寻址。
+func taskIDForKey(t testing.TB, e *taskEngine, key string) int64 {
+	t.Helper()
+	run, err := e.latestRunByKey(context.Background(), key)
+	if err != nil {
+		t.Fatalf("任务键 %q 取不到运行: %v", key, err)
+	}
+	return run.TaskID
+}
 
 func controlByKey(e *taskEngine, key string, action func(int64) error) error {
 	run, err := e.latestRunByKey(context.Background(), key)

@@ -3182,10 +3182,7 @@ func TestRetryTaskRestartsRetryableTask(t *testing.T) {
 		Terminal: "failed", TerminalCode: seededFailCode,
 	})
 
-	req := requestWithRouteParam(http.MethodPost, "/api/system/tasks/scan_series_999/retry", nil, "taskKey", "scan_series_999")
-	rec := httptest.NewRecorder()
-	controller.retryTask(rec, req)
-
+	rec := retryTaskByKey(t, controller, "scan_series_999")
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -4534,17 +4531,33 @@ func TestRunProgressIsVisibleImmediately(t *testing.T) {
 func TestRetryTaskErrorSemantics(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	// 不存在的任务 -> 404
+	// 不存在的任务 -> 404，且说的是「任务不存在」而不是「没有可重试的运行」：
+	// 后者那句话的意思是「任务在、只是没跑完过」，对一个根本不存在的 id 说它是假的。
 	rec := httptest.NewRecorder()
-	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "does_not_exist_1"))
+	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskID", "424242"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("nonexistent task: expected 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
+	var missing map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &missing); err != nil {
+		t.Fatalf("nonexistent task: decode body: %v (raw=%s)", err, rec.Body.String())
+	}
+	if missing["error"] != "Task not found" {
+		t.Fatalf("nonexistent task: error = %q, want %q", missing["error"], "Task not found")
+	}
 
-	// 运行中的任务 -> 接受，那次重试进**排队中**：准入只剩一处，而那一处不再拒绝，只是让它排队。
-	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Identity: seriesTask("scan_series", 5, variantSole), Total: 1})
+	// 不是数字的任务 id -> 400，不得当成「查不到」。
 	rec = httptest.NewRecorder()
-	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_series_5"))
+	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskID", "scan_series_5"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed task id: expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 已经在跑的任务 -> 接受，那次重试进**排队中**：准入只剩一处，而那一处不再拒绝，只是让它排队。
+	// 先播一条终态运行再播那条活动运行：重试重放的是跑完的那一次，光有一条在跑的没有可重放的东西。
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Identity: seriesTask("scan_series", 5, variantSole), Total: 1, Terminal: "failed"})
+	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_series_5", Identity: seriesTask("scan_series", 5, variantSole), Total: 1})
+	rec = retryTaskByKey(t, controller, "scan_series_5")
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("running task retry: expected 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -4554,8 +4567,7 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 
 	// 内部错误（scan_library 指向不存在的库，GetLibrary 失败）-> 500，不得混进 409。
 	seedTask(t, controller.taskEngine, taskSeed{Key: "scan_library_77777", Identity: libraryTask("scan_library", 77777, variantSole), Total: 1, Terminal: "failed"})
-	rec = httptest.NewRecorder()
-	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskKey", "scan_library_77777"))
+	rec = retryTaskByKey(t, controller, "scan_library_77777")
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("internal error retry: expected 500, got %d body=%s", rec.Code, rec.Body.String())
 	}

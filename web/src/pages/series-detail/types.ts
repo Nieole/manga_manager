@@ -161,6 +161,8 @@ export interface MetadataReviewResponse {
 }
 
 export interface SeriesFailedTask {
+  // 重试按**任务 id** 寻址（ADR 0007：**任务键**退出寻址）；key 只留给人眼辨认那一行。
+  task_id: number;
   key: string;
   type: string;
   scope_name?: string;

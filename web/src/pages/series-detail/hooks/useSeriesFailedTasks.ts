@@ -12,13 +12,13 @@ interface UseSeriesFailedTasksParams {
 }
 
 export function useSeriesFailedTasks({ seriesId, setFailedTasks, showToast, t }: UseSeriesFailedTasksParams) {
-  const [retryingTaskKey, setRetryingTaskKey] = useState<string | null>(null);
+  const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
 
   const retry = useCallback(
-    async (taskKey: string) => {
-      setRetryingTaskKey(taskKey);
+    async (taskId: number) => {
+      setRetryingTaskId(taskId);
       try {
-        await apiClient.post(`/api/system/tasks/${encodeURIComponent(taskKey)}/retry`);
+        await apiClient.post(`/api/system/tasks/${taskId}/retry`);
         showToast(t('series.toast.retryTaskQueued'), 'success');
         if (seriesId) {
           const res = await apiClient.get(`/api/system/tasks?scope=series&scope_id=${seriesId}&status=failed&limit=5`);
@@ -27,11 +27,11 @@ export function useSeriesFailedTasks({ seriesId, setFailedTasks, showToast, t }:
       } catch (err) {
         showToast(getApiErrorMessage(err, t('series.toast.retryTaskFailed')), 'error');
       } finally {
-        setRetryingTaskKey(null);
+        setRetryingTaskId(null);
       }
     },
     [seriesId, setFailedTasks, showToast, t],
   );
 
-  return { retryingTaskKey, retry };
+  return { retryingTaskId, retry };
 }

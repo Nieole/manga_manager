@@ -146,6 +146,21 @@ func decodePushFrame(payload, event string) (RunPush, bool) {
 	return frame, true
 }
 
+// latestStatusByKey 取这个**任务键**最近那一次运行的对外快照，**不挑状态**。
+//
+// 它与 snapshotForRetry 是两个问题：那边答的是「有什么可以重放」，因此只看**终态**；
+// 这边答的是「此刻这个键上最新的一条长什么样」，排队中与活动态正是用例要断言的东西。
+func latestStatusByKey(ctx context.Context, e *taskEngine, key string) (RunStatus, error) {
+	status, found, err := e.firstStatusFor(ctx, latestRunFilterFor(key))
+	if err != nil {
+		return RunStatus{}, err
+	}
+	if !found {
+		return RunStatus{}, errTaskNotFound
+	}
+	return status, nil
+}
+
 // currentTask 取这个**任务键**最近那一次运行的对外快照，供用例断言状态。
 //
 // 它走的是生产的读取路径（库），不是引擎内部的某个字段：任务与运行的事实来源只有库，
@@ -153,7 +168,7 @@ func decodePushFrame(payload, event string) (RunPush, bool) {
 // 一条不存在的运行上。
 func currentTask(t testing.TB, e *taskEngine, key string) RunStatus {
 	t.Helper()
-	status, err := e.snapshotForRetry(context.Background(), key)
+	status, err := latestStatusByKey(context.Background(), e, key)
 	if err != nil {
 		t.Fatalf("任务 %q 在库里找不到: %v", key, err)
 	}
@@ -163,7 +178,7 @@ func currentTask(t testing.TB, e *taskEngine, key string) RunStatus {
 // taskExists 回答「这个任务键在库里还有没有运行」，供「清除之后应当没了」这类断言使用。
 func taskExists(t testing.TB, e *taskEngine, key string) bool {
 	t.Helper()
-	_, err := e.snapshotForRetry(context.Background(), key)
+	_, err := latestStatusByKey(context.Background(), e, key)
 	if err == nil {
 		return true
 	}

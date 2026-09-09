@@ -21,8 +21,6 @@ import (
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/task"
-
-	"github.com/go-chi/chi/v5"
 )
 
 // taskRelauncher 用原运行的作用域与**任务参数**重新发起同一个任务。返回 errTaskAlreadyRunning
@@ -332,14 +330,20 @@ func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
-	taskKey := chi.URLParam(r, "taskKey")
-	if taskKey == "" {
-		jsonError(w, http.StatusBadRequest, "Missing task key")
+	taskID, err := parseID(r, "taskID")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid task ID")
 		return
 	}
 
-	run, err := c.taskEngine.snapshotForRetry(r.Context(), taskKey)
+	run, err := c.taskEngine.snapshotForRetry(r.Context(), taskID)
 	if err != nil {
+		// 两条都是 404，但话不一样：一个任务此刻正跑着第一次、还没有可重放的东西，与它压根不存在
+		// 是两回事。前者就明明白白列在任务中心里，答「任务不存在」会把用户支去查一个并不存在的数据丢失。
+		if errors.Is(err, errNoRetryableRun) {
+			jsonError(w, http.StatusNotFound, "No finished run to retry")
+			return
+		}
 		if errors.Is(err, errTaskNotFound) {
 			jsonError(w, http.StatusNotFound, "Task not found")
 			return
@@ -369,7 +373,7 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 区分错误语义：仅"已在运行"是 409，其它（缺少 scope、GetLibrary 失败等内部错误）返回 500。
-		slog.Error("Task retry failed", "task_key", taskKey, "task_type", run.Type, "error", err)
+		slog.Error("Task retry failed", "task_id", taskID, "task_key", run.Key, "task_type", run.Type, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retry task")
 		return
 	}

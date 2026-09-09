@@ -57,7 +57,7 @@ const CONTEXT: SeriesContextResponse = {
     provenance: [],
   },
   failed_tasks: [
-    { key: 'scrape_series_1', type: 'scrape', message: '刮削失败', retryable: true, updated_at: '2026-01-01T00:00:00Z' },
+    { task_id: 11, key: 'scrape_series_1', type: 'scrape', message: '刮削失败', retryable: true, updated_at: '2026-01-01T00:00:00Z' },
   ],
 };
 

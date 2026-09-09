@@ -1155,8 +1155,8 @@ function TaskRow({
           {/* 重试作用在**任务**上：它新起一次运行，被重试的那一条原样留着。因此这个按钮一个任务只有一个，
               而不是每条历次运行各画一个。 */}
           {lastRun?.retryable && !isActiveRunStatus(lastRun.status) && (
-            <button type="button" onClick={() => onTaskAction(lastRun, 'retry')} disabled={taskActionKey === `${lastRun.key}:retry`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-50">
-              <RotateCcw className={`h-3.5 w-3.5 ${taskActionKey === `${lastRun.key}:retry` ? 'animate-spin' : ''}`} />
+            <button type="button" onClick={() => onTaskAction(lastRun, 'retry')} disabled={taskActionKey === `${lastRun.task_id}:retry`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 hover:bg-white/10 disabled:opacity-50">
+              <RotateCcw className={`h-3.5 w-3.5 ${taskActionKey === `${lastRun.task_id}:retry` ? 'animate-spin' : ''}`} />
               {t('common.retry')}
             </button>
           )}
