@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Activity, Loader2, Terminal } from 'lucide-react';
 import { PageShell, PageHeader } from '../components/PageShell';
 import { useI18n } from '../i18n/LocaleProvider';
-import type { RunStatus } from '../components/tasks/TaskCenter';
+import type { RunSnapshot } from '../components/tasks/TaskCenter';
 
 const BackgroundTasks = lazy(() => import('./BackgroundTasks'));
 const Logs = lazy(() => import('./Logs'));
@@ -41,7 +41,7 @@ export default function Ops() {
     setSearchParams(next, { replace: true });
   };
 
-  const viewRawLogs = (run: RunStatus) => {
+  const viewRawLogs = (run: RunSnapshot) => {
     const next = new URLSearchParams(searchParams);
     next.set('tab', 'logs');
     next.set('run_id', String(run.run_id));

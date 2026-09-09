@@ -8,7 +8,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { TaskBubbleEntry } from '../SidebarTaskBubble';
 import { isTerminalRunStatus } from '../../utils/runStatus';
 
-interface TaskProgressPayload {
+interface RunSnapshotPayload {
   // task_id 是气泡的身份：同一个**任务**的历次推送更新同一个气泡。
   // 契约上不再有任务键（ADR 0007）——它认得出「哪件事」，认不出「哪一次」，而队列一开，
   // 同一件事此刻可以有两条仍会变化的运行。
@@ -28,9 +28,9 @@ export function useTaskBubbles() {
   const [entries, setEntries] = useState<Record<number, TaskBubbleEntry>>({});
   const cleanupTimers = useRef<Map<number, number>>(new Map());
 
-  // ingestProgress 接入一帧运行快照（由 Layout 从推送帧里取出）：新增/更新对应气泡，并为终态气泡安排延时移除
+  // ingestRunSnapshot 接入一帧运行快照（由 Layout 从推送帧里取出）：新增/更新对应气泡，并为终态气泡安排延时移除
   //（完成 8s、其余终态 20s）；再次收到同一个任务会先取消旧的延时定时器。
-  const ingestProgress = useCallback((progress: TaskProgressPayload) => {
+  const ingestRunSnapshot = useCallback((progress: RunSnapshotPayload) => {
     if (progress.task_id === undefined) return;
     const key = progress.task_id;
     const entry: TaskBubbleEntry = {
@@ -99,12 +99,13 @@ export function useTaskBubbles() {
     });
   }, []);
 
-  // 监听进度覆盖事件（如系列详情页在触发操作后乐观更新对应任务气泡的进度/状态），
-  // 并在卸载时清空全部延时定时器。message 与 message_code 互斥：带了新 legacy message 的覆盖清掉 code。
+  // 监听覆盖事件：乐观更新某个**已存在**气泡的进度/状态——气泡不在就整帧丢掉，这条路不新建气泡
+  // （新建只走 ingestRunSnapshot）。并在卸载时清空全部延时定时器。
+  // message 与 message_code 互斥：带了新 legacy message 的覆盖清掉 code。
   useEffect(() => {
     const timers = cleanupTimers.current;
     const handleOverride = (event: Event) => {
-      const customEvent = event as CustomEvent<TaskProgressPayload>;
+      const customEvent = event as CustomEvent<RunSnapshotPayload>;
       const detail = customEvent.detail;
       if (detail?.task_id === undefined) return;
       const key = detail.task_id;
@@ -128,13 +129,13 @@ export function useTaskBubbles() {
         };
       });
     };
-    window.addEventListener('manga-manager:task-progress-override', handleOverride as EventListener);
+    window.addEventListener('manga-manager:run-snapshot-override', handleOverride as EventListener);
     return () => {
-      window.removeEventListener('manga-manager:task-progress-override', handleOverride as EventListener);
+      window.removeEventListener('manga-manager:run-snapshot-override', handleOverride as EventListener);
       timers.forEach((timer) => clearTimeout(timer));
       timers.clear();
     };
   }, []);
 
-  return { entries, ingestProgress, dismiss, clearFinished };
+  return { entries, ingestRunSnapshot, dismiss, clearFinished };
 }

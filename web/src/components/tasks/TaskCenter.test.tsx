@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { TaskCenter, type RunEventsResponse, type RunLive, type RunSample, type RunSamplesResponse, type RunStatus, type TaskSummary } from './TaskCenter';
+import { TaskCenter, type RunEventsResponse, type RunLive, type RunSample, type RunSamplesResponse, type RunSnapshot, type TaskSummary } from './TaskCenter';
 import { runCardId } from '../../utils/runCard';
 
 // 词条只要能渲染出来即可：本文件断言的是某一格在不在、按钮调了谁，与译文无关。
@@ -22,7 +22,7 @@ vi.mock('../../i18n/LocaleProvider', () => ({
   }),
 }));
 
-function makeRun(overrides: Partial<RunStatus>): RunStatus {
+function makeRun(overrides: Partial<RunSnapshot>): RunSnapshot {
   return {
     run_id: 1,
     task_id: 1,
@@ -73,7 +73,7 @@ function renderCenter(props: Partial<Parameters<typeof TaskCenter>[0]> = {}) {
 }
 
 // 实况区里放一条运行是多数用例的起手式：它同时给出 runs 与那两个计数。
-function renderLiveRuns(runs: RunStatus[]) {
+function renderLiveRuns(runs: RunSnapshot[]) {
   return renderCenter({ live: makeLive({ runs, active: runs.length }) });
 }
 
@@ -89,13 +89,13 @@ describe('两层结构', () => {
     expect(screen.getByText('logs.taskCenter.liveTitle')).toBeTruthy();
     expect(screen.getByText('logs.taskCenter.taskListTitle')).toBeTruthy();
     // 实况区那条还在跑，清单那行写的是上次结果：两处状态各说各的，不是同一份数据。
-    expect(screen.getByText('logs.taskStatus.running')).toBeTruthy();
-    expect(screen.getByText('logs.taskStatus.completed')).toBeTruthy();
+    expect(screen.getByText('logs.runStatus.running')).toBeTruthy();
+    expect(screen.getByText('logs.runStatus.completed')).toBeTruthy();
   });
 
   it('只有实况没有清单时，清单说自己是空的而实况照画', () => {
     renderLiveRuns([makeRun({})]);
-    expect(screen.getByText('logs.taskStatus.running')).toBeTruthy();
+    expect(screen.getByText('logs.runStatus.running')).toBeTruthy();
     expect(screen.getByText('settings.maintenance.noTasks')).toBeTruthy();
     expect(screen.queryByText('logs.taskCenter.noLiveRuns')).toBeNull();
   });
@@ -103,7 +103,7 @@ describe('两层结构', () => {
   it('只有清单没有实况时，实况区说现在没在跑而清单照画', () => {
     renderCenter({ tasks: [makeSummary({ last_run: makeRun({ status: 'completed' }) })] });
     expect(screen.getByText('logs.taskCenter.noLiveRuns')).toBeTruthy();
-    expect(screen.getByText('logs.taskStatus.completed')).toBeTruthy();
+    expect(screen.getByText('logs.runStatus.completed')).toBeTruthy();
     expect(screen.queryByText('settings.maintenance.noTasks')).toBeNull();
   });
 
@@ -122,7 +122,7 @@ describe('任务清单的折叠与展开', () => {
     });
 
     expect(screen.queryByText('logs.taskCenter.runHistory')).toBeNull();
-    fireEvent.click(screen.getByText('logs.taskStatus.completed'));
+    fireEvent.click(screen.getByText('logs.runStatus.completed'));
     expect(onToggleTask).toHaveBeenCalledWith(7);
   });
 
@@ -187,7 +187,7 @@ describe('还没有值的那几个展示位', () => {
       live: makeLive({ active: 1, queued: 1, runs: [makeRun({}), makeRun({ run_id: 2, status: 'queued', can_pause: false })] }),
     });
     expect(screen.getByText('logs.taskCenter.queued')).toBeTruthy();
-    expect(screen.getByText('logs.taskStatus.queued')).toBeTruthy();
+    expect(screen.getByText('logs.runStatus.queued')).toBeTruthy();
   });
 
   // 没合并过就整格不显示，而不是写一个「已合并 0 次」。

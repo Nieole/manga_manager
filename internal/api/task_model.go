@@ -1,7 +1,7 @@
-// 本文件是任务子域的**模型层**：领域的**运行**快照与对外 RunStatus 之间的翻译、列表谓词的翻译、
+// 本文件是任务子域的**模型层**：领域的 task.Snapshot 与对外 RunSnapshot 之间的翻译、列表谓词的翻译、
 // 身份四要素在两侧的互转，以及进度派生字段（percent/rate/eta）的计算。
 //
-// 这里的函数不碰可变状态、不加锁、不做 IO。唯一的例外是 runStatusFrom 这个方法：它要问一句
+// 这里的函数不碰可变状态、不加锁、不做 IO。唯一的例外是 runSnapshotFrom 这个方法：它要问一句
 // 「这个（类型，**变体**）注册了**重启函数**吗」，而那张注册表是装配期填好、此后只读的。
 // 一旦某个函数需要读写 taskEngine 受锁保护的字段，它就该搬到 task_engine.go 去。
 
@@ -128,13 +128,13 @@ func taskListFilterFrom(filters taskFilters) task.TaskFilter {
 
 // ---- 快照翻译 ----
 
-// runStatusFrom 把一帧领域快照翻成对外的运行快照。
+// runSnapshotFrom 把一帧领域快照翻成对外的运行快照。
 //
 // 三处来源各司其职：运行行给展示态与计数，控制能力由引擎按运行的活性**派生**（不是库里的列——
 // 落成列的话重启后那几个布尔值会集体说谎），侧数据给指标、标签、重启入参与并发上限。
-func (e *taskEngine) runStatusFrom(snapshot task.Snapshot, identity TaskIdentity) RunStatus {
+func (e *taskEngine) runSnapshotFrom(snapshot task.Snapshot, identity TaskIdentity) RunSnapshot {
 	run := snapshot.Run
-	status := RunStatus{
+	snap := RunSnapshot{
 		RunID:               run.ID,
 		TaskID:              run.TaskID,
 		Type:                identity.taskType,
@@ -170,13 +170,13 @@ func (e *taskEngine) runStatusFrom(snapshot task.Snapshot, identity TaskIdentity
 	// 等它真的进入运行中才补写（那一段排队不属于速率的分母）。翻译只在这一处做。
 	if !run.StartedAt.IsZero() {
 		startedAt := run.StartedAt
-		status.StartedAt = &startedAt
+		snap.StartedAt = &startedAt
 	}
 	if snapshot.Side.Limits != nil {
-		status.EffectiveLimit = taskLimitsFromDomain(*snapshot.Side.Limits)
+		snap.EffectiveLimit = taskLimitsFromDomain(*snapshot.Side.Limits)
 	}
-	enrichTaskProgress(&status)
-	return status
+	enrichTaskProgress(&snap)
+	return snap
 }
 
 // taskLimitsFromDomain 与 domain 是一对：并发上限在两侧是同一组真列，逐个搬。
@@ -234,13 +234,13 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 // 速率的分母是运行真正在干活的那一段。活动态量到此刻，**终态**量到引擎盖上的结束时刻——
 // **中断**也不例外：那一笔批量转写把结束时刻取成运行最后一次上报的时刻
 // （见 task.Engine.MarkInterrupted），整段停机时长因此落在分母之外。分母里还要扣掉**暂停**：
-// 那几段时间里任务一条都没处理，引擎逐段记下过（RunStatus.ControlPausedMillis），不扣的话
+// 那几段时间里任务一条都没处理，引擎逐段记下过（RunSnapshot.ControlPausedMillis），不扣的话
 // 一次午饭时长的暂停就能把速率打到七分之一，并一路带进终态。
 //
 // 速率的缺席只由数据决定，不得由状态决定：分母非正或计数为零就不发。从未上报过进度的运行
 // 两条都占——它最后一次上报的时刻仍是开始时刻。**排队中**的运行连开始时刻都还没有，
 // 它的分母无从谈起，因此百分比之外的两个数一律不发。
-func enrichTaskProgress(task *RunStatus) {
+func enrichTaskProgress(task *RunSnapshot) {
 	if task == nil {
 		return
 	}
@@ -280,7 +280,7 @@ func enrichTaskProgress(task *RunStatus) {
 //
 // 仍在进行的那一段只在**已暂停**下计入：**取消中**的任务已被放行、正在收尾，它的 PausedAt
 // 由 cancel 那一刻折进累计后清掉；**终态**同理由收尾清掉。
-func taskPausedSoFar(task RunStatus, now time.Time) time.Duration {
+func taskPausedSoFar(task RunSnapshot, now time.Time) time.Duration {
 	total := time.Duration(task.ControlPausedMillis) * time.Millisecond
 	if task.Status == "paused" && task.PausedAt != nil {
 		if ongoing := now.Sub(*task.PausedAt); ongoing > 0 {

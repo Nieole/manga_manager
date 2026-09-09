@@ -18,7 +18,7 @@ import (
 // newRebuildThumbTestController 手工拼装出这条链路需要的两个组件：任务引擎与聚合器。
 // 引擎仍经它唯一的 seam（newTaskEngine）构造，扫描事件转译处不碰其余任何 Controller 字段，
 // 因此这里不需要数据库、配置管理器或扫描器。
-func newRebuildThumbTestController(t testing.TB, clock *fakeClock) (*Controller, func() []RunStatus) {
+func newRebuildThumbTestController(t testing.TB, clock *fakeClock) (*Controller, func() []RunSnapshot) {
 	t.Helper()
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	e.now = clock.Now
@@ -27,7 +27,7 @@ func newRebuildThumbTestController(t testing.TB, clock *fakeClock) (*Controller,
 
 // startedRebuildThumbRig 造一条「任务已启动、句柄已交给聚合器」的现场，
 // 即多数用例的起点：句柄交接本身只有 TestRebuildThumbWritersAreInertWithoutHandle 不做。
-func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*Controller, func() []RunStatus, *fakeClock) {
+func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*Controller, func() []RunSnapshot, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	c, snapshots := newRebuildThumbTestController(t, clock)

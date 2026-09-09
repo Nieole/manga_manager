@@ -116,7 +116,7 @@ func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
 // 指标优先、任务参数兜底：两条上报通道今天都落进指标（跨库的重建走**累加指标**，单库扫描整帧
 // 定版），参数那一半只为升级前落下的运行留着——它们的这批数还是**重启入参**里的字符串。
 // 前端的 runMetric 是同一个口径：先看 metrics，再退回 params。
-func taskArchiveOpenRate(task *RunStatus) float64 {
+func taskArchiveOpenRate(task *RunSnapshot) float64 {
 	if task == nil {
 		return 0
 	}
@@ -136,7 +136,7 @@ func taskArchiveOpenRate(task *RunStatus) float64 {
 }
 
 // taskMetricValue 取一个累计指标：先看指标那张表，再退回任务参数里那份字符串。
-func taskMetricValue(task *RunStatus, key string) int64 {
+func taskMetricValue(task *RunSnapshot, key string) int64 {
 	if value, ok := task.Metrics[key]; ok {
 		return value
 	}

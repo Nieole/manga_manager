@@ -20,7 +20,7 @@ import (
 // （如 ValidationResult 引用 ValidationIssue，故两者都要在此）。
 var targets = []reflect.Type{
 	reflect.TypeOf(api.TaskLimits{}),
-	reflect.TypeOf(api.RunStatus{}),
+	reflect.TypeOf(api.RunSnapshot{}),
 	reflect.TypeOf(api.RunLiveSummary{}),
 	reflect.TypeOf(api.RunLive{}),
 	reflect.TypeOf(api.RunPush{}),

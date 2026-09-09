@@ -36,7 +36,7 @@ func restartController(t *testing.T, prev *Controller, store database.Store, tem
 }
 
 // taskCenterFirstPage 按前端的真实请求取任务中心第一页。
-func taskCenterFirstPage(t *testing.T, c *Controller) []RunStatus {
+func taskCenterFirstPage(t *testing.T, c *Controller) []RunSnapshot {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/system/tasks?limit=%d", taskCenterPageSize), nil)
 	rec := httptest.NewRecorder()
@@ -44,7 +44,7 @@ func taskCenterFirstPage(t *testing.T, c *Controller) []RunStatus {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("任务列表返回 %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var tasks []RunStatus
+	var tasks []RunSnapshot
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("解析任务列表失败: %v", err)
 	}
@@ -67,7 +67,7 @@ func seedFinishedHistory(t *testing.T, c *Controller, n int) {
 }
 
 // indexOfKey 找出这一页里属于该**任务键**那条身份的运行排在第几位；不在这一页里即 -1。
-func indexOfKey(t *testing.T, page []RunStatus, want string) int {
+func indexOfKey(t *testing.T, page []RunSnapshot, want string) int {
 	t.Helper()
 	for i := range page {
 		if belongsToKey(t, page[i], want) {
@@ -78,7 +78,7 @@ func indexOfKey(t *testing.T, page []RunStatus, want string) int {
 }
 
 // firstOfPage 交出这一页最前面的几条，供断言失败时说清楚「页首是谁」。
-func firstOfPage(page []RunStatus, n int) []RunStatus {
+func firstOfPage(page []RunSnapshot, n int) []RunSnapshot {
 	return page[:min(n, len(page))]
 }
 
@@ -124,7 +124,7 @@ func TestTaskCenterFirstPageOrdering(t *testing.T) {
 
 		page := taskCenterFirstPage(t, reloaded)
 		// 历史部分应当是最近完成的那批，且相对顺序为倒序（scan_series_59, 58, ...）。
-		history := make([]RunStatus, 0, len(page))
+		history := make([]RunSnapshot, 0, len(page))
 		for _, run := range page {
 			if !belongsToKey(t, run, "scan_library_7") {
 				history = append(history, run)

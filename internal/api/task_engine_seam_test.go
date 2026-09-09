@@ -93,18 +93,18 @@ func newTaskTestStore(t testing.TB) task.Store {
 //
 // diskWork 是交给**运行句柄**的**磁盘作业**入口，与生产同样在构造期收下：多数用例的任务体一次盘
 // 都不读，传 nil 即可；要读盘的用例必须在这里交出真 runner，留 nil 的后果见 runhandle.New。
-func newBackgroundTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner) (*taskEngine, func() []RunStatus) {
+func newBackgroundTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner) (*taskEngine, func() []RunSnapshot) {
 	return newClockedTestEngine(t, run, diskWork, nil)
 }
 
 // newClockedTestEngine 与 newBackgroundTestEngine 相同，另外注入一个可控时钟。
 //
 // 时钟必须在构造期交出去：领域引擎的投递水位读的就是它，而水位在首帧就已写下。
-func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner, now func() time.Time) (*taskEngine, func() []RunStatus) {
+func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Runner, now func() time.Time) (*taskEngine, func() []RunSnapshot) {
 	t.Helper()
 
 	var mu sync.Mutex
-	var published []RunStatus
+	var published []RunSnapshot
 	e := newTaskEngine(taskEngineConfig{
 		Store: newTaskTestStore(t),
 		// 只收运行快照那一种帧：**实况汇总**走同一条通道，但它一条运行都不带，
@@ -122,10 +122,10 @@ func newClockedTestEngine(t testing.TB, run func(func()), diskWork *diskwork.Run
 		DiskWork:      diskWork,
 		Now:           now,
 	})
-	return e, func() []RunStatus {
+	return e, func() []RunSnapshot {
 		mu.Lock()
 		defer mu.Unlock()
-		return append([]RunStatus(nil), published...)
+		return append([]RunSnapshot(nil), published...)
 	}
 }
 
@@ -151,18 +151,18 @@ func decodePushFrame(payload, event string) (RunPush, bool) {
 // 它与 snapshotForRetry 是两个问题：那边答的是「有什么可以重放」，因此只看**终态**；
 // 这边答的是「此刻这个任务上最新的一条长什么样」，排队中与活动态正是用例要断言的东西。
 // 键怎么落到身份上见 task_seed_test.go 的登记表。
-func latestStatusByKey(ctx context.Context, t testing.TB, e *taskEngine, key string) (RunStatus, error) {
+func latestStatusByKey(ctx context.Context, t testing.TB, e *taskEngine, key string) (RunSnapshot, error) {
 	t.Helper()
 	taskID, err := taskIDFor(ctx, e, identityForKey(t, key))
 	if err != nil {
-		return RunStatus{}, err
+		return RunSnapshot{}, err
 	}
 	status, found, err := e.firstStatusFor(ctx, latestRunFilterForTask(taskID))
 	if err != nil {
-		return RunStatus{}, err
+		return RunSnapshot{}, err
 	}
 	if !found {
-		return RunStatus{}, errTaskNotFound
+		return RunSnapshot{}, errTaskNotFound
 	}
 	return status, nil
 }
@@ -172,7 +172,7 @@ func latestStatusByKey(ctx context.Context, t testing.TB, e *taskEngine, key str
 // 它走的是生产的读取路径（库），不是引擎内部的某个字段：任务与运行的事实来源只有库，
 // 断言绕开它就等于断言一份不存在的真相。查不到即 t.Fatal——用例想断言的状态不会出现在
 // 一条不存在的运行上。
-func currentTask(t testing.TB, e *taskEngine, key string) RunStatus {
+func currentTask(t testing.TB, e *taskEngine, key string) RunSnapshot {
 	t.Helper()
 	status, err := latestStatusByKey(context.Background(), t, e, key)
 	if err != nil {
@@ -198,7 +198,7 @@ func taskExists(t testing.TB, e *taskEngine, key string) bool {
 //
 // 比的是身份四要素而不是**任务键**：契约上没有键那一格了（ADR 0007）。作用域 id 在契约上是
 // 指针（系统级留空），在身份上是 0，两侧对齐要显式判一次。
-func snapshotBelongsTo(snapshot RunStatus, identity task.Identity) bool {
+func snapshotBelongsTo(snapshot RunSnapshot, identity task.Identity) bool {
 	if snapshot.Type != string(identity.Type) ||
 		snapshot.Scope != string(identity.Scope) ||
 		string(snapshot.Variant) != string(identity.Variant) {
@@ -211,13 +211,13 @@ func snapshotBelongsTo(snapshot RunStatus, identity task.Identity) bool {
 }
 
 // belongsToKey 判一条对外快照是不是这个**任务键**指的那一条，供列表接口的断言指认某一行。
-func belongsToKey(t testing.TB, snapshot RunStatus, key string) bool {
+func belongsToKey(t testing.TB, snapshot RunSnapshot, key string) bool {
 	t.Helper()
 	return snapshotBelongsTo(snapshot, identityForKey(t, key))
 }
 
 // lastPublishedTask 返回该任务键最后一条被投递出去的快照。
-func lastPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatus {
+func lastPublishedTask(t *testing.T, snapshots []RunSnapshot, key string) RunSnapshot {
 	t.Helper()
 	identity := identityForKey(t, key)
 	for i := len(snapshots) - 1; i >= 0; i-- {
@@ -226,7 +226,7 @@ func lastPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatu
 		}
 	}
 	t.Fatalf("任务 %q 一条快照都没被投递出去", key)
-	return RunStatus{}
+	return RunSnapshot{}
 }
 
 // publishedCountFor 数一数该任务键被投递出去的快照条数，供「该不该投递这一条」的用例断言
@@ -234,7 +234,7 @@ func lastPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatu
 //
 // 漏登记同样 t.Fatal 而不是回 0：「一条都没投递出去」正是这类断言里最常见的期望，
 // 回 0 会让一次漏登记表现为一条假绿的用例。
-func publishedCountFor(t testing.TB, snapshots []RunStatus, key string) int {
+func publishedCountFor(t testing.TB, snapshots []RunSnapshot, key string) int {
 	t.Helper()
 	identity := identityForKey(t, key)
 	count := 0
@@ -249,10 +249,10 @@ func publishedCountFor(t testing.TB, snapshots []RunStatus, key string) int {
 // publishedTasksWithCode 按投递顺序取出该任务键带指定文案码的全部载荷。终态会改掉文案码，
 // 所以中途那些帧只能这样取——lastPublishedTask 拿到的永远是收尾那一条。
 // 「这一帧该不该出去」那类断言数的就是它的长度：节流吞掉与句柄没交出去都表现为一条也不多。
-func publishedTasksWithCode(t testing.TB, snapshots []RunStatus, key, code string) []RunStatus {
+func publishedTasksWithCode(t testing.TB, snapshots []RunSnapshot, key, code string) []RunSnapshot {
 	t.Helper()
 	identity := identityForKey(t, key)
-	var matched []RunStatus
+	var matched []RunSnapshot
 	for _, snapshot := range snapshots {
 		if snapshotBelongsTo(snapshot, identity) && snapshot.MessageCode == code {
 			matched = append(matched, snapshot)
@@ -262,19 +262,19 @@ func publishedTasksWithCode(t testing.TB, snapshots []RunStatus, key, code strin
 }
 
 // publishedTaskWithCode 返回该任务键带指定文案码的最后一条快照；一条都没有即 t.Fatal。
-func publishedTaskWithCode(t *testing.T, snapshots []RunStatus, key, code string) RunStatus {
+func publishedTaskWithCode(t *testing.T, snapshots []RunSnapshot, key, code string) RunSnapshot {
 	t.Helper()
 	matched := publishedTasksWithCode(t, snapshots, key, code)
 	if len(matched) == 0 {
 		t.Fatalf("任务 %q 没有投递过任何带文案码 %q 的载荷", key, code)
-		return RunStatus{}
+		return RunSnapshot{}
 	}
 	return matched[len(matched)-1]
 }
 
 // firstPublishedTask 返回该任务键**第一条**被投递出去的快照，用于断言任务诞生那一刻就已带齐
 // 作用域、元数据与并发上限，不得拆成启动之后的多次独立写入、中间留下可被观察到的空窗。
-func firstPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStatus {
+func firstPublishedTask(t *testing.T, snapshots []RunSnapshot, key string) RunSnapshot {
 	t.Helper()
 	identity := identityForKey(t, key)
 	for _, snapshot := range snapshots {
@@ -283,5 +283,5 @@ func firstPublishedTask(t *testing.T, snapshots []RunStatus, key string) RunStat
 		}
 	}
 	t.Fatalf("任务 %q 一条快照都没被投递出去", key)
-	return RunStatus{}
+	return RunSnapshot{}
 }

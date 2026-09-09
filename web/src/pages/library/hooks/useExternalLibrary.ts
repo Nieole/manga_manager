@@ -289,7 +289,7 @@ export function useExternalLibrary({
     [libId, externalSession, onError],
   );
 
-  // 3. 监听后台任务进度（来自 task-progress 事件）
+  // 3. 监听后台任务进度（来自 run-snapshot 事件）
   useEffect(() => {
     const handler = (event: Event) => {
       const customEvent = event as CustomEvent<{
@@ -318,8 +318,8 @@ export function useExternalLibrary({
       if (isScan) setExternalScanTaskKey(null);
       if (isTransfer) setExternalTransferTaskKey(null);
     };
-    window.addEventListener('manga-manager:task-progress', handler as EventListener);
-    return () => window.removeEventListener('manga-manager:task-progress', handler as EventListener);
+    window.addEventListener('manga-manager:run-snapshot', handler as EventListener);
+    return () => window.removeEventListener('manga-manager:run-snapshot', handler as EventListener);
   }, [
     externalSession?.session_id,
     externalScanTaskKey,

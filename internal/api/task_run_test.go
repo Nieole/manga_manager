@@ -439,22 +439,22 @@ func TestTaskHandleChannelsShareOneAdmissionRule(t *testing.T) {
 		name  string
 		write func(h *runhandle.Handle)
 		// landed 回答这条通道的写入有没有落到任务上。
-		landed func(task RunStatus) bool
+		landed func(task RunSnapshot) bool
 	}{
 		{
 			name:   "整帧上报",
 			write:  func(h *runhandle.Handle) { h.Phase("hashing", "progress.hashing", nil) },
-			landed: func(task RunStatus) bool { return task.Phase == "hashing" },
+			landed: func(task RunSnapshot) bool { return task.Phase == "hashing" },
 		},
 		{
 			name:   "设任务参数",
 			write:  func(h *runhandle.Handle) { h.MergeParams(map[string]string{"volume_key": "C:"}) },
-			landed: func(task RunStatus) bool { return task.Params["volume_key"] == "C:" },
+			landed: func(task RunSnapshot) bool { return task.Params["volume_key"] == "C:" },
 		},
 		{
 			name:   "加指标",
 			write:  func(h *runhandle.Handle) { h.AddMetrics(map[string]int64{"io_wait_ms": 120}, nil) },
-			landed: func(task RunStatus) bool { return task.Metrics["io_wait_ms"] == 120 },
+			landed: func(task RunSnapshot) bool { return task.Metrics["io_wait_ms"] == 120 },
 		},
 	}
 	states := []struct {

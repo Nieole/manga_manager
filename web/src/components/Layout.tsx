@@ -108,7 +108,7 @@ export default function Layout() {
     const outletContext = useMemo(() => ({ refreshTrigger, libraries }), [refreshTrigger, libraries]);
 
     // 全局任务进度气泡：状态、终态延时清理定时器与进度覆盖事件监听均封装在 useTaskBubbles 内。
-    const { entries: taskBubbleEntries, ingestProgress: ingestTaskProgress, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
+    const { entries: taskBubbleEntries, ingestRunSnapshot, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
 
     // 文件夹浏览器状态与请求逻辑封装在 useDirectoryBrowser 内。
     const { browsing, setBrowsing, browseDirs, browseCurrent, browseParent, browseDrives, openDirectoryBrowser, navigateDirectoryBrowser } = useDirectoryBrowser();
@@ -300,8 +300,8 @@ export default function Layout() {
                 window.dispatchEvent(new CustomEvent('manga-manager:run-push', { detail: frame }));
                 if (frame.run) {
                     // 任务气泡与外部库那条路只要运行快照本身，不关心投递链，因此仍收这个事件。
-                    window.dispatchEvent(new CustomEvent('manga-manager:task-progress', { detail: frame.run }));
-                    ingestTaskProgress(frame.run);
+                    window.dispatchEvent(new CustomEvent('manga-manager:run-snapshot', { detail: frame.run }));
+                    ingestRunSnapshot(frame.run);
                 }
             }
         },

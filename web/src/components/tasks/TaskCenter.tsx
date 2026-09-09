@@ -11,10 +11,10 @@ import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/
 import { runCardId } from '../../utils/runCard';
 import { isActiveRunStatus, isLiveRunStatus } from '../../utils/runStatus';
 
-// TaskLimits / RunStatus / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
+// TaskLimits / RunSnapshot / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
 // （单一事实源，见 api/generated.ts），此处再导出以保持既有 import 路径不变。
-export type { TaskLimits, RunStatus, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse, RunSample, RunSamplesResponse } from '../../api/generated';
-import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunSample, RunSamplesResponse, RunStatus, TaskSummary } from '../../api/generated';
+export type { TaskLimits, RunSnapshot, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse, RunSample, RunSamplesResponse } from '../../api/generated';
+import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunSample, RunSamplesResponse, RunSnapshot, TaskSummary } from '../../api/generated';
 
 // 运行上的动作作用在**运行**上，重试作用在**任务**上（它重新发起一次，不改动被重试的那一条）。
 export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
@@ -47,7 +47,7 @@ export interface TaskTarget {
 export interface TaskRunHistory {
   taskId: number;
   /** runs 为 undefined 表示还没取回来；空数组表示这个任务确实没留下运行记录。 */
-  runs?: RunStatus[];
+  runs?: RunSnapshot[];
   loading?: boolean;
 }
 
@@ -84,7 +84,7 @@ interface TaskCenterProps {
   typeOptions?: string[];
   currentFilterCanClear?: boolean;
   onRefresh: () => void;
-  onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onTaskAction: (run: RunSnapshot, action: TaskAction) => void;
   onToggleTask?: (taskId: number) => void;
   // 全部暂停 / 全部恢复。两者都给了才画那个按钮。
   onPauseAll?: () => void;
@@ -95,8 +95,8 @@ interface TaskCenterProps {
   // 「查看日志」打开的是**这次运行自己的详情面板**（吞吐曲线与事件流）；「原始日志」才是按运行
   // 过滤的那份全局日志。两个入口并排：详情答「这次出了什么事、卡在哪」，原始日志答「那一刻还
   // 发生了什么」。
-  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
-  onViewRawLogs?: (run: RunStatus) => void;
+  onViewRunDetail?: (run: RunSnapshot, cardId: string) => void;
+  onViewRawLogs?: (run: RunSnapshot) => void;
   // detail 是当前打开着详情面板的那一张卡片；不给即一张都没打开。
   detail?: RunDetailView;
   // 人工禁用那条开关作用在**任务**上，因此它收的是任务而不是运行。不给即不画那个按钮。
@@ -179,13 +179,13 @@ function runBadgeClass(status: string) {
   }
 }
 
-function runProgressPercent(run: RunStatus) {
+function runProgressPercent(run: RunSnapshot) {
   if (Number.isFinite(run.percent)) return Math.max(0, Math.min(100, run.percent || 0));
   if (run.total > 0) return Math.max(0, Math.min(100, (run.current / run.total) * 100));
   return 0;
 }
 
-function runMetric(run: RunStatus, key: string) {
+function runMetric(run: RunSnapshot, key: string) {
   const direct = run.metrics?.[key];
   if (Number.isFinite(direct)) return direct || 0;
   const raw = run.params?.[key] || run.params?.[`metric.${key}`];
@@ -203,7 +203,7 @@ function runMetric(run: RunStatus, key: string) {
  * 跨资料库的运行没有单一画像可报（见 launchRebuildThumbnailsTask）。那几个数都在 taskMetricKeys
  * 里，指标面板照样各给它们一格，不会因为这道门没人显示。
  */
-function runIOParams(run: RunStatus): [string, string][] {
+function runIOParams(run: RunSnapshot): [string, string][] {
   const descriptive = taskIOParamKeys.descriptive
     .map((key): [string, string] => [key, run.params?.[key] ?? ''])
     .filter(([, value]) => value !== '' && value !== '0');
@@ -215,7 +215,7 @@ function runIOParams(run: RunStatus): [string, string][] {
   return [...descriptive, ...numeric];
 }
 
-function isInterruptedRun(run: RunStatus) {
+function isInterruptedRun(run: RunSnapshot) {
   const error = run.error || '';
   return run.status === 'interrupted' || (run.status === 'failed' && run.retryable && (error.includes('服务重启') || error.toLowerCase().includes('restart')));
 }
@@ -226,12 +226,12 @@ function isInterruptedRun(run: RunStatus) {
  * 两者只在**中断**上不同——那一笔批量转写把这一行的最后写入时刻记成了重启时刻，
  * 照它显示的话，一条八小时前就没动静的中断运行在重启后写着「刚刚」。
  */
-function runTimestamp(run: RunStatus) {
+function runTimestamp(run: RunSnapshot) {
   if (!isActiveRunStatus(run.status) && run.finished_at) return run.finished_at;
   return run.updated_at;
 }
 
-function hasRunDetails(run: RunStatus) {
+function hasRunDetails(run: RunSnapshot) {
   return Boolean(
     run.error
     || run.started_at
@@ -241,7 +241,7 @@ function hasRunDetails(run: RunStatus) {
   );
 }
 
-function hasRunTelemetry(run: RunStatus) {
+function hasRunTelemetry(run: RunSnapshot) {
   const provider = run.labels?.provider_name || run.labels?.provider || run.params?.provider;
   return Boolean(
     run.effective_limit
@@ -307,15 +307,15 @@ function TaskFilters({
 
       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
         <select value={filters.status} onChange={(event) => onFilterChange({ status: event.target.value })} className="rounded-lg border border-white/10 bg-gray-950 px-3 py-2 text-xs text-white">
-          <option value="ALL">{t('logs.taskStatus.all')}</option>
-          <option value="queued">{t('logs.taskStatus.queued')}</option>
-          <option value="running">{t('logs.taskStatus.running')}</option>
-          <option value="paused">{t('logs.taskStatus.paused')}</option>
-          <option value="cancelling">{t('logs.taskStatus.cancelling')}</option>
-          <option value="failed">{t('logs.taskStatus.failed')}</option>
-          <option value="interrupted">{t('logs.taskStatus.interrupted')}</option>
-          <option value="completed">{t('logs.taskStatus.completed')}</option>
-          <option value="cancelled">{t('logs.taskStatus.cancelled')}</option>
+          <option value="ALL">{t('logs.runStatus.all')}</option>
+          <option value="queued">{t('logs.runStatus.queued')}</option>
+          <option value="running">{t('logs.runStatus.running')}</option>
+          <option value="paused">{t('logs.runStatus.paused')}</option>
+          <option value="cancelling">{t('logs.runStatus.cancelling')}</option>
+          <option value="failed">{t('logs.runStatus.failed')}</option>
+          <option value="interrupted">{t('logs.runStatus.interrupted')}</option>
+          <option value="completed">{t('logs.runStatus.completed')}</option>
+          <option value="cancelled">{t('logs.runStatus.cancelled')}</option>
         </select>
         <select value={filters.scope} onChange={(event) => onFilterChange({ scope: event.target.value })} className="rounded-lg border border-white/10 bg-gray-950 px-3 py-2 text-xs text-white">
           <option value="ALL">{t('logs.taskScope.all')}</option>
@@ -357,7 +357,7 @@ function TaskFilters({
   );
 }
 
-function RunProgressBar({ run }: { run: RunStatus }) {
+function RunProgressBar({ run }: { run: RunSnapshot }) {
   const percent = runProgressPercent(run);
   if (run.total <= 0) {
     // 总数未知：只有还在动的任务才画那条来回跑的不定进度条。停了的任务画它，看着像还在跑，
@@ -390,7 +390,7 @@ function RunProgressBar({ run }: { run: RunStatus }) {
 }
 
 /** RunControlButtons 是作用在**运行**上的那几个动作。重试不在其中：它作用在任务上，画在任务行上。 */
-function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunStatus; taskActionKey: string | null; onTaskAction: (run: RunStatus, action: TaskAction) => void }) {
+function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunSnapshot; taskActionKey: string | null; onTaskAction: (run: RunSnapshot, action: TaskAction) => void }) {
   const { t } = useI18n();
   return (
     <div className="flex flex-wrap gap-2">
@@ -425,7 +425,7 @@ function RunControlButtons({ run, taskActionKey, onTaskAction }: { run: RunStatu
   );
 }
 
-function RunLimitBadges({ run }: { run: RunStatus }) {
+function RunLimitBadges({ run }: { run: RunSnapshot }) {
   const { t } = useI18n();
   const limit = run.effective_limit;
   const provider = run.labels?.provider_name || run.labels?.provider || run.params?.provider;
@@ -456,7 +456,7 @@ function RunLimitBadges({ run }: { run: RunStatus }) {
   );
 }
 
-function RunMetricsGrid({ run }: { run: RunStatus }) {
+function RunMetricsGrid({ run }: { run: RunSnapshot }) {
   const { t } = useI18n();
   return (
     <>
@@ -471,7 +471,7 @@ function RunMetricsGrid({ run }: { run: RunStatus }) {
   );
 }
 
-function RunDetailDrawer({ run }: { run: RunStatus }) {
+function RunDetailDrawer({ run }: { run: RunSnapshot }) {
   const { t, formatDateTime } = useI18n();
   const ioParams = runIOParams(run);
 
@@ -538,7 +538,7 @@ function RunDetailDrawer({ run }: { run: RunStatus }) {
   );
 }
 
-function RunTelemetry({ run }: { run: RunStatus }) {
+function RunTelemetry({ run }: { run: RunSnapshot }) {
   return (
     <div className="mt-3 grid gap-2 text-xs md:grid-cols-2 xl:grid-cols-4">
       <RunLimitBadges run={run} />
@@ -846,19 +846,19 @@ function RunCard({
   onViewRunDetail,
   onViewRawLogs,
 }: {
-  run: RunStatus;
+  run: RunSnapshot;
   // cardId 是这张卡片在这一屏里的身份，见 runCardId：同一条运行可以同时出现在两区。
   cardId: string;
   expanded: boolean;
   taskActionKey: string | null;
   detail?: RunDetailView;
   onToggleExpanded: () => void;
-  onTaskAction: (run: RunStatus, action: TaskAction) => void;
-  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
-  onViewRawLogs?: (run: RunStatus) => void;
+  onTaskAction: (run: RunSnapshot, action: TaskAction) => void;
+  onViewRunDetail?: (run: RunSnapshot, cardId: string) => void;
+  onViewRawLogs?: (run: RunSnapshot) => void;
 }) {
   const { t, formatDateTime, formatRelativeTime } = useI18n();
-  const statusLabel = t(`logs.taskStatus.${run.status}`);
+  const statusLabel = t(`logs.runStatus.${run.status}`);
   const timestamp = runTimestamp(run);
 
   return (
@@ -945,14 +945,14 @@ function RunCardList({
   onViewRunDetail,
   onViewRawLogs,
 }: {
-  runs: RunStatus[];
+  runs: RunSnapshot[];
   // origin 是这一组卡片画在哪一区（实况区 / 展开着的历次运行），与运行标识一起拼出卡片身份。
   origin: string;
   taskActionKey: string | null;
   detail?: RunDetailView;
-  onTaskAction: (run: RunStatus, action: TaskAction) => void;
-  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
-  onViewRawLogs?: (run: RunStatus) => void;
+  onTaskAction: (run: RunSnapshot, action: TaskAction) => void;
+  onViewRunDetail?: (run: RunSnapshot, cardId: string) => void;
+  onViewRawLogs?: (run: RunSnapshot) => void;
 }) {
   const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
   return (
@@ -995,12 +995,12 @@ function LiveSection({
   live: RunLive;
   bulkPauseBusy?: boolean;
   taskActionKey: string | null;
-  onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onTaskAction: (run: RunSnapshot, action: TaskAction) => void;
   onPauseAll?: () => void;
   onResumeAll?: () => void;
   detail?: RunDetailView;
-  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
-  onViewRawLogs?: (run: RunStatus) => void;
+  onViewRunDetail?: (run: RunSnapshot, cardId: string) => void;
+  onViewRawLogs?: (run: RunSnapshot) => void;
 }) {
   const { t } = useI18n();
   const bulkPause = onPauseAll && onResumeAll;
@@ -1097,13 +1097,13 @@ function TaskRow({
   history?: TaskRunHistory;
   taskActionKey: string | null;
   onToggle?: () => void;
-  onTaskAction: (run: RunStatus, action: TaskAction) => void;
+  onTaskAction: (run: RunSnapshot, action: TaskAction) => void;
   onOpenTaskTarget?: (target: TaskTarget) => void;
   // 「查看日志」打开的是**这次运行自己的详情面板**（吞吐曲线与事件流）；「原始日志」才是按运行
   // 过滤的那份全局日志。两个入口并排：详情答「这次出了什么事、卡在哪」，原始日志答「那一刻还
   // 发生了什么」。前者带上卡片身份：同一条运行可以同时出现在两区，页面据此只让被点的那张画。
-  onViewRunDetail?: (run: RunStatus, cardId: string) => void;
-  onViewRawLogs?: (run: RunStatus) => void;
+  onViewRunDetail?: (run: RunSnapshot, cardId: string) => void;
+  onViewRawLogs?: (run: RunSnapshot) => void;
   // detail 是当前打开着详情面板的那一张卡片；不给即一张都没打开。
   detail?: RunDetailView;
   onToggleTaskAuto?: (task: TaskSummary) => void;
@@ -1128,7 +1128,7 @@ function TaskRow({
         >
           <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-white/45 transition-transform ${expanded ? 'rotate-180' : '-rotate-90'}`} />
           <span className={`rounded-full border px-2.5 py-1 text-xs ${lastRun ? runBadgeClass(lastRun.status) : runBadgeClass('')}`}>
-            {lastRun ? t(`logs.taskStatus.${lastRun.status}`) : t('logs.taskCenter.neverRun')}
+            {lastRun ? t(`logs.runStatus.${lastRun.status}`) : t('logs.taskCenter.neverRun')}
           </span>
           <span className="text-sm font-semibold text-white">{getTaskTypeLabel({ type: task.type, params: lastRun?.params }, t)}</span>
           <span className="text-xs text-white/40">{scopeLabel(task, t)}</span>

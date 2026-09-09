@@ -98,14 +98,14 @@ func (s *koreaderTaskStore) advancePublishWindow() {
 //
 // 匹配模式取**路径**而非二进制哈希：那条路只拼字符串、不读书文件，多数用例因此不必造临时文件，
 // 而任务引擎这一侧走的是同一条路径。顺带让元数据断言看到一组非默认取值。
-func newKOReaderTaskRig(t *testing.T, store *koreaderTaskStore) (*Controller, func() []RunStatus) {
+func newKOReaderTaskRig(t *testing.T, store *koreaderTaskStore) (*Controller, func() []RunSnapshot) {
 	t.Helper()
 	return newKOReaderTaskRigWithMode(t, store, config.KOReaderMatchModeFilePath)
 }
 
 // newKOReaderTaskRigWithMode 是同一套装置，但由用例挑匹配模式：二进制哈希那条路要逐本读书文件，
 // 只有它会走到**磁盘作业**。
-func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMode string) (*Controller, func() []RunStatus) {
+func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMode string) (*Controller, func() []RunSnapshot) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	store.clock = clock

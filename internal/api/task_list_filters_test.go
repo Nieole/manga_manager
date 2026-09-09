@@ -51,13 +51,13 @@ func TestTaskListFiltersArePushedDown(t *testing.T) {
 				CanCancel: true, CanPause: true,
 			})
 
-			items, err := controller.taskEngine.listRunStatuses(context.Background(), tc.filters)
+			items, err := controller.taskEngine.listRunSnapshots(context.Background(), tc.filters)
 			if err != nil {
 				t.Fatalf("列任务失败: %v", err)
 			}
 
 			for _, key := range tc.want {
-				if !slices.ContainsFunc(items, func(item RunStatus) bool { return belongsToKey(t, item, key) }) {
+				if !slices.ContainsFunc(items, func(item RunSnapshot) bool { return belongsToKey(t, item, key) }) {
 					t.Errorf("筛选 %+v 把 %s 滤掉了：它满足条件", tc.filters, key)
 				}
 			}

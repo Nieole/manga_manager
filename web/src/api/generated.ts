@@ -19,7 +19,7 @@ export interface TaskLimits {
   disable_same_disk_page_cache: boolean;
 }
 
-export interface RunStatus {
+export interface RunSnapshot {
   run_id: number;
   task_id: number;
   type: string;
@@ -70,13 +70,13 @@ export interface RunLive {
   slots: number;
   paused: boolean;
   paused_all: boolean;
-  runs: RunStatus[];
+  runs: RunSnapshot[];
 }
 
 export interface RunPush {
   sequence: number;
   prev: number;
-  run?: RunStatus;
+  run?: RunSnapshot;
   live?: RunLiveSummary;
 }
 
@@ -92,7 +92,7 @@ export interface TaskSummary {
   last_success_at?: string;
   backoff_until?: string;
   stall_reason?: string;
-  last_run?: RunStatus;
+  last_run?: RunSnapshot;
 }
 
 export interface RunEvent {
