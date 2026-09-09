@@ -115,21 +115,21 @@ type RunSpec struct {
 	// 变成「显示在了另一处」。开跑之后才变的标签走 runhandle.Frame.Labels，两条路都是按键合并。
 	Labels map[string]string
 
-	// Limits 是该任务实际生效的并发上限。只有真被某个并发上限管住的任务才填它——顺序逐本处理的
-	// 维护任务填了也只是报一个没有对应实物的数。零值表示「这个任务没有上限可报」，不是「上限为 0」；
+	// Limits 是这次运行实际生效的并发上限。只有真被某个并发上限管住的运行才填它——顺序逐本处理的
+	// 维护任务填了也只是报一个没有对应实物的数。零值表示「这次运行没有上限可报」，不是「上限为 0」；
 	// 引擎不会为它凭空造一份全零的上限，任务面板上那块徽章随之整块不出现。
-	Limits TaskLimits
+	Limits RunLimits
 
 	// 三条终态分支的**默认**文案码。常规任务因此不必为收尾写任何代码；
-	// 「部分成功」「第一阶段失败」这类变体由任务体经 TaskResult.Code 覆盖对应的一条。
+	// 「部分成功」「第一阶段失败」这类变体由任务体经 RunResult.Code 覆盖对应的一条。
 	CompleteCode string
 	CancelCode   string
 	FailCode     string
 }
 
-// TaskResult 是任务体对终态文案的可选修正。零值表示「用任务声明里的默认码」，
+// RunResult 是任务体对终态文案的可选修正。零值表示「用任务声明里的默认码」，
 // 而不是「把文案清空」——绝大多数任务体返回的正是零值。
-type TaskResult struct {
+type RunResult struct {
 	Code   string
 	Params map[string]string
 }
@@ -137,17 +137,17 @@ type TaskResult struct {
 // taskFailure 给一个失败原因配上它专属的文案码，取消除外。
 //
 // 一个任务体的各道工序常各有各的失败文案，而取消同样以 ctx.Err() 的形式从这些调用里返回；
-// TaskResult 的文案覆盖对引擎裁决出的每条分支一视同仁，无条件带上码的话，
+// RunResult 的文案覆盖对引擎裁决出的每条分支一视同仁，无条件带上码的话，
 // 用户按下取消看到的会是「清空封面索引失败」而不是「已取消」。
-func taskFailure(code string, err error) TaskResult {
+func taskFailure(code string, err error) RunResult {
 	if errors.Is(err, context.Canceled) {
-		return TaskResult{}
+		return RunResult{}
 	}
-	return TaskResult{Code: code}
+	return RunResult{Code: code}
 }
 
 // taskBody 是任务体：干活，以及经交给它的**运行句柄**上报。
-type taskBody func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error)
+type taskBody func(ctx context.Context, handle *runhandle.Handle) (RunResult, error)
 
 // Run 是启动一个后台任务的唯一入口：一份**身份**、一个**发起方**、一份任务声明、一个任务体。
 //
@@ -199,7 +199,7 @@ func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec Run
 		CancelCode:   spec.CancelCode,
 		FailCode:     spec.FailCode,
 	}
-	if spec.Limits != (TaskLimits{}) {
+	if spec.Limits != (RunLimits{}) {
 		runSpec.Limits = spec.Limits.domain()
 	}
 

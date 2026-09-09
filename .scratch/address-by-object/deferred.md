@@ -575,3 +575,123 @@
   建议把 `gofmt -l ./cmd ./internal` 加进这批票的门禁。
 - **归谁裁：** 下一次结算
 - **状态：** open
+
+## D41 · 票 05 · 另有两个函数把旧类型名逐字拼在自己名字里，票面那三个没点到它们
+
+- **问：** 票面第 3 条点名三个函数（「取最近若干类型的运行」`latestTaskByTypes`、「给进度补料」
+  `enrichTaskProgress`、「算至今暂停了多久」`taskPausedSoFar`）。但 `internal/api` 里另有两个把
+  `TaskLimits` 逐字拼进自己名字的函数：`taskLimitsFromDomain`（`internal/api/task_model.go`）
+  与 `Controller.taskLimitsForPath`（`internal/api/controller_tasks.go`，调用点分布在
+  `internal/api/controller_library.go` 与 `internal/api/controller_test.go`，条数用
+  `git grep -n 'taskLimitsForPath' 90e0489` 数）。票面没列它们。
+- **已做：** 一并改成 `runLimitsFromDomain` / `runLimitsForPath`，口径与 D31 采纳的那条相同
+  （名字里逐字拼了旧类型名的跟着改）。改完
+  `git grep -n 'TaskLimits\|taskLimits' -- . ':!.scratch' ':!docs/changelog'` 为空。
+- **选项：** A 逐字拼了类型名的一并改（推荐，因为按「票面点名没点名」切一刀，会在同一条调用链上
+  留下两个名字——`runSnapshotFrom` 里紧挨着的两行就会一个叫 `runLimitsFromDomain`、
+  一个叫 `taskLimitsForPath`）｜ B 严格按票面只改那三个，这两个留旧名。
+- **不处理会怎样：** 选 B 的话，包里留着两个名字说 `taskLimits`、返回值却是 `RunLimits` 的函数，
+  `grep -i tasklimits` 不再是零。翻案是两处符号改名。
+- **顺带一记（票面两个数都不准，给命令不给结论）：** `git grep -n '\bTaskResult\b' 90e0489 --
+  'internal/**/*.go' 'cmd/**/*.go' | wc -l` 量得 125（票面写「约 124 处」），其中非用例侧
+  再 `| grep -v '_test.go' | wc -l` 得 76；`TaskLimits` 同法 Go 侧 14，前端
+  `git grep -n '\bTaskLimits\b' 90e0489 -- web/src | wc -l` 得 4，合计 18（票面写「约 17 处」）。
+  两个都在同一量级，按实测做的。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D42 · 票 05 · 改到哪一层为止：符号名与它自己那句 doc 改了，形参与邻居没改
+
+- **问：** 票面只写「相关函数名跟着改」，没说这次改名要不要带上形参与散文。改完之后同一批位置
+  仍留着旧概念：`enrichRunProgress(task *RunSnapshot)` 与 `runPausedSoFar(task RunSnapshot, …)`
+  （`internal/api/task_model.go`）的形参仍叫 `task`，而本文件 import 着
+  `manga-manager/internal/task`——形参把包名遮住了；`taskArchiveOpenRate(task *RunSnapshot)`
+  与 `taskMetricValue(task *RunSnapshot, key string)`（`internal/api/storage_io_controller.go`）
+  连函数名带形参都还叫 task；`taskFailure`（`internal/api/task_run.go`）造的是 `RunResult`。
+  用 `grep -rn --include='*.go' 'task \*RunSnapshot\|task RunSnapshot' internal/api` 看得全。
+  `/code-review` 的标准轴另点了一处：`latestRunByTypes(types ...string)` 收的是**任务**类型
+  （内部转 `[]task.Type`），叫 `latestRunByTaskTypes` 更诚实。
+- **已做：** 改到**符号名 + 被改的那个符号自己那句 doc** 为止，两头都停在这条线上。
+  往前一步是 `/code-review` 判的硬违反：改了名而 doc 散文仍按「任务」讲，抵触 `AGENTS.md`
+  的「注释与文档只写**当前的结果**」，其中 `RunSpec.Limits` 那句还与 ADR 0004（上限落进
+  `run_limits`、**按运行一行**）正面相抵，`runPausedSoFar` 里的「**取消中**的任务」则与
+  `CONTEXT.md` 把**取消中**定义为运行状态相抵。因此四句跟着改：`enrichRunProgress`
+  与 `runPausedSoFar` 的首句、后者 doc 里那句「取消中」、以及 `RunSpec.Limits` 的字段 doc。
+  往后一步（形参、`taskFailure`、`taskArchiveOpenRate`、`latestRunByTaskTypes`）没做——
+  它们不是被本票改名的符号，扫起来没有边界。
+- **选项：** A 停在「符号名 + 它自己那句 doc」（推荐，因为这条线画得出来：**本票动过的每一个名字，
+  它正上方那句话必须跟着对**；而形参与邻居函数的扫法没有边界，`taskIsActive`、`taskFilters`
+  会一路带出来，它们没有一个在票面上）｜ B 连形参与邻居函数一起改（读起来更顺，代价是这张纯改名票
+  的 diff 里混进一批票面没有的位置，且「改到哪里为止」得另立一条口径）。
+- **不处理会怎样：** 留在代码里的是「函数叫 run、形参叫 task」的几个函数，读的人在同一个函数里
+  同时看到形参 `task` 与包 `task`。翻案是一次形参改名，不碰行为。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D43 · 票 05 · 顺路撞见：`TaskRuntime` 是个死掉的导出类型，而且名字也按旧概念取
+
+- **问：** `internal/api/controller.go` 的 `type TaskRuntime struct`（装 context、cancel、
+  `taskcontrol.PauseGate` 与 StartedAt）**一个引用都没有**：
+  `git grep -n 'TaskRuntime' -- . ':!.scratch' ':!docs/changelog'` 只命中它自己那一行的声明。
+  它描述的是**运行时句柄**——那是挂在一次**运行**上的东西，不是挂在任务上的，因此它同时是
+  「按旧概念取的名字」的一例。它是本票七条勾完之后，任务子域里我找得到的最后一处同类矛盾（后端侧）。
+- **已做：** 一个字没动。删一个导出类型不是改名，它是对包导出面的改动，超出这张纯改名票；
+  跟着改名又等于给一个没有引用的类型换名字。
+- **选项：** A 原样留着（推荐，因为在这张票里它只有「删」或「改名」两条路，两条都伸出票面；
+  而留着的代价是一个结构体声明）｜ B 删掉（它没有引用，`go build`/`go vet` 不会有话说，
+  但导出面少一个类型是对外可见的改动，该有它自己的票）｜ C 改名为 `RunRuntime` 之类
+  （代价：给一个死类型换名字，读的人下次仍要 grep 一遍才知道它是死的）。
+- **不处理会怎样：** 留在代码里的是一个谁都不用、名字还指着旧概念的导出结构体。
+  下一个读 `controller.go` 的人要跑一次全仓 grep 才敢下结论。
+- **归谁裁：** 用户
+- **状态：** open
+
+## D44 · 票 05 · 前端还留着同一类矛盾，而本批十张票没有一张覆盖它
+
+- **问：** 本批把后端与契约扫干净了（票 04 另扫了 i18n 键、浏览器事件与那个载荷类型），
+  但 `web/src` 里仍有一族按**任务**取名、装的却是一次**运行**的东西：
+  `TaskAction`（`web/src/components/tasks/TaskCenter.tsx`，四个动作里暂停 / 恢复 / 取消作用在
+  运行上，只有重试作用在任务上）、同文件的 `TaskRow`（画的是一张运行卡片）、
+  `TaskBubbleEntry`（`web/src/components/SidebarTaskBubble.tsx`，按 taskId 归并、字段却是
+  status/current/total 这些运行的数）、`TaskWithParams` 与 `TaskMessageSource`
+  与 `getTaskMessage`（`web/src/i18n/task.ts`，渲染的是运行帧上那句文案）。
+  用 `grep -rn -E '^(export )?(interface|type|function) [A-Za-z]*Task' web/src --include='*.ts'
+  --include='*.tsx' | grep -v '\.test\.'` 看得全。
+- **已做：** 一个都没改。票面第 6 条只要求「前端**该类型**的引用跟着改」——指的是
+  `TaskLimits`，本票已改完（`web/src/api/generated.ts` 与
+  `web/src/components/tasks/TaskCenter.tsx`）。上面这一族不在任何一张票的票面上。
+- **选项：** A 本批就此收口，前端这一族留到下一个 effort（推荐，因为它们大多是**组件与视图**的
+  名字而不是契约类型，改名会连着改一批 props 与用例，值得单独一张票；而且其中至少
+  `TaskBubbleEntry` 与 `TaskCenter` 是否该叫「任务」本身有得争——气泡确实按任务归并）｜
+  B 趁契约这次重生一起扫掉（一次改完，代价是把一批与生成契约无关的前端改动塞进本票，
+  且「谁该保留 Task 前缀」要在前端再判一遍词汇表）。
+- **不处理会怎样：** 留在仓库里的是「后端与契约已按对象命名、前端组件层仍按旧概念命名」这一层
+  落差：读的人从 `RunSnapshot` 一路读到 `TaskRow` 时要自己接上。
+- **归谁裁：** 用户
+- **状态：** open
+
+## D45 · 票 05 · `golangci-lint` 的共享缓存记着已删除的兄弟工作树，排除规则因此整片失效
+
+- **问：** 本票门禁里 `golangci-lint run` 退 1、报 22 条（19 errcheck + 3 staticcheck），
+  而**每一条的路径都是 `../abo-04/...`**——那棵工作树在票 04 合并后已经删掉，
+  `git worktree list` 只剩主仓与本树。根因不是代码：`.golangci.yml` 杀掉这批告警靠的是
+  **要读源码行**的两种机制——`exclusions.rules` 里那条 `source: '\.Close\(\)'`，
+  与 `internal/logger/context_test.go` 里那两行 `//nolint:staticcheck`。
+  golangci-lint 自己的缓存（`golangci-lint cache status` 报的
+  `/Users/nicoer/Library/Caches/golangci-lint`，1.1 MiB，跨工作树共享）按文件内容命中了
+  abo-04 那次跑的结果，回放出来的 issue 带着 abo-04 的绝对路径；文件已不存在，
+  于是日志里刷满 `[runner/exclusion_rules] Failed to get line … from line cache`，
+  排除与 nolint 一条都没生效，本该被吃掉的告警全漏了出来。
+- **已做：** 用一份隔离缓存重跑一次（`GOLANGCI_LINT_CACHE=<临时目录> golangci-lint run`），
+  结果 `0 issues.`、退 0。共享缓存一个字节没动，仓库里没有留下任何残留。
+- **选项：** A 每棵工作树用自己的 `GOLANGCI_LINT_CACHE`（推荐，因为它对症——问题正是
+  「按内容命中、位置却按路径回放」，一棵树一份缓存就不会串；代价是每棵新树第一次 lint 慢一轮）｜
+  B 撞上了就 `golangci-lint cache clean`（一条命令、缓存只有 1.1 MiB，但它是事后补救：
+  下一次删掉工作树之后同一个坑还在）｜ C 不管，靠「工作树别删」绕开
+  （站不住：合并完就该删，而这次正是删干净之后才露出来的）。
+- **不处理会怎样：** 下一个在这台机器上跑门禁的人（包括收尾的工头）会看到 22 条红，
+  路径指向一棵不存在的树。它长得跟一次真的 lint 回归一模一样，而**代码是干净的**——
+  查清楚要一次 `.golangci.yml` 与 `//nolint` 的对读。此前九张票没撞上，
+  是因为那时兄弟工作树还在，读得到那些行。
+- **归谁裁：** 用户
+- **状态：** open

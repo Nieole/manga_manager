@@ -549,12 +549,12 @@ func (e *taskEngine) snapshotForRetry(ctx context.Context, taskID int64) (RunSna
 	return RunSnapshot{}, errNoRetryableRun
 }
 
-// latestTaskByTypes 返回给定类型中最近**开跑过**的那一次运行；无匹配返回 nil。
+// latestRunByTypes 返回给定类型中最近**开跑过**的那一次运行；无匹配返回 nil。
 // 供存储 IO 面板估算扫描/封面速率。
 //
 // **排队中**的运行不算：它没有开始时刻，那几个速率一个都答不出，而它的序号恰恰是最新的
 // （入队与每次**合并**都取一个），不排除的话它会顶掉真正在跑的那条，面板上的数静默变成 0。
-func (e *taskEngine) latestTaskByTypes(types ...string) *RunSnapshot {
+func (e *taskEngine) latestRunByTypes(types ...string) *RunSnapshot {
 	ctx := context.Background()
 	domainTypes := make([]task.Type, 0, len(types))
 	for _, taskType := range types {

@@ -57,7 +57,7 @@ type taskSeed struct {
 	Metadata  map[string]string
 	Labels    map[string]string
 	ScopeName string
-	Limits    TaskLimits
+	Limits    RunLimits
 
 	StartCode   string
 	StartParams map[string]string
@@ -158,7 +158,7 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*runhandle.Handle,
 		ScopeName:   seed.ScopeName,
 		Limits:      seed.Limits,
 	}
-	result := TaskResult{Code: seed.TerminalCode, Params: seed.TerminalParams}
+	result := RunResult{Code: seed.TerminalCode, Params: seed.TerminalParams}
 
 	run := &seededRun{finish: make(chan error, 1), settled: make(chan struct{})}
 	started := make(chan seededBody, 1)
@@ -174,7 +174,7 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*runhandle.Handle,
 			fn()
 		}()
 	}
-	launched, err := e.start(seed.Identity, seed.trigger(), spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	launched, err := e.start(seed.Identity, seed.trigger(), spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		started <- seededBody{ctx: ctx, handle: handle}
 		return result, <-run.finish
 	})

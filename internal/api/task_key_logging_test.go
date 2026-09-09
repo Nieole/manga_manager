@@ -180,10 +180,10 @@ func TestTaskBodyContextCarriesTaskKey(t *testing.T) {
 
 			var seen string
 			var seenRunID int64
-			err := engine.Run(tc.identity, task.TriggerManual, RunSpec{Key: tc.key}, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
+			err := engine.Run(tc.identity, task.TriggerManual, RunSpec{Key: tc.key}, func(ctx context.Context, _ *runhandle.Handle) (RunResult, error) {
 				seen = logger.TaskKeyFrom(ctx)
 				seenRunID = logger.RunIDFrom(ctx)
-				return TaskResult{}, nil
+				return RunResult{}, nil
 			})
 			if err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)

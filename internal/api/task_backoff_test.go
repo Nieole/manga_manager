@@ -202,4 +202,4 @@ func TestFailStreakStopsAutomaticLaunchesAndSaysWhy(t *testing.T) {
 }
 
 // idleTaskBody 是什么都不做、正常返回的任务体。
-func idleTaskBody(context.Context, *runhandle.Handle) (TaskResult, error) { return TaskResult{}, nil }
+func idleTaskBody(context.Context, *runhandle.Handle) (RunResult, error) { return RunResult{}, nil }

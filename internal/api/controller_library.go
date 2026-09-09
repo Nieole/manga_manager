@@ -306,27 +306,27 @@ func (c *Controller) startLibraryScanRun(lib database.Library, force bool, trigg
 			"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
 			"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
 		},
-		Limits:       c.taskLimitsForPath(lib.Path),
+		Limits:       c.runLimitsForPath(lib.Path),
 		CompleteCode: "task.msg.scan_library.complete",
 		CancelCode:   "task.msg.scan_library.cancelled",
 		FailCode:     "task.msg.scan_library.failed",
 	}
 
-	return c.taskEngine.start(libraryTask("scan_library", lib.ID, variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.start(libraryTask("scan_library", lib.ID, variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		defer c.purgeReadingPathCaches()
 		// 把**运行句柄**包成**扫描观察者**一起交出去：扫描器的报文不带身份，
 		// 「这次扫描的进度写到哪」由这次交出的是谁回答。
 		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force, newTaskScanObserver(handle)); err != nil {
 			if errors.Is(err, context.Canceled) {
 				c.invalidateDashboardStatsCache("scan_library_cancelled")
-				return TaskResult{Params: map[string]string{"name": lib.Name}}, err
+				return RunResult{Params: map[string]string{"name": lib.Name}}, err
 			}
 			c.invalidateDashboardStatsCache("scan_library_failed")
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		c.warmDashboardStatsCacheAsync("scan_library_completed")
 		c.chainBookHashBackfill(ctx, "scan_library")
-		return TaskResult{Params: map[string]string{"name": lib.Name}}, nil
+		return RunResult{Params: map[string]string{"name": lib.Name}}, nil
 	})
 }
 
@@ -394,7 +394,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger ta
 	storagePolicy := config.ResolvedStoragePolicy{}
 	// 并发上限只在真找到了所属资料库时才有意义：查不到就让任务声明里的 Limits 留零值，
 	// 引擎不会为它凭空造一份全零的上限（那会在任务面板上显示成「0 并发」的假数据）。
-	limits := TaskLimits{}
+	limits := RunLimits{}
 	if series, err := c.store.GetSeries(context.Background(), seriesID); err == nil {
 		scopeName = series.Name
 		if series.Title.Valid && strings.TrimSpace(series.Title.String) != "" {
@@ -402,7 +402,7 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger ta
 		}
 		if lib, libErr := c.store.GetLibrary(context.Background(), series.LibraryID); libErr == nil {
 			storagePolicy = config.ResolveStoragePolicy(c.currentConfig(), lib.Path)
-			limits = c.taskLimitsForPath(lib.Path)
+			limits = c.runLimitsForPath(lib.Path)
 		}
 	}
 
@@ -427,20 +427,20 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger ta
 		FailCode:     "task.msg.scan_series.failed",
 	}
 
-	return c.taskEngine.Run(seriesTask("scan_series", seriesID, variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(seriesTask("scan_series", seriesID, variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		defer c.purgeReadingPathCaches()
 		if err := c.scanner.ScanSeries(ctx, seriesID, force, newTaskScanObserver(handle)); err != nil {
 			if errors.Is(err, context.Canceled) {
 				c.invalidateDashboardStatsCache("scan_series_cancelled")
-				return TaskResult{Params: idParams}, err
+				return RunResult{Params: idParams}, err
 			}
 			slog.ErrorContext(ctx, "ScanSeries Failed", "seriesId", seriesID, "error", err)
 			c.invalidateDashboardStatsCache("scan_series_failed")
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		c.warmDashboardStatsCacheAsync("scan_series_completed")
 		c.chainBookHashBackfill(ctx, "scan_series")
-		return TaskResult{Params: idParams}, nil
+		return RunResult{Params: idParams}, nil
 	})
 }
 
@@ -508,7 +508,7 @@ func (c *Controller) startCleanupLibraryRun(libraryID int64, trigger task.Trigge
 		FailCode:     "task.msg.cleanup_library.failed",
 	}
 
-	return c.taskEngine.start(libraryTask("cleanup_library", libraryID, variantSole), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.start(libraryTask("cleanup_library", libraryID, variantSole), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		handle.Phase("scanning_records", "task.msg.cleanup_library.scanning_records", idParams)
 		// 刻意不用任务体 ctx 的**取消**能力：本任务不可取消，而停机会取消所有任务 ctx——用了它，
 		// 一次关服就会把这个没人取消过的任务写成**已取消**。改动前先读本函数的 doc。
@@ -516,9 +516,9 @@ func (c *Controller) startCleanupLibraryRun(libraryID int64, trigger task.Trigge
 		cleanupCtx := logger.WithRunID(logger.WithTaskKey(context.Background(), logger.TaskKeyFrom(taskCtx)), logger.RunIDFrom(taskCtx))
 		if err := c.scanner.CleanupLibrary(cleanupCtx, libraryID); err != nil {
 			slog.ErrorContext(cleanupCtx, "Failed to cleanup library", "library_id", libraryID, "error", err)
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
-		return TaskResult{Params: idParams}, nil
+		return RunResult{Params: idParams}, nil
 	})
 }
 

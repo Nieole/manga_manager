@@ -137,7 +137,7 @@ func (c *Controller) launchRebuildIndexTask(trigger task.Trigger) error {
 		FailCode:     "task.msg.rebuild_index.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), trigger, spec, func(ctx context.Context, _ *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_index", variantSole), trigger, spec, func(ctx context.Context, _ *runhandle.Handle) (RunResult, error) {
 		if err := c.store.RebuildSeriesSearchIndex(ctx); err != nil {
 			return taskFailure("task.msg.rebuild_index.series_failed", err), err
 		}
@@ -145,10 +145,10 @@ func (c *Controller) launchRebuildIndexTask(trigger task.Trigger) error {
 			return taskFailure("task.msg.rebuild_index.book_failed", err), err
 		}
 		if err := ctx.Err(); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		c.triggerGlobalScan(ctx)
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	})
 }
 
@@ -187,7 +187,7 @@ func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 		FailCode:     "task.msg.rebuild_thumbnails.failed",
 	}
 
-	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		c.initRebuildThumbAggregator(handle, 0)
 		defer c.releaseRebuildThumbAggregator()
 
@@ -196,7 +196,7 @@ func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
 		if err := handle.Checkpoint(ctx); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
 			return taskFailure("task.msg.rebuild_thumbnails.mkdir_failed", err), err
@@ -208,10 +208,10 @@ func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 		handle.Phase("reading_metadata", "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil)
 		if err := c.runGlobalScan(ctx, handle, true, true, /* 重建缩略图必须看得见全部已入库的书 */
 			c.beginRebuildThumbLibrary); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		c.warmDashboardStatsCacheAsync("rebuild_thumbnails_completed")
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	}); err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func (c *Controller) launchCleanupThumbnailsTask(trigger task.Trigger) error {
 		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
 		handle.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
 		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
@@ -248,7 +248,7 @@ func (c *Controller) launchCleanupThumbnailsTask(trigger task.Trigger) error {
 				"scanned": strconv.Itoa(scanned),
 			})
 		})
-		return TaskResult{}, err
+		return RunResult{}, err
 	})
 }
 
@@ -273,13 +273,13 @@ func (c *Controller) launchRebuildFileIdentitiesTask(trigger task.Trigger) error
 		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		updated, total, err := c.runRebuildFileIdentities(ctx, 500,
 			hashingFrameHandle{Handle: handle, code: "task.msg.rebuild_file_identities.progress"})
 		if err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
-		return TaskResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
+		return RunResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
 	})
 }
 
@@ -413,13 +413,13 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string, trigge
 		FailCode:     "task.msg.book_hash_backfill.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap,
 			hashingFrameHandle{Handle: handle, code: "task.msg.book_hash_backfill.progress"})
 		if err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
-		return TaskResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
+		return RunResult{Params: map[string]string{"updated": strconv.Itoa(updated), "total": strconv.Itoa(total)}}, nil
 	})
 }
 

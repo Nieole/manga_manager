@@ -97,10 +97,10 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 }
 
 func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
-	latestScan := c.taskEngine.latestTaskByTypes("scan_library", "scan_series")
+	latestScan := c.taskEngine.latestRunByTypes("scan_library", "scan_series")
 	// 封面那一格读的是**封面运行**：只有它生成封面，归档打开与缩略图落盘的耗时也只记在那边。
 	// 缩略图重建只跑逐库强扫，封面归它**串联**出来的那些运行。
-	latestCover := c.taskEngine.latestTaskByTypes("generate_covers")
+	latestCover := c.taskEngine.latestRunByTypes("generate_covers")
 
 	scanRate := taskArchiveOpenRate(latestScan)
 	coverRate := taskArchiveOpenRate(latestCover)

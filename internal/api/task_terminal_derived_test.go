@@ -277,7 +277,7 @@ func TestTaskRateSurvivesActiveAndSettledStatuses(t *testing.T) {
 // backdateTaskStart 把已播种任务的开始时刻往前挪，给派生字段一个确定的分母。
 //
 // 不挪的话，分母是「播种到上报」之间的真实间隔：macOS/Linux 上是微秒级正数，而 Windows 的
-// 时钟粒度约 15.6ms，同一个时间片内 time.Since 返回 0，enrichTaskProgress 的 elapsed <= 0
+// 时钟粒度约 15.6ms，同一个时间片内 time.Since 返回 0，enrichRunProgress 的 elapsed <= 0
 // 守卫会把速率与 ETA 一并掐掉——用例于是在 Windows 上红、在别处绿。真实任务从启动到上报进度
 // 远不止一个时间片，这道守卫本身是对的，该确定下来的是用例的分母。
 func backdateTaskStart(t testing.TB, e *taskEngine, key string, d time.Duration) {

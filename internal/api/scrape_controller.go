@@ -402,14 +402,14 @@ func (m scrapeMetrics) frame(current int, phase, code, seriesName string) runhan
 // 各个可中断点只把错误返回上去，由引擎裁决**终态**：取消落已取消，其余落失败。
 // 启动入口交下来的 ctx 没有 deadline，**暂停闸门**也只返回 nil 或 ctx.Err()，因此今天走不到
 // 失败那条；将来若给任务上下文加了超时，这条等价即失效。
-func (c *Controller) runScrapeTask(ctx context.Context, handle *runhandle.Handle, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (TaskResult, error) {
+func (c *Controller) runScrapeTask(ctx context.Context, handle *runhandle.Handle, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (RunResult, error) {
 	providerName := provider.Name()
 	m := scrapeMetrics{total: len(entries)}
 	handle.Report(m.frame(0, "collecting_series", "task.msg.scrape.collecting_series", ""))
 
 	for i, entry := range entries {
 		if err := handle.Checkpoint(ctx); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		slog.InfoContext(ctx, logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
 
@@ -442,7 +442,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, handle *runhandle.Handle
 
 		handle.Report(m.frame(i, "queueing_review", "task.msg.scrape.queueing_review", entry.Name))
 		if err := handle.Checkpoint(ctx); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		queued, err := c.proposals.Queue(ctx, series, result, providerName, entry.Name, proposal.QueueOptions{})
 		switch {
@@ -464,19 +464,19 @@ func (c *Controller) runScrapeTask(ctx context.Context, handle *runhandle.Handle
 
 		// 速率限制
 		if err := handle.Checkpoint(ctx); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		select {
 		case <-time.After(scrapeRateLimitDelay):
 			m.rateLimitedWait += scrapeRateLimitDelay
 		case <-ctx.Done():
-			return TaskResult{}, ctx.Err()
+			return RunResult{}, ctx.Err()
 		}
 	}
 
 	slog.InfoContext(ctx, "Scrape task completed", "provider", providerName, "success_count", m.success, "total_count", m.total)
 	c.PublishEvent("refresh")
-	return TaskResult{Params: map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)}}, nil
+	return RunResult{Params: map[string]string{"success": strconv.Itoa(m.success), "total": strconv.Itoa(m.total)}}, nil
 }
 
 func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, providerKey string, trigger task.Trigger) error {
@@ -524,7 +524,7 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		FailCode:     "task.msg.scrape.failed_all",
 	}
 
-	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), handle, provider, "Scraping series metadata", allSeries)
 	})
 }
@@ -599,7 +599,7 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		FailCode:     "task.msg.scrape.failed_library",
 	}
 
-	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), handle, provider, "Scraping library series metadata", allSeries)
 	})
 }

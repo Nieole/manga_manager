@@ -298,9 +298,9 @@ func TestCoalescedRunKeepsTheFirstBody(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(fn func()) { pending = append(pending, fn) }, nil)
 
 	bodies := 0
-	body := func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	body := func(context.Context, *runhandle.Handle) (RunResult, error) {
 		bodies++
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	}
 	identity := libraryTask("scan_library", 1, variantSole)
 	spec := RunSpec{Key: "scan_library_1", Total: 1, CanCancel: true}

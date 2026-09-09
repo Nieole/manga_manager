@@ -11,9 +11,9 @@ import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/
 import { runCardId } from '../../utils/runCard';
 import { isActiveRunStatus, isLiveRunStatus } from '../../utils/runStatus';
 
-// TaskLimits / RunSnapshot / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
+// RunLimits / RunSnapshot / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
 // （单一事实源，见 api/generated.ts），此处再导出以保持既有 import 路径不变。
-export type { TaskLimits, RunSnapshot, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse, RunSample, RunSamplesResponse } from '../../api/generated';
+export type { RunLimits, RunSnapshot, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse, RunSample, RunSamplesResponse } from '../../api/generated';
 import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunSample, RunSamplesResponse, RunSnapshot, TaskSummary } from '../../api/generated';
 
 // 运行上的动作作用在**运行**上，重试作用在**任务**上（它重新发起一次，不改动被重试的那一条）。

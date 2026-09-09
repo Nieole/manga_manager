@@ -105,10 +105,10 @@ func (c *Controller) launchCleanupRunHistoryTask() error {
 	}
 
 	return c.taskEngine.Run(systemTask(cleanupRunHistoryTaskKey, variantSole), task.TriggerChained, spec,
-		func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 			result, err := c.taskEngine.pruneHistory(ctx, policy)
 			if err != nil {
-				return TaskResult{}, err
+				return RunResult{}, err
 			}
 			// 清了多少既进**指标**（可聚合查询），也进终态文案的占位参数（用户直接读得到）。
 			// 一次运行只裁一次，因此这一帧握着的就是全量当前值。
@@ -123,7 +123,7 @@ func (c *Controller) launchCleanupRunHistoryTask() error {
 					"pruned_samples": result.Samples,
 				},
 			})
-			return TaskResult{Params: map[string]string{
+			return RunResult{Params: map[string]string{
 				"runs":    strconv.FormatInt(result.Runs, 10),
 				"events":  strconv.FormatInt(result.Events, 10),
 				"samples": strconv.FormatInt(result.Samples, 10),

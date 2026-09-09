@@ -381,9 +381,9 @@ func TestHashBackfillStartsFromInsideATaskBody(t *testing.T) {
 	c.config = config.NewManager(&cfg)
 
 	var chainErr error
-	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), task.TriggerManual, RunSpec{Key: "scan_library_1"}, func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), task.TriggerManual, RunSpec{Key: "scan_library_1"}, func(context.Context, *runhandle.Handle) (RunResult, error) {
 		chainErr = c.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained)
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动资料库扫描失败: %v", err)
 	}

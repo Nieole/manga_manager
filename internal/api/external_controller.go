@@ -258,16 +258,16 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: handle})
 		if err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		c.PublishEvent("refresh")
 		if snapshot.ScannedFiles == 0 {
-			return TaskResult{Code: "task.msg.scan_external_library.complete_empty"}, nil
+			return RunResult{Code: "task.msg.scan_external_library.complete_empty"}, nil
 		}
-		return TaskResult{}, nil
+		return RunResult{}, nil
 	})
 }
 
@@ -302,13 +302,13 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		if err := ctx.Err(); err != nil {
-			return TaskResult{}, err
+			return RunResult{}, err
 		}
 		if total == 0 {
 			c.PublishEvent("refresh")
-			return TaskResult{Code: "task.msg.transfer_external_library.all_exist"}, nil
+			return RunResult{Code: "task.msg.transfer_external_library.all_exist"}, nil
 		}
 
 		failures := make([]string, 0)
@@ -318,7 +318,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 			// 非取消错误一律视为失败：**暂停闸门**今天只返回 nil 或 ctx.Err()，而任务上下文无
 			// deadline，因此这与「只认取消」等价。给任务上下文加超时会让这条等价失效。
 			if err := handle.Checkpoint(ctx); err != nil {
-				return TaskResult{}, err
+				return RunResult{}, err
 			}
 			// 帧报的是**已完成**数，因此在拷贝之前报：单本几百 MB 要拷几分钟，
 			// 这段时间里用户要看到的是正在传的那本书，而不是上一本传完时的旧帧。
@@ -358,7 +358,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		c.PublishEvent("refresh")
 
 		if len(failures) > 0 {
-			return TaskResult{
+			return RunResult{
 				Code: "task.msg.transfer_external_library.complete_with_failures",
 				Params: map[string]string{
 					"success": strconv.Itoa(total - len(failures)),
@@ -366,7 +366,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 				},
 			}, errors.New(strings.Join(failures, "\n"))
 		}
-		return TaskResult{Params: map[string]string{
+		return RunResult{Params: map[string]string{
 			"added":    strconv.Itoa(total),
 			"existing": strconv.Itoa(plan.ExistingBooks + skipped),
 		}}, nil

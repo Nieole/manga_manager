@@ -241,7 +241,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 		FailCode:     "task.msg.write_comicinfo.failed",
 	}
 
-	return c.taskEngine.Run(seriesTask("write_comicinfo", series.ID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(seriesTask("write_comicinfo", series.ID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
 			// 聚合是纯 CPU，留在**磁盘作业**之外：把它夹进令牌的持有区间只会虚占这块盘的归档打开额度。
@@ -257,7 +257,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 				writeErr = parser.WriteComicInfoIntoArchive(book.Path, info)
 				return nil
 			}); err != nil {
-				return TaskResult{}, err
+				return RunResult{}, err
 			}
 
 			switch {
@@ -286,7 +286,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 				},
 			})
 		}
-		return TaskResult{Params: map[string]string{
+		return RunResult{Params: map[string]string{
 			"written": strconv.Itoa(written),
 			"skipped": strconv.Itoa(skipped),
 			"failed":  strconv.Itoa(failed),

@@ -17,7 +17,7 @@ import (
 // runPanickingTask 经启动入口起一个当场 panic 的任务体。
 func runPanickingTask(t *testing.T, e *taskEngine, identity TaskIdentity, key string) {
 	t.Helper()
-	err := e.Run(identity, task.TriggerManual, RunSpec{Key: key, Total: 100}, func(context.Context, *runhandle.Handle) (TaskResult, error) {
+	err := e.Run(identity, task.TriggerManual, RunSpec{Key: key, Total: 100}, func(context.Context, *runhandle.Handle) (RunResult, error) {
 		panic("boom")
 	})
 	if err != nil {
@@ -91,9 +91,9 @@ func TestTaskBodyRunsThroughInjectedBackgroundCapability(t *testing.T) {
 	const key = "scan_library_1"
 	bodyRan := false
 	err := e.Run(libraryTask("scan_library", 1, variantSole), task.TriggerManual, RunSpec{Key: key, Total: 10},
-		func(context.Context, *runhandle.Handle) (TaskResult, error) {
+		func(context.Context, *runhandle.Handle) (RunResult, error) {
 			bodyRan = true
-			return TaskResult{}, nil
+			return RunResult{}, nil
 		})
 	if err != nil {
 		t.Fatalf("起任务失败: %v", err)

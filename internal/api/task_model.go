@@ -173,15 +173,15 @@ func (e *taskEngine) runSnapshotFrom(snapshot task.Snapshot, identity TaskIdenti
 		snap.StartedAt = &startedAt
 	}
 	if snapshot.Side.Limits != nil {
-		snap.EffectiveLimit = taskLimitsFromDomain(*snapshot.Side.Limits)
+		snap.EffectiveLimit = runLimitsFromDomain(*snapshot.Side.Limits)
 	}
-	enrichTaskProgress(&snap)
+	enrichRunProgress(&snap)
 	return snap
 }
 
-// taskLimitsFromDomain 与 domain 是一对：并发上限在两侧是同一组真列，逐个搬。
-func taskLimitsFromDomain(limits task.Limits) *TaskLimits {
-	return &TaskLimits{
+// runLimitsFromDomain 与 domain 是一对：并发上限在两侧是同一组真列，逐个搬。
+func runLimitsFromDomain(limits task.Limits) *RunLimits {
+	return &RunLimits{
 		ScanProfile:                limits.ScanProfile,
 		ScannerWorkersConfigured:   limits.ScannerWorkersConfigured,
 		ScannerWorkersEffective:    limits.ScannerWorkersEffective,
@@ -198,7 +198,7 @@ func taskLimitsFromDomain(limits task.Limits) *TaskLimits {
 }
 
 // domain 把 api 侧的并发上限翻成领域侧的。
-func (limits TaskLimits) domain() task.Limits {
+func (limits RunLimits) domain() task.Limits {
 	return task.Limits{
 		ScanProfile:                limits.ScanProfile,
 		ScannerWorkersConfigured:   limits.ScannerWorkersConfigured,
@@ -222,7 +222,7 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 	return fallback
 }
 
-// enrichTaskProgress 按任务当前的计数与已耗时重算进度派生字段：百分比、速率、ETA。
+// enrichRunProgress 按这次运行当前的计数与已耗时重算进度派生字段：百分比、速率、ETA。
 //
 // 三个字段一律先清空再算，不做累积：它总是在上一帧的快照上被调用，留着旧值就等于让这一帧
 // 带上一帧的数——终态那句自相矛盾的 `2 / 2` 配 `50.0%` 正是这样来的。
@@ -240,7 +240,7 @@ func firstNonEmptyTaskValue(preferred, fallback string) string {
 // 速率的缺席只由数据决定，不得由状态决定：分母非正或计数为零就不发。从未上报过进度的运行
 // 两条都占——它最后一次上报的时刻仍是开始时刻。**排队中**的运行连开始时刻都还没有，
 // 它的分母无从谈起，因此百分比之外的两个数一律不发。
-func enrichTaskProgress(task *RunSnapshot) {
+func enrichRunProgress(task *RunSnapshot) {
 	if task == nil {
 		return
 	}
@@ -264,7 +264,7 @@ func enrichTaskProgress(task *RunSnapshot) {
 		elapsed = task.FinishedAt.Sub(*task.StartedAt)
 	}
 	// 扣掉**暂停**：那段时间里任务一条都没处理，留在分母里等于把「等用户回来」算成了在干活。
-	elapsed -= taskPausedSoFar(*task, now)
+	elapsed -= runPausedSoFar(*task, now)
 	seconds := elapsed.Seconds()
 	if seconds <= 0 || task.Current <= 0 {
 		return
@@ -276,11 +276,11 @@ func enrichTaskProgress(task *RunSnapshot) {
 	}
 }
 
-// taskPausedSoFar 返回这个任务至今的暂停总时长：已经折进累计的那些，加上此刻仍在进行的这一次。
+// runPausedSoFar 返回这次运行至今的暂停总时长：已经折进累计的那些，加上此刻仍在进行的这一次。
 //
-// 仍在进行的那一段只在**已暂停**下计入：**取消中**的任务已被放行、正在收尾，它的 PausedAt
+// 仍在进行的那一段只在**已暂停**下计入：**取消中**的运行已被放行、正在收尾，它的 PausedAt
 // 由 cancel 那一刻折进累计后清掉；**终态**同理由收尾清掉。
-func taskPausedSoFar(task RunSnapshot, now time.Time) time.Duration {
+func runPausedSoFar(task RunSnapshot, now time.Time) time.Duration {
 	total := time.Duration(task.ControlPausedMillis) * time.Millisecond
 	if task.Status == "paused" && task.PausedAt != nil {
 		if ongoing := now.Sub(*task.PausedAt); ongoing > 0 {
