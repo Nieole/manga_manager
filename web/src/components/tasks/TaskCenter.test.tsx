@@ -561,7 +561,7 @@ describe('吞吐曲线', () => {
     return rates.map((rate, index) => ({
       at: new Date(base + (index + 1) * 10_000).toISOString(),
       current: 100 * (index + 1),
-      rate_per_minute: rate,
+      throughput_per_minute: rate,
     }));
   }
 
@@ -613,7 +613,7 @@ describe('吞吐曲线', () => {
     const samples: RunSample[] = [0, 1, 2, 3].map((index) => ({
       at: new Date(base + index * 60_000).toISOString(),
       current: 100 * (index + 1),
-      rate_per_minute: 300,
+      throughput_per_minute: 300,
     }));
     renderCenter(runWithSamples({ run_id: 3, retention_days: 7, samples }));
 

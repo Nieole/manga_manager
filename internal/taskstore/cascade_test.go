@@ -42,7 +42,7 @@ func writeSideData(t *testing.T, store *Store, runID int64) {
 		t.Fatalf("append run events failed: %v", err)
 	}
 	if err := store.AppendRunSamples(ctx, runID, []task.Sample{
-		{At: time.Now(), Current: 5, RatePerMinute: 30},
+		{At: time.Now(), Current: 5, ThroughputPerMinute: 30},
 	}); err != nil {
 		t.Fatalf("append run samples failed: %v", err)
 	}

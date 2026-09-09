@@ -100,7 +100,7 @@ var createStatements = []string{
 		run_id INTEGER NOT NULL REFERENCES ` + tableRuns + `(id) ON DELETE CASCADE,
 		at INTEGER NOT NULL,
 		current INTEGER NOT NULL DEFAULT 0,
-		rate_per_minute REAL NOT NULL DEFAULT 0
+		throughput_per_minute REAL NOT NULL DEFAULT 0
 	)`,
 	`CREATE TABLE IF NOT EXISTS ` + tableRunMetrics + ` (
 		run_id INTEGER NOT NULL REFERENCES ` + tableRuns + `(id) ON DELETE CASCADE,
@@ -165,6 +165,16 @@ var addedColumns = []struct{ table, column, definition string }{
 	{tableRuns, "pause_reason", `TEXT NOT NULL DEFAULT ''`},
 }
 
+// renamedColumns 是建表语句写下之后改过名的列。
+//
+// 与 addedColumns 同理：`CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，改建表语句里的列名
+// 对存量库不生效——而写入面已经按新名字插入了，少了这一条，开发机上那些库每落一个点都会撞上
+// 「没有这一列」。改名而不是「加新列 + 留着旧列」：旧名下那些点是同一个数，搬过去就是全部。
+var renamedColumns = []struct{ table, from, to string }{
+	// 采样上这一格量的是「自上一个点以来那一段」的吞吐，与运行卡片上那个平均速率不是同一个数。
+	{tableRunSamples, "rate_per_minute", "throughput_per_minute"},
+}
+
 // indexStatements 是取数用的索引，谓词不参与准入，因此建过就不必再动。
 var indexStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_runs_sequence ON ` + tableRuns + `(sequence)`,
@@ -182,8 +192,8 @@ var indexStatements = []string{
 
 // Migrate 建起任务与运行的表与索引。语句幂等，每次启动重放即可。
 //
-// `CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，因此将来给这几张表**加列**要另走一条
-// `ALTER TABLE`（`internal/database` 的 ensureColumn 是先例），改这里的建表语句对存量库不生效。
+// `CREATE TABLE IF NOT EXISTS` 对已存在的表是无操作，因此将来给这几张表**加列**或**改列名**
+// 都要另走一条 `ALTER TABLE`（见 addedColumns 与 renamedColumns），改这里的建表语句对存量库不生效。
 //
 // 前置条件：db 的连接必须开着 foreign_keys，否则返回 ErrForeignKeysDisabled。
 func Migrate(db *sql.DB) error {
@@ -211,7 +221,13 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("taskstore: 执行迁移语句失败: %w", err)
 		}
 	}
-	// 补列排在建表之后、建索引之前：索引可能就建在刚补上的那一列上。
+	// 改名与补列都排在建表之后、建索引之前：索引可能就建在这几列上。
+	// 改名先走，好让紧随其后的补列看见的是列的**当前**名字。
+	for _, renamed := range renamedColumns {
+		if err := ensureRenamedColumn(tx, renamed.table, renamed.from, renamed.to); err != nil {
+			return err
+		}
+	}
 	for _, added := range addedColumns {
 		if err := ensureColumn(tx, added.table, added.column, added.definition); err != nil {
 			return err
@@ -277,25 +293,51 @@ func tableExists(tx *sql.Tx, table string) (bool, error) {
 //
 // 先查后加而不是靠 `ALTER TABLE` 报错再吞：吞错误会把「列名拼错」这类真问题一起吞掉。
 func ensureColumn(tx *sql.Tx, table, column, definition string) error {
-	rows, err := tx.Query(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
-	if err != nil {
-		return fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
-	}
-	present := rows.Next()
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
-	}
-	if present {
-		return nil
+	present, err := columnExists(tx, table, column)
+	if err != nil || present {
+		return err
 	}
 	if _, err := tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition); err != nil {
 		return fmt.Errorf("taskstore: 给 %s 补列 %s 失败: %w", table, column, err)
 	}
 	return nil
+}
+
+// ensureRenamedColumn 把一列改名，目标名已经在（含整张表刚由建表语句按新名建起）就什么都不做。
+//
+// 走 `RENAME COLUMN` 而不是「加一列再搬数」：改名是原地的，那一列上的值、类型与约束原样留着，
+// 而搬数要多一句 UPDATE，且中途失败会留下两列各半份的采样。
+// 先查后改而不是靠报错再吞：吞错误会把「表名拼错」这类真问题一起吞掉。
+func ensureRenamedColumn(tx *sql.Tx, table, from, to string) error {
+	present, err := columnExists(tx, table, to)
+	if err != nil || present {
+		return err
+	}
+	renamable, err := columnExists(tx, table, from)
+	if err != nil || !renamable {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE ` + table + ` RENAME COLUMN ` + from + ` TO ` + to); err != nil {
+		return fmt.Errorf("taskstore: 把 %s 的列 %s 改名为 %s 失败: %w", table, from, to, err)
+	}
+	return nil
+}
+
+// columnExists 回答这张表上有没有这一列；表本身不存在时一律回假。
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.Query(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`, table, column)
+	if err != nil {
+		return false, fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
+	}
+	present := rows.Next()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("taskstore: 读 %s 的列失败: %w", table, err)
+	}
+	return present, nil
 }
 
 // quotedStatuses 把一组状态拼成 SQL 的 IN 列表。状态取值是本仓自己的封闭枚举，不含引号。

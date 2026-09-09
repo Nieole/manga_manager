@@ -157,8 +157,8 @@ func TestSampleRateMeasuresTheWindowSoStallsReadAsZero(t *testing.T) {
 		if sample.Current != wantCurrent[i] {
 			t.Fatalf("第 %d 个点的计数为 %d, want %d", i, sample.Current, wantCurrent[i])
 		}
-		if sample.RatePerMinute != wantRate[i] {
-			t.Fatalf("第 %d 个点的吞吐为 %.2f/min, want %.2f/min", i, sample.RatePerMinute, wantRate[i])
+		if sample.ThroughputPerMinute != wantRate[i] {
+			t.Fatalf("第 %d 个点的吞吐为 %.2f/min, want %.2f/min", i, sample.ThroughputPerMinute, wantRate[i])
 		}
 	}
 }

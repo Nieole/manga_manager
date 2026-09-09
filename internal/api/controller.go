@@ -135,13 +135,19 @@ type RunStatus struct {
 	Current       int               `json:"current"`
 	Total         int               `json:"total"`
 	Percent       *float64          `json:"percent,omitempty"`
-	RatePerMinute float64           `json:"rate_per_minute,omitempty"`
-	EtaSeconds    *int64            `json:"eta_seconds,omitempty"`
-	CanCancel     bool              `json:"can_cancel"`
-	CanPause      bool              `json:"can_pause"`
-	CanResume     bool              `json:"can_resume"`
-	Retryable     bool              `json:"retryable"`
-	PausedAt      *time.Time        `json:"paused_at,omitempty"`
+	// RatePerMinute 是这次运行**至今的平均速率**：已处理的条数折成每分钟多少条。
+	//
+	// **分母是这次运行真正在干活的那一段**——从开跑量到此刻（终态量到结束时刻），
+	// 并把**暂停**逐段扣掉（见 enrichTaskProgress）。它答的是「这次运行整体跑多快」，
+	// 因此卡住时只缓慢下滑；「它此刻还在不在产出」由曲线上那个 RunSample.ThroughputPerMinute
+	// 答，分母是墙上时间。两个数都对，但不是同一个数。
+	RatePerMinute float64    `json:"rate_per_minute,omitempty"`
+	EtaSeconds    *int64     `json:"eta_seconds,omitempty"`
+	CanCancel     bool       `json:"can_cancel"`
+	CanPause      bool       `json:"can_pause"`
+	CanResume     bool       `json:"can_resume"`
+	Retryable     bool       `json:"retryable"`
+	PausedAt      *time.Time `json:"paused_at,omitempty"`
 	// PauseReason 是这一次暂停原因（见 task.PauseReason）：用户按的是这条运行自己的暂停键，
 	// 还是「全部暂停」。只在**已暂停**期间非空——它回答的是「谁把它按下的」，
 	// 一条早已跑完的运行带着这句话只会误导。

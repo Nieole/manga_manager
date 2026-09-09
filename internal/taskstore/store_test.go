@@ -15,8 +15,9 @@ import (
 	"manga-manager/internal/task"
 )
 
-// newStoreForTest 在临时目录建一个开着外键的库并迁移到位。
-func newStoreForTest(t *testing.T) *Store {
+// newDBForTest 在临时目录开一个照生产连接参数来的库，**不迁移**：迁移本身要守的那几条
+// 得从一个空库起步。
+func newDBForTest(t *testing.T) *sql.DB {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "taskstore.db")+
@@ -25,6 +26,14 @@ func newStoreForTest(t *testing.T) *Store {
 		t.Fatalf("open db failed: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// newStoreForTest 在临时目录建一个开着外键的库并迁移到位。
+func newStoreForTest(t *testing.T) *Store {
+	t.Helper()
+
+	db := newDBForTest(t)
 	if err := Migrate(db); err != nil {
 		t.Fatalf("migrate failed: %v", err)
 	}

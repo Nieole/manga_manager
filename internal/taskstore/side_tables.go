@@ -141,10 +141,10 @@ func (s *Store) ListRunEvents(ctx context.Context, runID int64, limit int) ([]ta
 func (s *Store) AppendRunSamples(ctx context.Context, runID int64, samples []task.Sample) error {
 	rows := make([][]any, 0, len(samples))
 	for _, sample := range samples {
-		rows = append(rows, []any{runID, millisFromTime(sample.At), sample.Current, sample.RatePerMinute})
+		rows = append(rows, []any{runID, millisFromTime(sample.At), sample.Current, sample.ThroughputPerMinute})
 	}
 	return s.execRows(ctx,
-		`INSERT INTO `+tableRunSamples+` (run_id, at, current, rate_per_minute) VALUES (?, ?, ?, ?)`, rows)
+		`INSERT INTO `+tableRunSamples+` (run_id, at, current, throughput_per_minute) VALUES (?, ?, ?, ?)`, rows)
 }
 
 // ListRunSamples 按时刻升序取一条运行的**采样**点；limit 大于 0 时只取**最近的**那几个。
@@ -154,7 +154,7 @@ func (s *Store) AppendRunSamples(ctx context.Context, runID int64, samples []tas
 //
 // 定序按自增主键而不是 at：同一毫秒里落下的两个点用 at 分不出先后，而 at 落盘就是毫秒。
 func (s *Store) ListRunSamples(ctx context.Context, runID int64, limit int) ([]task.Sample, error) {
-	const columns = `SELECT at, current, rate_per_minute FROM ` + tableRunSamples + ` WHERE run_id = ? `
+	const columns = `SELECT at, current, throughput_per_minute FROM ` + tableRunSamples + ` WHERE run_id = ? `
 	query, args := columns+`ORDER BY id ASC`, []any{runID}
 	if limit > 0 {
 		query, args = columns+`ORDER BY id DESC LIMIT ?`, []any{runID, limit}
@@ -171,7 +171,7 @@ func (s *Store) ListRunSamples(ctx context.Context, runID int64, limit int) ([]t
 			at     sql.NullInt64
 			sample task.Sample
 		)
-		if err := rows.Scan(&at, &sample.Current, &sample.RatePerMinute); err != nil {
+		if err := rows.Scan(&at, &sample.Current, &sample.ThroughputPerMinute); err != nil {
 			return nil, err
 		}
 		sample.At = timeFromMillis(at)
