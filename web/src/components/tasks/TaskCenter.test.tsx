@@ -760,14 +760,34 @@ describe('存储 IO 那一条', () => {
   });
 
   // 升级前落下的运行把这五个数留在入参里。取数带参数回落，因此这次搬家没有可见的断层。
+  //
+  // fixture 带着 storage_profile，因为它模拟的那种老运行本来就带着它，而描述性那一半全空时
+  // 整条不画（判据见 runIOParams）——少了它，这条用例就换了个题目。被测的仍是数值那条参数回落。
   it('升级前落在入参里的老运行照样显示', () => {
     renderLiveRuns([makeRun({
-      params: { opened_archives: '5', hashed_files: '3', io_wait_ms: '123', paused_ms: '45', duration_ms: '6789' },
+      params: { storage_profile: 'hdd_external', opened_archives: '5', hashed_files: '3', io_wait_ms: '123', paused_ms: '45', duration_ms: '6789' },
     })]);
     fireEvent.click(screen.getByText('common.viewDetails'));
 
     expect(screen.getByText(/logs\.task\.io\.opened_archives: 5/)).toBeTruthy();
     expect(screen.getByText(/logs\.task\.io\.duration_ms: 6789/)).toBeTruthy();
+  });
+
+  // 缩略图重建**逐库**扫，它的运行上没有存储画像——这一条要答的「跑在哪块盘上」无解，
+  // 整条就不画。那几个数在指标面板里各占一格，没有东西因此没人显示。
+  it('没有存储画像的跨库运行整条不显示', () => {
+    renderLiveRuns([makeRun({
+      key: 'rebuild_thumbnails',
+      type: 'rebuild_thumbnails',
+      scope: 'system',
+      params: { execution_mode: 'low_impact' },
+      metrics: { opened_archives: 5, hashed_files: 3, io_wait_ms: 123, paused_ms: 45, duration_ms: 6789 },
+    })]);
+    fireEvent.click(screen.getByText('common.viewDetails'));
+
+    expect(screen.queryAllByText(/logs\.task\.io\./)).toHaveLength(0);
+    expect(screen.getByText(/taskMetric\.io_wait_ms/)).toBeTruthy();
+    expect(screen.getByText(/taskMetric\.duration_ms/)).toBeTruthy();
   });
 });
 

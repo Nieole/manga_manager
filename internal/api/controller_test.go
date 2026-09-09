@@ -3175,6 +3175,12 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	if task.Params["execution_mode"] != "low_impact" {
 		t.Fatalf("expected low impact task metadata, got %+v", task.Params)
 	}
+	// 跨资料库的运行没有单一的存储画像可报，理由见 launchRebuildThumbnailsTask。
+	for _, key := range []string{"storage_profile", "volume_key", "cover_concurrency"} {
+		if raw, ok := task.Params[key]; ok {
+			t.Fatalf("发起声明报了 %s（%q）—— 跨库的运行没有单一的存储画像可报", key, raw)
+		}
+	}
 }
 
 func TestRetryTaskRestartsRetryableTask(t *testing.T) {

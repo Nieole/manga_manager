@@ -165,9 +165,13 @@ func (c *Controller) rebuildIndex(w http.ResponseWriter, r *http.Request) {
 // 任务体开工第一件事是把运行句柄交给 rebuildThumbAggregator：这个任务的进度由任务体
 // 之外写入，所有权模型见那里。它到逐库强扫跑完就完成——重建出来的封面归每个库
 // 自己那条**封面运行**，在任务中心各占一条。
+//
+// 声明里只有执行模式，没有存储画像、卷键与封面并发：它逐库扫，每个库各按自己那条存储策略
+// 解析一次，跨资料库的这条运行因此没有单一的存储画像可报。照着单库的任务把这三项加回来，
+// 填进去的会是按空路径解析出的全局默认档位——既不是任何一个库的答案，还会被逐库报文按键覆盖成
+// 最后一个跑完的库，而配了按库存储策略的用户会照着那一格去调设置。
 func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 	cfg := c.currentConfig()
-	policy := config.ResolveStoragePolicy(cfg, "")
 	thumbDir := config.ThumbnailDir(cfg)
 
 	spec := RunSpec{
@@ -176,10 +180,7 @@ func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 		CanCancel: true,
 		CanPause:  true,
 		Metadata: map[string]string{
-			"storage_profile":   policy.StorageProfile,
-			"volume_key":        policy.VolumeKey,
-			"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
-			"execution_mode":    "low_impact",
+			"execution_mode": "low_impact",
 		},
 		CompleteCode: "task.msg.rebuild_thumbnails.complete",
 		CancelCode:   "task.msg.rebuild_thumbnails.cancelled",

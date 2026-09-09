@@ -176,6 +176,10 @@ func (l *rebuildThumbLibrary) Warn(warning scanner.ScanWarning) {
 }
 
 // Metrics 在本库扫描主流程结束时定版它的指标，并把这份报文累加进重建任务。
+//
+// 报文里那四个描述性值（存储画像、卷键、两个并发数）不随指标写上去：它们描述的是这一个库，
+// 而这条运行跨着全部资料库，理由见 launchRebuildThumbnailsTask。哪个数走指标、哪个走参数，
+// 判据见 taskScanObserver.Metrics。
 func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
 	snap := l.fixate(report)
 	if snap.Progress == nil {
@@ -194,12 +198,7 @@ func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
 		"io_wait_ms":          report.IOWaitMillis,
 		"paused_ms":           report.PausedMillis,
 		"duration_ms":         report.DurationMillis,
-	}, map[string]string{
-		"storage_profile":          report.StorageProfile,
-		"volume_key":               report.VolumeKey,
-		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
-		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
-	})
+	}, nil)
 
 	code := "task.msg.rebuild_thumbnails.rebuilding"
 	var msgParams map[string]string

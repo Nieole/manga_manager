@@ -259,3 +259,47 @@ func TestRebuildThumbCountsHoldStillBeforeAnyDenominator(t *testing.T) {
 		t.Fatalf("**阶段**没有播报出去：%q", task.Phase)
 	}
 }
+
+// TestRebuildThumbReportDropsTheStorageProfile 守逐库报文不把那四个描述性值写上这条跨资料库的
+// 运行，而它的 IO 指标与发起声明里的执行模式都不受连累（判据见 launchRebuildThumbnailsTask）。
+//
+// 破了的话，运行详情上那一格是最后一个跑完的库的档位，用户会照着它去调设置。
+func TestRebuildThumbReportDropsTheStorageProfile(t *testing.T) {
+	clock := &fakeClock{now: time.Unix(1700000000, 0)}
+	c, snapshots := newRebuildThumbTestController(t, clock)
+	// 播下发起声明里那唯一一项：撤掉描述性值不该把整张重启入参表一起清了。
+	progress := seedTask(t, c.taskEngine, taskSeed{
+		Key: rebuildThumbTestKey, Identity: systemTask("rebuild_thumbnails", variantSole),
+		StartCode: "task.msg.rebuild_thumbnails.start", CanCancel: true, CanPause: true,
+		Metadata: map[string]string{"execution_mode": "low_impact"},
+	})
+	c.initRebuildThumbAggregator(progress, 1)
+	t.Cleanup(c.releaseRebuildThumbAggregator)
+	observer := beginTestLibrary(t, c, rebuildThumbTestLibrary(), 1)
+
+	observer.Metrics(scanner.ScanMetricsReport{
+		StorageProfile:         "hdd_external",
+		VolumeKey:              "e:",
+		ArchiveOpenConcurrency: 1,
+		CoverConcurrency:       2,
+		OpenedArchives:         3,
+		IOWaitMillis:           120,
+		PausedMillis:           80,
+		DurationMillis:         60000,
+	})
+
+	task := lastPublishedTask(t, snapshots(), rebuildThumbTestKey)
+	for _, key := range []string{"storage_profile", "volume_key", "archive_open_concurrency", "cover_concurrency"} {
+		if raw, ok := task.Params[key]; ok {
+			t.Fatalf("逐库报文把 %s（%q）写上了跨库的运行 —— 那只是最后一个跑完的库的答案", key, raw)
+		}
+	}
+	for key, want := range map[string]int64{"io_wait_ms": 120, "paused_ms": 80, "duration_ms": 60000} {
+		if got := task.Metrics[key]; got != want {
+			t.Fatalf("IO 指标 %s 为 %d, want %d —— 撤掉假标签不连累真数字：%v", key, got, want, task.Metrics)
+		}
+	}
+	if task.Params["execution_mode"] != "low_impact" {
+		t.Fatalf("执行模式为 %q, want low_impact —— 撤的只有存储画像那三项：%v", task.Params["execution_mode"], task.Params)
+	}
+}
