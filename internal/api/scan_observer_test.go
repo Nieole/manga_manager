@@ -64,21 +64,63 @@ func TestScanProgressFlowsThroughHandedOverObserver(t *testing.T) {
 	}
 }
 
-// TestScanMetricsFlowThroughHandedOverObserver 守扫描收尾的那份指标报文落进**任务参数**——
-// 存储 IO 面板按参数名读它们（见 taskArchiveOpenRate），走错通道会让面板永远是空的。
-func TestScanMetricsFlowThroughHandedOverObserver(t *testing.T) {
+// TestScanMetricsFlowIntoRunMetrics 守扫描收尾的那十三个数落进**指标**、且不落进重启入参
+// （判据见 taskScanObserver.Metrics）。破了的话，这些数一句也聚不出来，
+// 而重启入参那张表里又混进了不是入参的东西。
+func TestScanMetricsFlowIntoRunMetrics(t *testing.T) {
 	observer, snapshots, _ := startedScanRig(t, "scan_library_7", libraryTask("scan_library", 7, variantSole))
 
 	observer.Metrics(scanner.ScanMetricsReport{
-		StorageProfile: "hdd_external",
-		OpenedArchives: 5,
-		HashedFiles:    2,
-		IOWaitMillis:   123,
+		DiscoveredArchives:     11,
+		SkippedArchives:        2,
+		ProcessedArchives:      9,
+		OpenedArchives:         5,
+		HashedFiles:            3,
+		QueuedCovers:           4,
+		FailedArchives:         1,
+		RehomedBooks:           6,
+		StaleSeriesStats:       7,
+		FormatFilteredArchives: 8,
+		IOWaitMillis:           123,
+		PausedMillis:           45,
+		DurationMillis:         6789,
 	})
 
 	task := lastPublishedTask(t, snapshots(), "scan_library_7")
-	if task.Params["opened_archives"] != "5" || task.Params["hashed_files"] != "2" || task.Params["io_wait_ms"] != "123" {
-		t.Fatalf("扫描指标没有落进任务参数：%v", task.Params)
+	for key, want := range map[string]int64{
+		"discovered_archives": 11, "skipped_archives": 2, "processed_archives": 9,
+		"opened_archives": 5, "hashed_files": 3, "queued_covers": 4, "failed_archives": 1,
+		"rehomed_books": 6, "stale_series_stats": 7, "format_filtered_archives": 8,
+		"io_wait_ms": 123, "paused_ms": 45, "duration_ms": 6789,
+	} {
+		if got := task.Metrics[key]; got != want {
+			t.Fatalf("指标 %s 为 %d, want %d —— 整份指标：%v", key, got, want, task.Metrics)
+		}
+		if raw, ok := task.Params[key]; ok {
+			t.Fatalf("%s 仍留在重启入参里（%q）——那张表只装重启入参", key, raw)
+		}
+	}
+}
+
+// TestScanReportDoesNotRestateLaunchDeclaration 守那四个描述性值不再由扫描报文报第三遍
+// （为什么只该报一次，见 taskScanObserver.Metrics）。破了的话，参数面板上重新堆起与发起声明
+// 重复的项。
+func TestScanReportDoesNotRestateLaunchDeclaration(t *testing.T) {
+	observer, snapshots, _ := startedScanRig(t, "scan_library_7", libraryTask("scan_library", 7, variantSole))
+
+	observer.Metrics(scanner.ScanMetricsReport{
+		StorageProfile:         "hdd_external",
+		VolumeKey:              "e:",
+		ArchiveOpenConcurrency: 1,
+		CoverConcurrency:       2,
+		ProcessedArchives:      9,
+	})
+
+	task := lastPublishedTask(t, snapshots(), "scan_library_7")
+	for _, key := range []string{"storage_profile", "volume_key", "archive_open_concurrency", "cover_concurrency"} {
+		if raw, ok := task.Params[key]; ok {
+			t.Fatalf("扫描报文又报了一遍 %s（%q）——发起声明与上限表里已经各有一份", key, raw)
+		}
 	}
 }
 

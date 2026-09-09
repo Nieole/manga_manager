@@ -104,6 +104,8 @@ interface TaskCenterProps {
 }
 
 const taskMetricKeys = [
+  'discovered_archives',
+  'skipped_archives',
   'processed_archives',
   'opened_archives',
   'failed_archives',
@@ -132,16 +134,12 @@ const taskMetricKeys = [
   'duration_ms',
 ];
 
-const taskIOParamKeys = [
-  'storage_profile',
-  'volume_key',
-  'opened_archives',
-  'hashed_files',
-  'io_wait_ms',
-  'paused_ms',
-  'thumbnail_write_ms',
-  'duration_ms',
-];
+// 「存储 IO」那一条显示的几格，按它们住在哪张表分成两半：descriptive 是发起时就声明下来的
+// 描述性值，住在**重启入参**里；numeric 是数，住在指标里。
+const taskIOParamKeys = {
+  descriptive: ['storage_profile', 'volume_key'],
+  numeric: ['opened_archives', 'hashed_files', 'io_wait_ms', 'paused_ms', 'thumbnail_write_ms', 'duration_ms'],
+};
 
 function formatRate(value: number) {
   if (!Number.isFinite(value) || value <= 0) return '0/min';
@@ -195,8 +193,21 @@ function runMetric(run: RunStatus, key: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function runIOParams(run: RunStatus) {
-  return Object.entries(run.params || {}).filter(([key, value]) => taskIOParamKeys.includes(key) && value !== '' && value !== '0');
+/**
+ * runIOParams 取「存储 IO」那一条要显示的几格。
+ *
+ * 数走 runMetric 而不是直接读参数：它们已经搬进指标，只读参数的话这一条搬完就少五格；
+ * 而 runMetric 的参数回落让升级前落下的运行照样显示。零与空不占格——那是「没有这回事」。
+ */
+function runIOParams(run: RunStatus): [string, string][] {
+  const descriptive = taskIOParamKeys.descriptive
+    .map((key): [string, string] => [key, run.params?.[key] ?? ''])
+    .filter(([, value]) => value !== '' && value !== '0');
+  const numeric = taskIOParamKeys.numeric
+    .map((key): [string, number] => [key, runMetric(run, key)])
+    .filter(([, value]) => value > 0)
+    .map(([key, value]): [string, string] => [key, String(value)]);
+  return [...descriptive, ...numeric];
 }
 
 function isInterruptedRun(run: RunStatus) {

@@ -1562,6 +1562,8 @@ export const messages: MessageCatalog = {
     'settings.maintenance.taskPhase.writing': '写回归档',
     'settings.maintenance.taskPhase.collecting_series': '收集系列',
     'settings.maintenance.taskPhase.completed': '完成',
+    'settings.maintenance.taskMetric.discovered_archives': '发现归档',
+    'settings.maintenance.taskMetric.skipped_archives': '跳过归档',
     'settings.maintenance.taskMetric.processed_archives': '处理归档',
     'settings.maintenance.taskMetric.opened_archives': '打开归档',
     'settings.maintenance.taskMetric.failed_archives': '失败归档',

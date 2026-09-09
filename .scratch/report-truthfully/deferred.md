@@ -39,3 +39,79 @@
 ## Open
 
 <!-- 往下追加，不重排、不删除 -->
+
+## D1 · 票 01 · 票面写的「累加指标通道」是错的通道，实际必须走整帧上报
+
+- **问：** 验收第 1 条与规格都写「改走**累加指标**通道，与同文件里缩略图重建的写法对齐」。
+  但单库扫描每份进度报文送的已经是**快照绝对值**（`internal/scanner/scanner.go` 的
+  `scanProgressReporter.publish`，12 个键），经 `Frame.Metrics` 落进 `SetRunMetrics`
+  （`value = excluded.value`）。收尾时再 `AddMetrics` 一次绝对总量，会走 `AddRunMetrics`
+  （`value = old + excluded`）加到那份绝对值上——那 12 个数翻倍，且随 250ms 投递水位是否放行
+  而不确定。缩略图重建能用累加，是因为它**跨库**、每份报文只覆盖一个库。
+- **已做：** `internal/api/controller_scan_events.go` 的 `taskScanObserver.Metrics` 改走
+  `o.progress.Report(runhandle.Frame{Metrics: scanMetricValues(report)})`，即整帧/set 那条。
+  验收第 4 条（出现在指标里、不在参数里）与通道名无关，仍然满足。判据与理由写进了该符号的 doc。
+  过程中实测到第二件事：拆成 `MergeParams` + `Report` 两次写入会被投递水位吞掉后一条
+  （`internal/task/engine.go` 的 `publishProgressLocked`），因此十三个数必须一次报完。
+- **选项：** A 保持整帧/set，把票面那句通道名当笔误（推荐，因为累加在这条路上是可复现的翻倍缺陷）｜
+  B 坚持 `AddMetrics`，另想办法让扫描的进度报文不再送绝对值——那要改扫描器的上报口径，伸出这张票。
+- **不处理会怎样：** 不裁定也没有残留物，代码已按 A 落地；只是票面第 1 条的措辞与实现对不上，
+  下一个读票的人会以为没做。已在票据第 1 条旁留了一句说明。
+- **归谁裁：** 票 01
+- **状态：** open
+
+## D2 · 票 01 · 十条验收全勾之后，用户那个问题依然问不出来——没有任何取数路径跨运行聚合
+
+- **问：** 这张票开头那句用户故事是「问出这个库最近十次扫描平均处理了多少归档」。搬完之后那十三个数
+  确实**存**得对了（指标那张表，可查询可聚合），但我没有找到任何**读**它的跨运行路径：
+  `internal/api/storage_io_controller.go` 的 `recentStorageIOTaskRates` 只调
+  `latestTaskByTypes("scan_library", "scan_series")`，取**最近一条**运行；`taskArchiveOpenRate`
+  与 `taskMetricValue` 也都只吃单条 `*RunStatus`。前端 `RunMetricsGrid` 同样是逐条运行渲染。
+  也就是说「最近十次的平均」既没有端点、也没有查询、也没有界面。
+- **已做：** 只做票面要求的搬家，**没有**去补那条取数路径——那超出这张票（工头明确裁定）。
+  这条记下来交出去。
+- **选项：** A 记进 `.scratch/GAPS.md`，当作一条**产品缺口**：用户要的是一个能问的问题，
+  而不是一次内部搬家（推荐，因为票 01 交付的是数据落位，缺的是产品面）｜
+  B 直接补一张票：给存储 IO 诊断加一个跨运行聚合的端点（`AVG(value) … GROUP BY` 最近 N 条运行）
+  ｜C 判定用户故事由「数在正确的表里」即算满足，不再跟进。
+- **不处理会怎样：** 这张票十条全勾、门禁全绿，而提出它的那个用户诉求原样不动。
+  数搬到了能聚的地方，但没有人聚它。
+- **归谁裁：** 用户
+- **状态：** open
+
+## D3 · 票 01 · koreader 与维护任务仍把三个 IO 数同时报进指标与参数，与本票刚写下的判据相抵触
+
+- **问：** 本票在 `taskScanObserver.Metrics` 的 doc 上写下了判据「可聚合的计数与时长走指标；
+  描述性值走参数或上限表；**同一件事只报一次**」。但 `internal/api/controller_tasks.go` 的
+  `taskIOFrameMetrics` 与 `taskIOMetricsParams` 是同一份 IO 实况的两个形状，
+  `koreader_controller.go` 与 `controller_maintenance.go` 两处**两个都调**——
+  `hashed_files` / `io_wait_ms` / `paused_ms` 因此在那些运行上既进指标又进参数，报了两遍。
+  `taskIOMetricsParams` 的 doc 还写着「存储 IO 面板按参数名读它」，而面板早已是指标优先。
+- **已做：** 没动。两个理由：本票的作用域是**单库扫描**这一处（票面「你只对齐单库扫描这一处」），
+  且 `controller_tasks.go` 此刻在 abo-02 手里，属于禁令文件。
+- **选项：** A 另开一张票，按同一判据把这两处也对齐、并修掉那句 doc（推荐，因为判据刚落地，
+  留着两个反例会让下一个照抄的人抄到错的那份）｜B 判定这两处的参数镜像是有意保留的兼容层，
+  那就把理由写进 `taskIOMetricsParams` 的 doc，让它不再看起来像遗漏。
+- **不处理会怎样：** 新判据在同一个包里有两个现成的反例，且其中一处的 doc 陈述已经不为真。
+- **归谁裁：** 下一次结算
+- **状态：** open
+
+## D4 · 票 01 · 票面用来论证「零可见变化」的那条前提本身不成立
+
+- **问：** 票面写「用户这一侧**不该有可见变化**：指标面板的取数函数本来就带参数回落，所以新老运行
+  都照常显示」，规格也写「这次搬家没有可见的断层」。这句话是这张票敢说「前端不用改」的**全部依据**，
+  而它假定十三个键**全都**已经在指标面板里。实际只有十一个：`web/src/components/tasks/TaskCenter.tsx`
+  的 `taskMetricKeys` 从 `processed_archives` 起头，`discovered_archives` 与 `skipped_archives`
+  不在其中，`web/src` 全域（词条在内）对这两个键零命中。它们此前之所以看得见，靠的是参数面板把
+  `run.params` 全量铺开——搬出参数之后，新运行上这两个数一个面板也进不去。
+  这与 D1 是两件事：D1 是通道名写错，这条是论证前提不成立。
+- **已做：** 经工头授权把授权范围扩到 `taskMetricKeys`（原授权只有 `runIOParams` 与
+  `taskIOParamKeys`），补上这两个键与中英各两条词条，并加了一条 vitest 用例守它们各占一格。
+  发现者是 `/code-review` 的 spec 轴，不是票面。
+- **选项：** A 就按已做的补上（推荐，因为不补就是知情发布一个可见回归，正是票面那句话要防的）｜
+  B 不补，把这两个数当作「本来就不该显示」，同时把票面那句前提改成「十一个键照常显示，两个键
+  这次起不再显示」——那是另一个产品判断，需要用户点头。
+- **不处理会怎样：** 已按 A 落地，代码里没有残留物。留下的是一条方法论上的账：票面在
+  「前端不用改」这一步用了一个没有核过的前提，而它恰好是这张票唯一的可见风险所在。
+- **归谁裁：** 用户
+- **状态：** open

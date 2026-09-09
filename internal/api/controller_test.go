@@ -905,7 +905,7 @@ func TestGetStorageIODiagnostics(t *testing.T) {
 	}
 }
 
-func TestScannerMetricsUpdateTaskParams(t *testing.T) {
+func TestScannerMetricsUpdateRunMetrics(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	taskKey := "scan_library_42"
 	// 写这条扫描任务的资格来自任务体交出的**扫描观察者**，不是拼出来的任务键——
@@ -926,8 +926,12 @@ func TestScannerMetricsUpdateTaskParams(t *testing.T) {
 	})
 
 	task := currentTask(t, controller.taskEngine, taskKey)
-	if task.Params["opened_archives"] != "5" || task.Params["hashed_files"] != "2" || task.Params["io_wait_ms"] != "123" {
-		t.Fatalf("expected scanner metrics params, got %+v", task.Params)
+	if task.Metrics["opened_archives"] != 5 || task.Metrics["hashed_files"] != 2 || task.Metrics["io_wait_ms"] != 123 {
+		t.Fatalf("expected scanner metrics, got %+v", task.Metrics)
+	}
+	// 那四个描述性值不由报文再报一遍：这条运行的入参此刻只该有播种时写下的那些。
+	if _, ok := task.Params["storage_profile"]; ok {
+		t.Fatalf("expected no storage profile restated by the scan report, got %+v", task.Params)
 	}
 }
 

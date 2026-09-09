@@ -726,3 +726,45 @@ describe('筛选语义', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('存储 IO 那一条', () => {
+  // 那五个数已从**重启入参**搬进指标（见 taskScanObserver.Metrics）。这一条只读参数的话，
+  // 搬完之后它会少五格——而用户没做任何事，只是升了个级。
+  it('数搬进指标之后照样显示那五个', () => {
+    renderLiveRuns([makeRun({
+      params: { storage_profile: 'hdd_external', volume_key: 'e:' },
+      metrics: { opened_archives: 5, hashed_files: 3, io_wait_ms: 123, paused_ms: 45, duration_ms: 6789 },
+    })]);
+    fireEvent.click(screen.getByText('common.viewDetails'));
+
+    expect(screen.getByText(/logs\.task\.io\.opened_archives: 5/)).toBeTruthy();
+    expect(screen.getByText(/logs\.task\.io\.hashed_files: 3/)).toBeTruthy();
+    expect(screen.getByText(/logs\.task\.io\.io_wait_ms: 123/)).toBeTruthy();
+    expect(screen.getByText(/logs\.task\.io\.paused_ms: 45/)).toBeTruthy();
+    expect(screen.getByText(/logs\.task\.io\.duration_ms: 6789/)).toBeTruthy();
+    // 描述性的那两格仍读入参：它们是发起时就声明下来的，不随报文走。
+    expect(screen.getByText(/logs\.task\.io\.storage_profile: hdd_external/)).toBeTruthy();
+  });
+
+  // 升级前落下的运行把这五个数留在入参里。取数带参数回落，因此这次搬家没有可见的断层。
+  it('升级前落在入参里的老运行照样显示', () => {
+    renderLiveRuns([makeRun({
+      params: { opened_archives: '5', hashed_files: '3', io_wait_ms: '123', paused_ms: '45', duration_ms: '6789' },
+    })]);
+    fireEvent.click(screen.getByText('common.viewDetails'));
+
+    expect(screen.getByText(/logs\.task\.io\.opened_archives: 5/)).toBeTruthy();
+    expect(screen.getByText(/logs\.task\.io\.duration_ms: 6789/)).toBeTruthy();
+  });
+});
+
+describe('指标面板认得扫描报的每一个数', () => {
+  // 发现数与跳过数从**重启入参**搬进指标之后，若指标面板不认这两个键，它们就一个面板也进不去：
+  // 参数面板原先靠 params 全量铺开才显示它们，而那份已经没了。
+  it('发现数与跳过数各占一格', () => {
+    renderLiveRuns([makeRun({ metrics: { discovered_archives: 12, skipped_archives: 7 } })]);
+
+    expect(screen.getByText(/taskMetric\.discovered_archives/)).toBeTruthy();
+    expect(screen.getByText(/taskMetric\.skipped_archives/)).toBeTruthy();
+  });
+});
