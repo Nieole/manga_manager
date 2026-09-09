@@ -258,8 +258,8 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: tp})
+	return c.taskEngine.Run(libraryTask("scan_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{Handle: handle})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -302,7 +302,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 	}
 	spec.ScopeName = c.libraryScopeName(libraryID)
 
-	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("transfer_external_library", libraryID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		if err := ctx.Err(); err != nil {
 			return TaskResult{}, err
 		}
@@ -317,13 +317,13 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		for index, op := range plan.Operations {
 			// 非取消错误一律视为失败：**暂停闸门**今天只返回 nil 或 ctx.Err()，而任务上下文无
 			// deadline，因此这与「只认取消」等价。给任务上下文加超时会让这条等价失效。
-			if err := tp.Checkpoint(ctx); err != nil {
+			if err := handle.Checkpoint(ctx); err != nil {
 				return TaskResult{}, err
 			}
 			// 帧报的是**已完成**数，因此在拷贝之前报：单本几百 MB 要拷几分钟，
 			// 这段时间里用户要看到的是正在传的那本书，而不是上一本传完时的旧帧。
 			done := index
-			tp.Report(runhandle.Frame{
+			handle.Report(runhandle.Frame{
 				Current: &done,
 				Total:   &total,
 				Phase:   "transferring_files",
@@ -348,7 +348,7 @@ func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionI
 		// 收尾这一帧的计数与指标回答的是两个问题：Current 是「走完了几本」（失败的也走过了），
 		// transferred_files 是「传成了几本」。
 		transferred := total - len(failures)
-		tp.Report(runhandle.Frame{
+		handle.Report(runhandle.Frame{
 			Current: &total,
 			Total:   &total,
 			Code:    "task.msg.transfer_external_library.progress",

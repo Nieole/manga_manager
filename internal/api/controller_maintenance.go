@@ -96,15 +96,15 @@ func (c *Controller) clearAllCoverPaths(ctx context.Context) error {
 // observerFor 为每个资料库要一个**扫描观察者**；返回 nil 即该库这次扫描不属于任何任务。
 // 调用它本身就是库切换的边界——没有第二条「现在换库了」的通知，两者一旦分家就会有
 // 「观察者已经在收报文、界面上还是上一个库名」的窗口。
-// tp 是发起这次扫描的任务的**运行句柄**，库与库之间的可中断点经它过**暂停闸门**；不得为 nil。
-func (c *Controller) runGlobalScan(ctx context.Context, tp *runhandle.Handle, force bool, ignoreFormatFilter bool, observerFor func(lib database.Library, total int) scanner.ScanObserver) error {
+// handle 是发起这次扫描的任务的**运行句柄**，库与库之间的可中断点经它过**暂停闸门**；不得为 nil。
+func (c *Controller) runGlobalScan(ctx context.Context, handle *runhandle.Handle, force bool, ignoreFormatFilter bool, observerFor func(lib database.Library, total int) scanner.ScanObserver) error {
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
 		return err
 	}
 	total := len(libs)
 	for _, lib := range libs {
-		if err := tp.Checkpoint(ctx); err != nil {
+		if err := handle.Checkpoint(ctx); err != nil {
 			return err
 		}
 		var observer scanner.ScanObserver
@@ -186,26 +186,26 @@ func (c *Controller) launchRebuildThumbnailsTask(trigger task.Trigger) error {
 		FailCode:     "task.msg.rebuild_thumbnails.failed",
 	}
 
-	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		c.initRebuildThumbAggregator(tp, 0)
+	if err := c.taskEngine.Run(systemTask("rebuild_thumbnails", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		c.initRebuildThumbAggregator(handle, 0)
 		defer c.releaseRebuildThumbAggregator()
 
-		tp.Report(runhandle.Frame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
+		handle.Report(runhandle.Frame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
 		if err := c.clearThumbnailDir(thumbDir); err != nil {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
-		if err := tp.Checkpoint(ctx); err != nil {
+		if err := handle.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		if err := os.MkdirAll(thumbDir, 0o755); err != nil {
 			return taskFailure("task.msg.rebuild_thumbnails.mkdir_failed", err), err
 		}
-		tp.Phase("clearing_cache", "task.msg.rebuild_thumbnails.clearing_cover_index", nil)
+		handle.Phase("clearing_cache", "task.msg.rebuild_thumbnails.clearing_cover_index", nil)
 		if err := c.clearAllCoverPaths(ctx); err != nil {
 			return taskFailure("task.msg.rebuild_thumbnails.clear_cover_index_failed", err), err
 		}
-		tp.Phase("reading_metadata", "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil)
-		if err := c.runGlobalScan(ctx, tp, true, true, /* 重建缩略图必须看得见全部已入库的书 */
+		handle.Phase("reading_metadata", "task.msg.rebuild_thumbnails.rebuilding_low_impact", nil)
+		if err := c.runGlobalScan(ctx, handle, true, true, /* 重建缩略图必须看得见全部已入库的书 */
 			c.beginRebuildThumbLibrary); err != nil {
 			return TaskResult{}, err
 		}
@@ -238,11 +238,11 @@ func (c *Controller) launchCleanupThumbnailsTask(trigger task.Trigger) error {
 		FailCode:     "task.msg.cleanup_thumbnails.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("cleanup_thumbnails", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		// 开工这一帧只播**阶段**：此时一个文件都还没数过，报计数只能编一个凑数的值。
-		tp.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
+		handle.Phase("cleanup", "task.msg.cleanup_thumbnails.scanning", nil)
 		err := c.scanner.CleanupThumbnails(ctx, func(deleted, scanned int) {
-			tp.Advance(deleted, scanned, "task.msg.cleanup_thumbnails.progress", map[string]string{
+			handle.Advance(deleted, scanned, "task.msg.cleanup_thumbnails.progress", map[string]string{
 				"deleted": strconv.Itoa(deleted),
 				"scanned": strconv.Itoa(scanned),
 			})
@@ -272,9 +272,9 @@ func (c *Controller) launchRebuildFileIdentitiesTask(trigger task.Trigger) error
 		FailCode:     "task.msg.rebuild_file_identities.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_file_identities", variantSole), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.runRebuildFileIdentities(ctx, 500,
-			hashingFrameHandle{Handle: tp, code: "task.msg.rebuild_file_identities.progress"})
+			hashingFrameHandle{Handle: handle, code: "task.msg.rebuild_file_identities.progress"})
 		if err != nil {
 			return TaskResult{}, err
 		}
@@ -287,8 +287,8 @@ func (c *Controller) launchRebuildFileIdentitiesTask(trigger task.Trigger) error
 // 文件身份重建与低优先级哈希回填除文案码外完全同形，共用一份实现，免得两处各自漂移。
 // 计数、阶段、指标与标签同属一次事件，必须整帧报出（拆开报会撕成什么样见 runhandle.Handle.Report）。
 // IO 参数走的是另一条通道（存储 IO 面板按参数名读，见 taskArchiveOpenRate），只能单独一次。
-func reportHashProgress(tp *runhandle.Handle, current, total int, code string, handleIO runhandle.IOMetrics) {
-	tp.Report(runhandle.Frame{
+func reportHashProgress(handle *runhandle.Handle, current, total int, code string, handleIO runhandle.IOMetrics) {
+	handle.Report(runhandle.Frame{
 		Current: &current,
 		Total:   &total,
 		Phase:   "hashing",
@@ -300,7 +300,7 @@ func reportHashProgress(tp *runhandle.Handle, current, total int, code string, h
 			"volume_key":      handleIO.VolumeKey,
 		},
 	})
-	tp.MergeParams(taskIOMetricsParams(handleIO))
+	handle.MergeParams(taskIOMetricsParams(handleIO))
 }
 
 // hashingFrameHandle 是两处哈希回填的批循环共同收下的**运行句柄**，分工同
@@ -412,9 +412,9 @@ func (c *Controller) launchLowPriorityBookHashBackfillTask(reason string, trigge
 		FailCode:     "task.msg.book_hash_backfill.failed",
 	}
 
-	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), trigger, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(systemTask("rebuild_book_hashes", variantHashRebuildBackfill), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		updated, total, err := c.runBackfillFullHashesLowPriority(ctx, lowPriorityBookHashBatchSize, lowPriorityBookHashBatchGap,
-			hashingFrameHandle{Handle: tp, code: "task.msg.book_hash_backfill.progress"})
+			hashingFrameHandle{Handle: handle, code: "task.msg.book_hash_backfill.progress"})
 		if err != nil {
 			return TaskResult{}, err
 		}

@@ -181,10 +181,10 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 		FailCode:     "task.msg.ai_grouping.fail_generate",
 	}
 
-	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), trigger, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(libraryTask("ai_grouping", libID, variantSole), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		ctx := metadata.WithLocale(taskCtx, locale)
 
-		tp.Phase("collecting_series", "task.msg.ai_grouping.collecting_series", nil)
+		handle.Phase("collecting_series", "task.msg.ai_grouping.collecting_series", nil)
 		seriesRows, err := c.store.GetSeriesWithoutCollection(ctx, libID)
 		if err != nil {
 			// 取消是用户按的，不是故障：无条件记 ERROR 的话，每按一次取消日志里就多出
@@ -200,7 +200,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 		if len(seriesRows) == 0 {
 			return TaskResult{Code: "task.msg.ai_grouping.all_already_grouped"}, nil
 		}
-		if err := tp.Checkpoint(ctx); err != nil {
+		if err := handle.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 
@@ -224,7 +224,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 
 		cfg := c.currentConfig()
 		provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
-		tp.Report(runhandle.Frame{
+		handle.Report(runhandle.Frame{
 			Phase:   "requesting_provider",
 			Code:    "task.msg.ai_grouping.requesting_provider",
 			Metrics: map[string]int64{"candidate_series": int64(len(candidates))},
@@ -239,7 +239,7 @@ func (c *Controller) launchAIGroupingTask(libID int64, locale string, trigger ta
 		}
 
 		done := 1
-		tp.Report(runhandle.Frame{
+		handle.Report(runhandle.Frame{
 			Current: &done,
 			Phase:   "queueing_review",
 			Code:    "task.msg.ai_grouping.queueing_review",

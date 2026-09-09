@@ -402,13 +402,13 @@ func (m scrapeMetrics) frame(current int, phase, code, seriesName string) runhan
 // 各个可中断点只把错误返回上去，由引擎裁决**终态**：取消落已取消，其余落失败。
 // 启动入口交下来的 ctx 没有 deadline，**暂停闸门**也只返回 nil 或 ctx.Err()，因此今天走不到
 // 失败那条；将来若给任务上下文加了超时，这条等价即失效。
-func (c *Controller) runScrapeTask(ctx context.Context, tp *runhandle.Handle, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (TaskResult, error) {
+func (c *Controller) runScrapeTask(ctx context.Context, handle *runhandle.Handle, provider metadata.Provider, logMsg string, entries []scrapeSeriesEntry) (TaskResult, error) {
 	providerName := provider.Name()
 	m := scrapeMetrics{total: len(entries)}
-	tp.Report(m.frame(0, "collecting_series", "task.msg.scrape.collecting_series", ""))
+	handle.Report(m.frame(0, "collecting_series", "task.msg.scrape.collecting_series", ""))
 
 	for i, entry := range entries {
-		if err := tp.Checkpoint(ctx); err != nil {
+		if err := handle.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		slog.InfoContext(ctx, logMsg, "provider", providerName, "progress", fmt.Sprintf("%d/%d", i+1, m.total), "series_name", entry.Name)
@@ -420,7 +420,7 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *runhandle.Handle, pr
 			"current_series_id":   strconv.FormatInt(entry.ID, 10),
 			"current_series_name": entry.Name,
 		}
-		tp.Report(requesting)
+		handle.Report(requesting)
 
 		result, err := provider.FetchSeriesMetadata(ctx, entry.Name)
 		if err != nil {
@@ -440,8 +440,8 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *runhandle.Handle, pr
 			continue
 		}
 
-		tp.Report(m.frame(i, "queueing_review", "task.msg.scrape.queueing_review", entry.Name))
-		if err := tp.Checkpoint(ctx); err != nil {
+		handle.Report(m.frame(i, "queueing_review", "task.msg.scrape.queueing_review", entry.Name))
+		if err := handle.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		queued, err := c.proposals.Queue(ctx, series, result, providerName, entry.Name, proposal.QueueOptions{})
@@ -460,10 +460,10 @@ func (c *Controller) runScrapeTask(ctx context.Context, tp *runhandle.Handle, pr
 			// 计进失败会让一次完全正常的全库刮削在任务面板上报出一片红。
 		}
 		m.processed = i + 1
-		tp.Report(m.frame(i+1, "rate_limited_wait", "task.msg.scrape.rate_limited_wait", entry.Name))
+		handle.Report(m.frame(i+1, "rate_limited_wait", "task.msg.scrape.rate_limited_wait", entry.Name))
 
 		// 速率限制
-		if err := tp.Checkpoint(ctx); err != nil {
+		if err := handle.Checkpoint(ctx); err != nil {
 			return TaskResult{}, err
 		}
 		select {
@@ -524,8 +524,8 @@ func (c *Controller) launchBatchScrapeAllSeriesTask(ctx context.Context, provide
 		FailCode:     "task.msg.scrape.failed_all",
 	}
 
-	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), trigger, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping series metadata", allSeries)
+	return c.taskEngine.Run(systemTask("scrape", variantScrapeAllLibraries), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), handle, provider, "Scraping series metadata", allSeries)
 	})
 }
 
@@ -599,8 +599,8 @@ func (c *Controller) launchLibraryScrapeTask(ctx context.Context, libraryID int6
 		FailCode:     "task.msg.scrape.failed_library",
 	}
 
-	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), trigger, spec, func(taskCtx context.Context, tp *runhandle.Handle) (TaskResult, error) {
-		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), tp, provider, "Scraping library series metadata", allSeries)
+	return c.taskEngine.Run(libraryTask("scrape", libraryID, variantScrapeOneLibrary), trigger, spec, func(taskCtx context.Context, handle *runhandle.Handle) (TaskResult, error) {
+		return c.runScrapeTask(metadata.WithLocale(taskCtx, locale), handle, provider, "Scraping library series metadata", allSeries)
 	})
 }
 

@@ -241,7 +241,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 		FailCode:     "task.msg.write_comicinfo.failed",
 	}
 
-	return c.taskEngine.Run(seriesTask("write_comicinfo", series.ID, variantSole), task.TriggerManual, spec, func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+	return c.taskEngine.Run(seriesTask("write_comicinfo", series.ID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 		written, skipped, failed := 0, 0, 0
 		for i, book := range books {
 			// 聚合是纯 CPU，留在**磁盘作业**之外：把它夹进令牌的持有区间只会虚占这块盘的归档打开额度。
@@ -253,7 +253,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 			// 返回的闸门错误决定。
 			// 实况由句柄吸收，但这个任务不报 IO 指标：上报是任务体的选择，这一处没有选它。
 			var writeErr error
-			if err := tp.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
+			if err := handle.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
 				writeErr = parser.WriteComicInfoIntoArchive(book.Path, info)
 				return nil
 			}); err != nil {
@@ -274,7 +274,7 @@ func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, book
 			// 计数、书名与三个结局计数同属这一本书，必须整帧报出：拆开报会被投递水位撕断，
 			// 撕开之后是什么样见 runhandle.Handle.Report。
 			current, total := i+1, len(books)
-			tp.Report(runhandle.Frame{
+			handle.Report(runhandle.Frame{
 				Current: &current,
 				Total:   &total,
 				Phase:   "writing",

@@ -142,7 +142,7 @@ func (c *Controller) startCoverRun(libraryID int64, trigger task.Trigger, backfi
 	}
 
 	return c.taskEngine.start(libraryTask("generate_covers", libraryID, variantSole), trigger, spec,
-		func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error) {
+		func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error) {
 			batches := c.coverRuns.claim(libraryID)
 			if backfill {
 				missing, err := c.scanner.QueueMissingCovers(ctx, libraryID)
@@ -151,7 +151,7 @@ func (c *Controller) startCoverRun(libraryID int64, trigger task.Trigger, backfi
 				}
 				batches = append(batches, missing)
 			}
-			observer := newCoverRunObserver(tp, lib.Name)
+			observer := newCoverRunObserver(handle, lib.Name)
 			for _, batch := range batches {
 				observer.begin()
 				err := batch.Drain(ctx, observer)

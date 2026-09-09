@@ -146,7 +146,7 @@ func taskFailure(code string, err error) TaskResult {
 }
 
 // taskBody 是任务体：干活，以及经交给它的**运行句柄**上报。
-type taskBody func(ctx context.Context, tp *runhandle.Handle) (TaskResult, error)
+type taskBody func(ctx context.Context, handle *runhandle.Handle) (TaskResult, error)
 
 // Run 是启动一个后台任务的唯一入口：一份**身份**、一个**发起方**、一份任务声明、一个任务体。
 //
