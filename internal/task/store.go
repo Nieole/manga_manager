@@ -62,11 +62,7 @@ type RunFilter struct {
 	// **就是** 0，用 0 表示「不筛」会让「只看系统级」这条筛选无从表达。
 	ScopeID *int64
 
-	// Key 是**过渡期**谓词：按**任务键**精确匹配，见 Run.Key。
-	// 生产已经没有调用方——控制端点按**运行 id** 寻址，重试按**任务 id**（ADR 0007），
-	// 只剩用例脚手架拿它把一个键解析成运行。它连同 runs 上那一列由删任务键那张票带走。
-	Key string
-	// Query 是任务中心搜索框那条谓词：对键、文案码与错误串做大小写无关的子串匹配。
+	// Query 是任务中心搜索框那条谓词：对作用域显示名、文案码与错误串做大小写无关的子串匹配。
 	// 它判在落盘侧而不是取回内存再滤，否则 Limit 截断的会是过滤前的那一页。
 	Query string
 
@@ -90,7 +86,7 @@ type TaskFilter struct {
 	// LastRunStatuses 判在最近一次运行的状态上；为空表示不筛。
 	// 一次运行都没有的任务不满足其中任何一条——它没有「上次」。
 	LastRunStatuses []RunStatus
-	// LastRunQuery 同样判在最近一次运行上：对**任务键**、文案码与错误串做大小写无关的子串匹配。
+	// LastRunQuery 同样判在最近一次运行上：对作用域显示名、文案码与错误串做大小写无关的子串匹配。
 	LastRunQuery string
 
 	Limit int

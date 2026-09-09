@@ -104,7 +104,10 @@ type Config struct {
 	// 它存在的唯一理由是日志：这条 ctx 上跑出来的每一行日志要带上运行标识与**任务键**，
 	// 而那两样的属性名与注入方式属于日志层，不属于本包。调用点手写等于绝大多数调用点都不会带，
 	// 所以只能在这里一次性套上。
-	DecorateRunContext func(context.Context, Run) context.Context
+	//
+	// 运行行与运行声明都交出去：运行标识在前者身上，而**任务键**只在后者身上——它不落盘
+	// （ADR 0007），一条从库里读回来的运行不带它，队列放行时读回的那些正是如此。
+	DecorateRunContext func(context.Context, Run, RunSpec) context.Context
 	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
 	// 节流的正确性只能靠时序断言证明——固定 sleep 的用例既慢，又杀不掉「水位只写一次」这类错误实现。
 	Now func() time.Time
@@ -149,7 +152,7 @@ type Engine struct {
 	publishLive    func(Live)
 	runBackground  func(func())
 	diskWork       *diskwork.Runner
-	decorate       func(context.Context, Run) context.Context
+	decorate       func(context.Context, Run, RunSpec) context.Context
 	now            func() time.Time
 	slots          func() int
 	backoff        func() BackoffPolicy

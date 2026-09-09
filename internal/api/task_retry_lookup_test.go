@@ -57,11 +57,11 @@ func TestRetrySnapshotFindsTaskCrowdedOutByKinTasks(t *testing.T) {
 			if err != nil {
 				t.Fatalf("取 %q 的重试快照失败: %v —— 任务中心里明明列着它，点重试却是 404", tc.key, err)
 			}
-			if task.Key != tc.key {
-				t.Fatalf("取回的是 %q, want %q —— 重试会去重启另一条任务", task.Key, tc.key)
+			if !belongsToKey(t, task, tc.key) {
+				t.Fatalf("取回的是 %+v, want %q 那条 —— 重试会去重启另一条任务", task, tc.key)
 			}
 			if task.Status != "failed" || task.Params["force"] != "true" {
-				t.Fatalf("取回的 %q 状态为 %q、入参为 %v, want failed + force=true", task.Key, task.Status, task.Params)
+				t.Fatalf("取回的 %q 状态为 %q、入参为 %v, want failed + force=true", tc.key, task.Status, task.Params)
 			}
 		})
 	}

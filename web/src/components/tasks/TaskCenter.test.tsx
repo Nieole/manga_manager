@@ -26,7 +26,6 @@ function makeRun(overrides: Partial<RunStatus>): RunStatus {
   return {
     run_id: 1,
     task_id: 1,
-    key: 'scan_library_1',
     type: 'scan_library',
     scope: 'library',
     status: 'running',
@@ -286,7 +285,7 @@ describe('任务中心的处理速率', () => {
 
   // 一帧都没报过的运行后端算不出速率。夹具用它而不用某个状态：这一格的有无只跟着后端的
   // 那个字段走，前端不得自己按状态判一遍——判据一旦与后端不同步，这一格就会多出或少掉一个数。
-  const neverReported = { run_id: 2, key: 'scan_library_2', current: 0, percent: 0, rate_per_minute: undefined };
+  const neverReported = { run_id: 2, task_id: 2, current: 0, percent: 0, rate_per_minute: undefined };
 
   it('后端没发速率就整格不显示，也不回落成 0/min', () => {
     renderLiveRuns([makeRun(neverReported)]);
@@ -455,7 +454,7 @@ describe('日志入口按运行给', () => {
     tasks: [makeSummary({ task_id: 7, last_run: makeRun({ run_id: 3 }) })],
     history: {
       taskId: 7,
-      runs: [makeRun({ run_id: 3, key: 'scan_library_1' }), makeRun({ run_id: 2, key: 'scan_library_1' })],
+      runs: [makeRun({ run_id: 3 }), makeRun({ run_id: 2 })],
     },
     onToggleTask: vi.fn(),
   };

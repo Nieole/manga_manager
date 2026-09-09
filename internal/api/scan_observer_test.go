@@ -143,7 +143,7 @@ func TestScanFramesArePublishedWholeAndOnce(t *testing.T) {
 
 	for i := 1; i <= 4; i++ {
 		clock.advance(taskProgressPublishInterval + 50*time.Millisecond)
-		before := publishedCountFor(snapshots(), "scan_library_7")
+		before := publishedCountFor(t, snapshots(), "scan_library_7")
 		observer.Progress(scanner.ScanProgressReport{
 			Phase:       "reading_metadata",
 			CurrentItem: "/srv/main/vol.cbz",
@@ -151,7 +151,7 @@ func TestScanFramesArePublishedWholeAndOnce(t *testing.T) {
 			Metrics: map[string]int64{"processed_archives": int64(i)},
 		})
 
-		if got := publishedCountFor(snapshots(), "scan_library_7") - before; got != 1 {
+		if got := publishedCountFor(t, snapshots(), "scan_library_7") - before; got != 1 {
 			t.Fatalf("第 %d 份报文投递了 %d 条载荷, want 1", i, got)
 		}
 		task := lastPublishedTask(t, snapshots(), "scan_library_7")

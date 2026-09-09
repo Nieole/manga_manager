@@ -25,7 +25,7 @@ const sqliteConstraintUnique = 2067
 // 三条路各抄一遍列名的话，漏一列不会有编译错误，后果是那个字段静默丢在写入或读回的路上。
 // runValues 与 scanRun 必须按同样的次序排列，两者与本表一起改。
 var runWriteColumns = []string{
-	"task_id", "task_key", "scope_name", "trigger", "nth_run", "status", "phase", "current_item", "current", "total",
+	"task_id", "scope_name", "trigger", "nth_run", "status", "phase", "current_item", "current", "total",
 	"paused_at", "pause_reason", "control_paused_ms", "coalesced_count", "message_code", "message_params",
 	"error", "started_at", "updated_at", "finished_at", "sequence",
 }
@@ -40,7 +40,7 @@ var (
 // runValues 把一条运行摊成与 runWriteColumns 同序的实参。
 func runValues(run task.Run, messageParams string) []any {
 	return []any{
-		run.TaskID, run.Key, run.ScopeName, string(run.Trigger), run.NthRun, string(run.Status), run.Phase, run.CurrentItem,
+		run.TaskID, run.ScopeName, string(run.Trigger), run.NthRun, string(run.Status), run.Phase, run.CurrentItem,
 		run.Current, run.Total, millisFromTimePtr(run.PausedAt), string(run.PauseReason), run.ControlPausedMillis,
 		run.CoalescedCount, run.MessageCode, messageParams, run.Error, millisFromTime(run.StartedAt),
 		millisFromTime(run.UpdatedAt), millisFromTimePtr(run.FinishedAt), run.Sequence,
@@ -178,7 +178,7 @@ func scanRun(row rowScanner) (task.Run, error) {
 		updatedAt   sql.NullInt64
 		finishedAt  sql.NullInt64
 	)
-	err := row.Scan(&run.ID, &run.TaskID, &run.Key, &run.ScopeName, &trigger, &run.NthRun, &status, &run.Phase, &run.CurrentItem,
+	err := row.Scan(&run.ID, &run.TaskID, &run.ScopeName, &trigger, &run.NthRun, &status, &run.Phase, &run.CurrentItem,
 		&run.Current, &run.Total, &pausedAt, &pauseReason, &run.ControlPausedMillis, &run.CoalescedCount,
 		&run.MessageCode, &params, &run.Error, &startedAt, &updatedAt, &finishedAt, &run.Sequence)
 	if err != nil {
@@ -203,8 +203,8 @@ func scanRun(row rowScanner) (task.Run, error) {
 // 身份那三项判在一句 `task_id IN (SELECT …)` 里而不是连表：ListRuns、CountRuns 与 DeleteRuns
 // 共用这一份谓词，其中 DELETE 在 SQLite 里根本连不了表。子查询命中的是身份表那条四列唯一索引。
 func runFilterClause(filter task.RunFilter) (string, []any) {
-	clauses := make([]string, 0, 5)
-	args := make([]any, 0, len(filter.Statuses)+len(filter.Types)+4)
+	clauses := make([]string, 0, 4)
+	args := make([]any, 0, len(filter.Statuses)+len(filter.Types)+3)
 	if filter.TaskID != 0 {
 		clauses = append(clauses, `task_id = ?`)
 		args = append(args, filter.TaskID)
@@ -213,10 +213,6 @@ func runFilterClause(filter task.RunFilter) (string, []any) {
 		placeholders, statusArgs := stringPlaceholders(filter.Statuses)
 		clauses = append(clauses, `status IN (`+placeholders+`)`)
 		args = append(args, statusArgs...)
-	}
-	if filter.Key != "" {
-		clauses = append(clauses, `task_key = ?`)
-		args = append(args, filter.Key)
 	}
 	if filter.Query != "" {
 		clauses = append(clauses, keywordClause(""))

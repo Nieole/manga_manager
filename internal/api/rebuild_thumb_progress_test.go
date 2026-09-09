@@ -159,7 +159,7 @@ func TestRebuildThumbWritersAreInertWithoutHandle(t *testing.T) {
 
 	seedRebuildThumbTask(t, c)
 	lib := rebuildThumbTestLibrary()
-	before := publishedCountFor(snapshots(), rebuildThumbTestKey)
+	before := publishedCountFor(t, snapshots(), rebuildThumbTestKey)
 
 	// 每一处外部写入点都试一遍。观察者根本造不出来——写入资格在结构上就发不出去。
 	if observer := c.beginRebuildThumbLibrary(lib, 2); observer != nil {
@@ -167,7 +167,7 @@ func TestRebuildThumbWritersAreInertWithoutHandle(t *testing.T) {
 	}
 	c.refreshRebuildThumbTaskFromAggregator(lib)
 
-	if got := publishedCountFor(snapshots(), rebuildThumbTestKey) - before; got != 0 {
+	if got := publishedCountFor(t, snapshots(), rebuildThumbTestKey) - before; got != 0 {
 		t.Fatalf("没拿到句柄却投递了 %d 条 —— 写入资格又回到了「谁会拼那个任务键」", got)
 	}
 	task := lastPublishedTask(t, snapshots(), rebuildThumbTestKey)
@@ -189,13 +189,13 @@ func TestRebuildThumbFramesArePublishedWholeAndOnce(t *testing.T) {
 		// 推过节流窗口，让每份报文都不是「被水位吞掉」那种情况。
 		clock.advance(taskProgressPublishInterval + 50*time.Millisecond)
 		item := fmt.Sprintf("/srv/main/vol%02d.cbz", i)
-		before := publishedCountFor(snapshots(), rebuildThumbTestKey)
+		before := publishedCountFor(t, snapshots(), rebuildThumbTestKey)
 		observer.Progress(scanner.ScanProgressReport{
 			Phase: "reading_metadata", CurrentItem: item,
 			Metrics: map[string]int64{"discovered_archives": 10, "processed_archives": int64(i)},
 		})
 
-		if got := publishedCountFor(snapshots(), rebuildThumbTestKey) - before; got != 1 {
+		if got := publishedCountFor(t, snapshots(), rebuildThumbTestKey) - before; got != 1 {
 			t.Fatalf("第 %d 份报文投递了 %d 条载荷, want 1", i, got)
 		}
 		task := lastPublishedTask(t, snapshots(), rebuildThumbTestKey)
@@ -225,13 +225,13 @@ func TestRebuildThumbPhaseTransitionsSurviveThrottle(t *testing.T) {
 
 	// 先把水位顶到「刚刚发布过」的状态，后面三帧才全都落在窗口内。
 	drive("reading_metadata", 1)
-	before := publishedCountFor(snapshots(), rebuildThumbTestKey)
+	before := publishedCountFor(t, snapshots(), rebuildThumbTestKey)
 
 	for i, phase := range []string{"hashing", "queueing_covers", "reading_metadata"} {
 		drive(phase, int64(i+2))
 	}
 
-	if got := publishedCountFor(snapshots(), rebuildThumbTestKey) - before; got != 3 {
+	if got := publishedCountFor(t, snapshots(), rebuildThumbTestKey) - before; got != 3 {
 		t.Fatalf("三次**阶段**跃迁只投递了 %d 条 —— 任务气泡会停在过期的阶段名上", got)
 	}
 }

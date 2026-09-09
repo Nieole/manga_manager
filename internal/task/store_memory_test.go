@@ -147,7 +147,7 @@ func matchesTaskFilter(owner Task, latest Run, filter TaskFilter) bool {
 		return false
 	}
 	if filter.LastRunQuery != "" {
-		haystack := strings.ToLower(latest.Key + " " + latest.MessageCode + " " + latest.Error)
+		haystack := strings.ToLower(latest.ScopeName + " " + latest.MessageCode + " " + latest.Error)
 		if latest.ID == 0 || !strings.Contains(haystack, strings.ToLower(filter.LastRunQuery)) {
 			return false
 		}
@@ -464,11 +464,8 @@ func (s *memStore) matchesFilterLocked(run Run, filter RunFilter) bool {
 	if filter.TaskID != 0 && run.TaskID != filter.TaskID {
 		return false
 	}
-	if filter.Key != "" && run.Key != filter.Key {
-		return false
-	}
 	if filter.Query != "" {
-		haystack := strings.ToLower(run.Key + " " + run.MessageCode + " " + run.Error)
+		haystack := strings.ToLower(run.ScopeName + " " + run.MessageCode + " " + run.Error)
 		if !strings.Contains(haystack, strings.ToLower(filter.Query)) {
 			return false
 		}

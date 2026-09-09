@@ -27,9 +27,9 @@ vi.mock('../i18n/LocaleProvider', () => ({
 
 const TERMINAL_STATUSES = ['completed', 'cancelled', 'failed', 'interrupted'];
 
-function makeTask(status: string, key = 'scan_library:1'): TaskBubbleEntry {
+function makeTask(status: string, taskId = 41): TaskBubbleEntry {
   return {
-    key,
+    taskId,
     type: 'scan_library',
     status,
     message: '扫描资料库',
@@ -62,7 +62,7 @@ describe('SidebarTaskBubble 的终态条目', () => {
   it.each(TERMINAL_STATUSES)('%s 能被手动关掉', (status) => {
     const { onDismiss } = renderOpened(status);
     fireEvent.click(screen.getByLabelText(zhCN['common.close']));
-    expect(onDismiss).toHaveBeenCalledWith('scan_library:1');
+    expect(onDismiss).toHaveBeenCalledWith(41);
   });
 
   it.each(TERMINAL_STATUSES)('%s 的状态文案是译文，不是裸词条 key', (status) => {

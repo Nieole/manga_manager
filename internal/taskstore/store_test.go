@@ -111,16 +111,16 @@ func seedScopeNameCorpus(t *testing.T, store *Store) scopeNameCorpus {
 
 	return scopeNameCorpus{
 		library: seedCompletedRun(t, store, task.Run{
-			TaskID: ensureTask(t, store, 1), Key: "scan_library_1",
+			TaskID:    ensureTask(t, store, 1),
 			ScopeName: "Manga Vault", MessageCode: "task.msg.scan_library.completed", Sequence: 1,
 		}),
 		series: seedCompletedRun(t, store, task.Run{
-			TaskID: series.ID, Key: "scan_series_7",
+			TaskID:    series.ID,
 			ScopeName: "One Piece", MessageCode: "task.msg.scan_series.completed", Sequence: 2,
 		}),
 		// 系统作用域解析不出名字，落库的是空串而不是 NULL——那一列 NOT NULL DEFAULT ''。
 		system: seedCompletedRun(t, store, task.Run{
-			TaskID: system.ID, Key: "rebuild_index",
+			TaskID:    system.ID,
 			ScopeName: "", MessageCode: "task.msg.rebuild_index.completed", Sequence: 3,
 		}),
 	}

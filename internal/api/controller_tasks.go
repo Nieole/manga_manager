@@ -108,7 +108,7 @@ func taskParam(run RunStatus, key string) string {
 func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 	libraryID := func(run RunStatus) (int64, error) {
 		if run.ScopeID == nil {
-			return 0, fmt.Errorf("task %q missing library id", run.Key)
+			return 0, fmt.Errorf("task %d missing library id", run.TaskID)
 		}
 		return *run.ScopeID, nil
 	}
@@ -140,7 +140,7 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 		}},
 		{Type: "scan_series", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunStatus, trigger task.Trigger) error {
 			if run.ScopeID == nil {
-				return fmt.Errorf("task %q missing series id", run.Key)
+				return fmt.Errorf("task %d missing series id", run.TaskID)
 			}
 			return c.launchSeriesScanTask(*run.ScopeID, forceParam(run), trigger)
 		}},
@@ -373,7 +373,7 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 区分错误语义：仅"已在运行"是 409，其它（缺少 scope、GetLibrary 失败等内部错误）返回 500。
-		slog.Error("Task retry failed", "task_id", taskID, "task_key", run.Key, "task_type", run.Type, "error", err)
+		slog.Error("Task retry failed", "task_id", taskID, "run_id", run.RunID, "task_type", run.Type, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to retry task")
 		return
 	}
@@ -408,6 +408,11 @@ func writeTaskControlError(w http.ResponseWriter, err error) {
 //
 // 寻址用**运行 id** 而不是**任务键**：队列出现之后，同一个键此刻可以有两条仍会变化的运行
 // （一条在跑、一条排队），按键寻址就答不出用户按的是哪一张卡片上的按钮（见 taskEngine.pauseRun）。
+//
+// **重试加不进这个生成器，也加不进 setTaskAutoLaunch**——键退出寻址之后六个端点都按对象寻址了，
+// 看着只差一个参数名，实则不然：重试要先取回**终态**快照、从注册表里认出**重启函数**、再发起，
+// 并带自己那条「没有可重试的运行」的 404，这三步在两个生成器里都无处安放。真要合并，还得给
+// 暂停 / 恢复 / 取消三个引擎方法各补一个它们用不上的 ctx 形参。能合并的仍只有原来那两组。
 func (c *Controller) runControlHandler(control func(*taskEngine, int64) error, okMessage string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runID, err := parseID(r, "runID")

@@ -1467,7 +1467,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	if seriesContext.MetadataSummary.PendingReviewCount != 1 {
 		t.Fatalf("unexpected metadata summary: %+v", seriesContext.MetadataSummary)
 	}
-	if len(seriesContext.FailedTasks) != 1 || seriesContext.FailedTasks[0].Key != taskKey || seriesContext.FailedTaskSummary.Count != 1 {
+	if len(seriesContext.FailedTasks) != 1 || !belongsToKey(t, seriesContext.FailedTasks[0], taskKey) || seriesContext.FailedTaskSummary.Count != 1 {
 		t.Fatalf("unexpected failed task context: tasks=%+v summary=%+v", seriesContext.FailedTasks, seriesContext.FailedTaskSummary)
 	}
 	if seriesContext.Continue.TotalBooks != 2 {
@@ -2507,8 +2507,8 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 	if len(tasks) < 2 {
 		t.Fatalf("expected at least 2 tasks, got %d", len(tasks))
 	}
-	if tasks[0].Key != "newer" {
-		t.Fatalf("expected most recent task first, got %q", tasks[0].Key)
+	if !belongsToKey(t, tasks[0], "newer") {
+		t.Fatalf("expected most recent task first, got %+v", tasks[0])
 	}
 }
 
@@ -2530,7 +2530,7 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode filtered tasks failed: %v", err)
 	}
-	if len(tasks) != 1 || tasks[0].Key != "failed_one" {
+	if len(tasks) != 1 || !belongsToKey(t, tasks[0], "failed_one") {
 		t.Fatalf("expected only failed task, got %+v", tasks)
 	}
 }
@@ -2553,7 +2553,7 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode filtered tasks failed: %v", err)
 	}
-	if len(tasks) != 1 || tasks[0].Key != "scan_series_18" {
+	if len(tasks) != 1 || !belongsToKey(t, tasks[0], "scan_series_18") {
 		t.Fatalf("expected only series 18 task, got %+v", tasks)
 	}
 }
@@ -2590,7 +2590,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 		t.Fatalf("expected one persisted task, got %+v", tasks)
 	}
 	task := tasks[0]
-	if task.Key != "scan_series_77" || task.Status != "failed" || task.Error != "archive error" {
+	if !belongsToKey(t, task, "scan_series_77") || task.Status != "failed" || task.Error != "archive error" {
 		t.Fatalf("unexpected persisted task: %+v", task)
 	}
 	if task.Params == nil || task.Params["force"] != "true" {
@@ -2705,15 +2705,19 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
 		t.Fatalf("decode tasks failed: %v", err)
 	}
-	keys := make(map[string]bool)
-	for _, task := range tasks {
-		keys[task.Key] = true
+	remaining := make(map[string]bool)
+	for _, key := range []string{"scan_series_11", "scan_series_10", "scan_library_11"} {
+		for _, listed := range tasks {
+			if belongsToKey(t, listed, key) {
+				remaining[key] = true
+			}
+		}
 	}
-	if keys["scan_series_11"] {
-		t.Fatalf("expected scan_series_11 to be removed, got %+v", keys)
+	if remaining["scan_series_11"] {
+		t.Fatalf("expected scan_series_11 to be removed, got %+v", tasks)
 	}
-	if !keys["scan_series_10"] || !keys["scan_library_11"] {
-		t.Fatalf("expected other tasks to remain, got %+v", keys)
+	if !remaining["scan_series_10"] || !remaining["scan_library_11"] {
+		t.Fatalf("expected other tasks to remain, got %+v", tasks)
 	}
 }
 
@@ -3021,6 +3025,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 		t.Fatalf("launch library scrape failed: %v", err)
 	}
 	taskKey := "scrape_library_" + strconv.FormatInt(lib.ID, 10)
+	rememberTaskKey(taskKey, libraryTask("scrape", lib.ID, variantScrapeOneLibrary))
 
 	first := waitForProviderRequest(t, provider.requests)
 	if first != "Alpha" {
@@ -4529,7 +4534,7 @@ func TestRunProgressIsVisibleImmediately(t *testing.T) {
 	}
 	var listed *RunStatus
 	for i := range tasks {
-		if tasks[i].Key == "scan_library_5" {
+		if belongsToKey(t, tasks[i], "scan_library_5") {
 			listed = &tasks[i]
 		}
 	}

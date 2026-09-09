@@ -167,7 +167,7 @@ func TestLiveFrameIgnoresListFilters(t *testing.T) {
 		t.Fatalf("解实况帧失败: %v (raw=%s)", err, rec.Body.String())
 	}
 
-	if len(frame.Runs) != 1 || frame.Runs[0].Key != "scan_library_1" {
+	if len(frame.Runs) != 1 || !belongsToKey(t, frame.Runs[0], "scan_library_1") {
 		t.Fatalf("实况区里的运行为 %+v, want 只有那条还在跑的", frame.Runs)
 	}
 	if frame.Active != 1 || frame.Queued != 0 {

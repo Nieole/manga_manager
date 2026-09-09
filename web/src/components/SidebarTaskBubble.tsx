@@ -12,7 +12,9 @@ import { getTaskMessage } from '../i18n/task';
 import { isActiveRunStatus, isTerminalRunStatus } from '../utils/runStatus';
 
 export interface TaskBubbleEntry {
-  key: string;
+  // taskId 是气泡的身份：同一个**任务**的历次推送更新同一个气泡。
+  // 它不是**任务键**——契约上已经没有那一格（ADR 0007），键也认不出「哪一次」。
+  taskId: number;
   type: string;
   status: string;
   message: string;
@@ -27,7 +29,7 @@ export interface TaskBubbleEntry {
 
 interface TaskBubbleProps {
   tasks: TaskBubbleEntry[];
-  onDismiss: (key: string) => void;
+  onDismiss: (taskId: number) => void;
   onClearFinished: () => void;
 }
 
@@ -141,10 +143,10 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
               const percent = progressPercent(task);
               const finished = isTerminalRunStatus(task.status);
               return (
-                <li key={task.key} className="flex flex-col gap-1 px-3 py-2 hover:bg-gray-900/50">
+                <li key={task.taskId} className="flex flex-col gap-1 px-3 py-2 hover:bg-gray-900/50">
                   <div className="flex items-center justify-between gap-2">
                     <Link
-                      to={`/ops?tab=tasks&task=${encodeURIComponent(task.key)}`}
+                      to="/ops?tab=tasks"
                       onClick={() => setOpen(false)}
                       className="flex min-w-0 items-center gap-2 text-xs text-gray-200 hover:text-komgaPrimary transition"
                     >
@@ -154,7 +156,7 @@ export function SidebarTaskBubble({ tasks, onDismiss, onClearFinished }: TaskBub
                     {finished && (
                       <button
                         type="button"
-                        onClick={() => onDismiss(task.key)}
+                        onClick={() => onDismiss(task.taskId)}
                         className="text-gray-600 hover:text-white transition"
                         aria-label={t('common.close')}
                       >

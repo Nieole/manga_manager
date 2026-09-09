@@ -180,7 +180,7 @@ func TestLatestRunsReadsBackTheWholeRow(t *testing.T) {
 
 	finishedAt := time.Now().Truncate(time.Millisecond)
 	written := task.Run{
-		TaskID: taskID, Key: "scan_library_1", ScopeName: "主库", Trigger: task.TriggerScheduled,
+		TaskID: taskID, ScopeName: "主库", Trigger: task.TriggerScheduled,
 		NthRun: 4, Status: task.StatusCompleted, Phase: "writing_database", Current: 7, Total: 7,
 		MessageCode: "task.msg.scan.done", MessageParams: map[string]string{"count": "7"},
 		StartedAt: finishedAt.Add(-time.Minute), UpdatedAt: finishedAt, FinishedAt: &finishedAt, Sequence: 9,
@@ -194,8 +194,8 @@ func TestLatestRunsReadsBackTheWholeRow(t *testing.T) {
 		t.Fatalf("latest runs failed: %v", err)
 	}
 	got := latest[taskID]
-	if got.Key != written.Key || got.ScopeName != written.ScopeName || got.Trigger != written.Trigger {
-		t.Fatalf("末次运行读回 key=%q scope_name=%q trigger=%q", got.Key, got.ScopeName, got.Trigger)
+	if got.ScopeName != written.ScopeName || got.Trigger != written.Trigger {
+		t.Fatalf("末次运行读回 scope_name=%q trigger=%q", got.ScopeName, got.Trigger)
 	}
 	if got.NthRun != written.NthRun || got.Current != written.Current || got.Total != written.Total {
 		t.Fatalf("末次运行读回 nth=%d current=%d total=%d", got.NthRun, got.Current, got.Total)

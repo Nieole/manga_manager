@@ -186,11 +186,13 @@ func trySeedTask(t testing.TB, e *taskEngine, seed taskSeed) (*runhandle.Handle,
 	if launched.Stalled != task.StallNone {
 		return nil, errSeededRunStalled
 	}
+	// 登记「这个键指的是这个身份」：契约上不再有键，而快照与库两侧的取数都按身份走。
+	rememberTaskKey(seed.Key, seed.Identity)
 	// 播种被闸门拦在了**排队中**：运行落地了，任务体却还没起，因此没有句柄可交。
 	//
 	// 顺手把收尾用的错误备好：万一后续动作腾出了槽位把它放行，那个任务体会当场收尾，
 	// 而不是卡在一个永远等不到的 finish 上，把放行它的那次调用连同用例一起吊死。
-	if queued, lookupErr := e.latestRunByKey(context.Background(), seed.Key); lookupErr == nil && queued.Status == "queued" {
+	if launched.Run.Status == task.StatusQueued {
 		run.once.Do(func() { run.finish <- context.Canceled })
 		return nil, errSeededRunQueued
 	}
@@ -370,25 +372,107 @@ func TestSeededRunCarriesItsRunID(t *testing.T) {
 	}
 }
 
-// ---- 按**任务键**寻址（仅用例） ----
+// ---- 用例这一侧的把手：**任务键** ----
 //
-// 生产一条按键的寻址都没有了（ADR 0007）：控制动作按**运行 id**，重试与禁用按**任务 id**。
-// 而用例手里往往只有键——播种声明上写的就是它——因此在这里补一道解析：取这个键最近的那一次运行，
-// 再从它身上取运行 id 或任务 id。这几个连同 RunFilter.Key 那条谓词一起，由删任务键那张票带走。
+// 生产一条按键的寻址都没有了（ADR 0007）：控制动作按**运行 id**，重试与禁用按**任务 id**，
+// 对外契约上也不再带键。而用例手里握着的把手仍是启动点写下的那个键——播种声明上写的是它，
+// 生产的启动点也各自拼一个，断言读起来正是「我说的是 scan_library_1 那一条」。
+//
+// 桥是下面这张登记表。它记的是**本次用例启动了什么**：键与身份两样都是启动那一刻手里就有的，
+// 不是从键反解身份（ADR 0004 反对的正是反解，而外部库那两类的键带着会话 id，也反解不出来）。
+// 登记之后，投递出去的快照与库两侧的取数一律按**身份**走，键只用来在用例里指认是哪一条。
+//
+// 播种由 trySeedTask 自动登记；直接调生产启动点的装置要自己登记一次。
+//
+// **分辨力到身份为止**：两个键指向同一条身份时（外部库那两类的键带着会话 id，身份里没有它），
+// 下面这一族按身份取数的辅助函数分不出它们——身份是**任务**这一层，而同一个任务同一时刻
+// 最多只有一条活动运行，用例因此从没有过「同一身份的两个会话同时在跑」这种摆法。
+var launchedTaskIdentities sync.Map
 
-// latestRunFilterFor 是「这个**任务键**最近的那一次运行」的谓词。
-//
-// 「最近」判的是序号而不是时间列：序号由引擎在临界区里单调发放，而每一次会被用户看见的变化都取一个，
-// 因此同一个键上活着的那一条恒排在它自己的历史之前。
-func latestRunFilterFor(key string) task.RunFilter {
-	return task.RunFilter{Key: key, Order: task.OrderSequenceDesc, Limit: 1}
+// 生产启动点自己拼的那几个**任务键**，作用域上没有 id 的一次登记齐（见各个 launch* 函数）。
+// 带作用域 id 的那些（封面、AI 分组、外部库、写回 ComicInfo）由各自的装置现登记：id 在用例里才知道。
+func init() {
+	rememberTaskKey("rebuild_index", systemTask("rebuild_index", variantSole))
+	rememberTaskKey("rebuild_thumbnails", systemTask("rebuild_thumbnails", variantSole))
+	rememberTaskKey("cleanup_thumbnails", systemTask("cleanup_thumbnails", variantSole))
+	rememberTaskKey("rebuild_file_identities", systemTask("rebuild_file_identities", variantSole))
+	rememberTaskKey("reconcile_koreader_progress", systemTask("reconcile_koreader_progress", variantSole))
+	rememberTaskKey("refresh_koreader_matching", systemTask("refresh_koreader_matching", variantSole))
+	rememberTaskKey("scrape_all_series", systemTask("scrape", variantScrapeAllLibraries))
+	rememberTaskKey(cleanupRunHistoryTaskKey, systemTask(cleanupRunHistoryTaskKey, variantSole))
+	// 哈希重建两个**变体**共用一个类型，各有自己的键：前台重建与低优先级回填是两个身份。
+	rememberTaskKey(rebuildBookHashesTaskKey, systemTask("rebuild_book_hashes", variantHashRebuildForeground))
+	rememberTaskKey(lowPriorityBookHashTaskKey, systemTask("rebuild_book_hashes", variantHashRebuildBackfill))
 }
 
-// latestRunByKey 取这个任务键最近的那一次运行；查不到即 errTaskNotFound。
+// rememberTaskKey 登记「这个键指的是这个身份」。
+func rememberTaskKey(key string, identity TaskIdentity) {
+	launchedTaskIdentities.Store(key, identity.domain())
+}
+
+// lookupTaskIdentity 取这个键登记下来的身份；没登记过即 false。
+func lookupTaskIdentity(key string) (task.Identity, bool) {
+	stored, ok := launchedTaskIdentities.Load(key)
+	if !ok {
+		return task.Identity{}, false
+	}
+	return stored.(task.Identity), true
+}
+
+// identityForKey 与 lookupTaskIdentity 相同，没登记过即 t.Fatal——那说明装置漏了一次 rememberTaskKey，
+// 而静默回零值会让断言对着一条身份为空的运行比较，红在别的地方。
+func identityForKey(t testing.TB, key string) task.Identity {
+	t.Helper()
+	identity, ok := lookupTaskIdentity(key)
+	if !ok {
+		t.Fatalf("任务键 %q 没登记过身份 —— 播种或装置里少了一次 rememberTaskKey", key)
+	}
+	return identity
+}
+
+// taskIDFor 取这个身份的**任务 id**；库里还没有这条身份即 errTaskNotFound。
+//
+// 走 ListTasks 而不是 EnsureTask：后者查不到就建一条，而「这个任务还在不在」正是清除那类用例
+// 要问的问题——建出来就等于把答案改掉了。**变体**在内存里比：谓词上没有它那一项。
+func taskIDFor(ctx context.Context, e *taskEngine, identity task.Identity) (int64, error) {
+	scopeID := identity.ScopeID
+	owners, err := e.runStore.ListTasks(ctx, task.TaskFilter{
+		Types:   []task.Type{identity.Type},
+		Scope:   identity.Scope,
+		ScopeID: &scopeID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	for _, owner := range owners {
+		if owner.Variant == identity.Variant {
+			return owner.ID, nil
+		}
+	}
+	return 0, errTaskNotFound
+}
+
+// latestRunFilterForTask 是「这个**任务**最近的那一次运行」的谓词。
+//
+// 「最近」判的是序号而不是时间列：序号由引擎在临界区里单调发放，而每一次会被用户看见的变化都取一个，
+// 因此这个任务上活着的那一条恒排在它自己的历史之前。
+func latestRunFilterForTask(taskID int64) task.RunFilter {
+	return task.RunFilter{TaskID: taskID, Order: task.OrderSequenceDesc, Limit: 1}
+}
+
+// latestRunForKey 取这个键那条任务最近的那一次运行；查不到即 errTaskNotFound。
 //
 // 只取运行行，不装快照：控制动作要的只是一个运行 id，而装快照要连带把四张侧表读一遍。
-func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Run, error) {
-	runs, err := e.runStore.ListRuns(ctx, latestRunFilterFor(key))
+func latestRunForKey(ctx context.Context, e *taskEngine, key string) (task.Run, error) {
+	identity, ok := lookupTaskIdentity(key)
+	if !ok {
+		return task.Run{}, errTaskNotFound
+	}
+	taskID, err := taskIDFor(ctx, e, identity)
+	if err != nil {
+		return task.Run{}, err
+	}
+	runs, err := e.runStore.ListRuns(ctx, latestRunFilterForTask(taskID))
 	if err != nil {
 		return task.Run{}, err
 	}
@@ -398,18 +482,18 @@ func (e *taskEngine) latestRunByKey(ctx context.Context, key string) (task.Run, 
 	return runs[0], nil
 }
 
-// taskIDForKey 取这个**任务键**最近那次运行所属的**任务 id**，供按任务寻址的端点用例寻址。
+// taskIDForKey 取这个键那条身份的**任务 id**，供按任务寻址的端点用例寻址。
 func taskIDForKey(t testing.TB, e *taskEngine, key string) int64 {
 	t.Helper()
-	run, err := e.latestRunByKey(context.Background(), key)
+	taskID, err := taskIDFor(context.Background(), e, identityForKey(t, key))
 	if err != nil {
-		t.Fatalf("任务键 %q 取不到运行: %v", key, err)
+		t.Fatalf("任务键 %q 取不到任务 id: %v", key, err)
 	}
-	return run.TaskID
+	return taskID
 }
 
 func controlByKey(e *taskEngine, key string, action func(int64) error) error {
-	run, err := e.latestRunByKey(context.Background(), key)
+	run, err := latestRunForKey(context.Background(), e, key)
 	if err != nil {
 		return err
 	}
@@ -424,7 +508,7 @@ func cancelByKey(e *taskEngine, key string) error { return controlByKey(e, key, 
 // 运行的 id——端点按运行 id 寻址（见 Controller.pauseRun），而用例手里往往只有键。
 func runControlRequest(t testing.TB, c *Controller, handler http.HandlerFunc, key string) *httptest.ResponseRecorder {
 	t.Helper()
-	run, err := c.taskEngine.latestRunByKey(context.Background(), key)
+	run, err := latestRunForKey(context.Background(), c.taskEngine, key)
 	if err != nil {
 		t.Fatalf("任务键 %q 取不到运行: %v", key, err)
 	}

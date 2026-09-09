@@ -34,9 +34,13 @@ func seedCoverRunLibrary(t *testing.T, c *Controller) database.Library {
 	return lib
 }
 
-// coverRunKey 是这个库那条封面运行的**任务键**。
+// coverRunKey 是这个库那条封面运行的**任务键**，并顺手登记它指的身份。
+//
+// 登记是必需的：契约上不再有键（ADR 0007），装置的取数按身份走，见 task_seed_test.go 的登记表。
 func coverRunKey(libraryID int64) string {
-	return "generate_covers_" + strconv.FormatInt(libraryID, 10)
+	key := "generate_covers_" + strconv.FormatInt(libraryID, 10)
+	rememberTaskKey(key, libraryTask("generate_covers", libraryID, variantSole))
+	return key
 }
 
 // TestCoverBatchBecomesItsOwnChainedRun 走完扫描器交出一批封面之后的那一段：

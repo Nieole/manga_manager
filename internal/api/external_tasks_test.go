@@ -30,6 +30,22 @@ type externalTaskStore struct {
 	transfers []database.ListExternalTransferBooksBySeriesRow
 }
 
+// externalScanKey / externalTransferKey 取外部库那两类运行的**任务键**，并顺手登记它指的身份。
+//
+// 键由生产的启动点自己拼（带着会话 id），身份也在那里显式声明——两样并排放着，反解不出来。
+// 契约上不再有键（ADR 0007），装置的取数因此按身份走，见 task_seed_test.go 的登记表。
+func externalScanKey(libraryID int64, sessionID string) string {
+	key := externalLibraryScanTaskKey(libraryID, sessionID)
+	rememberTaskKey(key, libraryTask("scan_external_library", libraryID, variantSole))
+	return key
+}
+
+func externalTransferKey(libraryID int64, sessionID string) string {
+	key := externalLibraryTransferTaskKey(libraryID, sessionID)
+	rememberTaskKey(key, libraryTask("transfer_external_library", libraryID, variantSole))
+	return key
+}
+
 func (s *externalTaskStore) GetLibrary(_ context.Context, id int64) (database.Library, error) {
 	if id != s.lib.ID {
 		return database.Library{}, sql.ErrNoRows
@@ -147,8 +163,8 @@ func TestExternalTransferProgressObeysEngineWaterLevelOnly(t *testing.T) {
 		if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
 			t.Fatalf("启动传输失败: %v", err)
 		}
-		key := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
-		return len(publishedTasksWithCode(rig.snapshots(), key, transferItemCode))
+		key := externalTransferKey(rig.libraryID, sessionID)
+		return len(publishedTasksWithCode(t, rig.snapshots(), key, transferItemCode))
 	}
 
 	if got := itemFramesPublished(t, frozenClock()); got != 1 {
@@ -167,7 +183,7 @@ func TestExternalTransferClosingFrameSurvivesThrottle(t *testing.T) {
 	rig := newExternalRig(t, 3, frozenClock(), runTaskBodySynchronously)
 	sessionID := rig.readySession(t)
 	plan := rig.plan(t, sessionID)
-	key := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
+	key := externalTransferKey(rig.libraryID, sessionID)
 
 	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
 		t.Fatalf("启动传输失败: %v", err)
@@ -197,7 +213,7 @@ func TestExternalTransferDeclarationLandsWhole(t *testing.T) {
 	rig := newExternalRig(t, 2, frozenClock(), runTaskBodySynchronously)
 	sessionID := rig.readySession(t)
 	plan := rig.plan(t, sessionID)
-	key := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
+	key := externalTransferKey(rig.libraryID, sessionID)
 
 	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
 		t.Fatalf("启动传输失败: %v", err)
@@ -220,7 +236,7 @@ func TestExternalTransferDeclarationLandsWhole(t *testing.T) {
 func TestExternalTransferAllExistNamesItsOwnVariant(t *testing.T) {
 	rig := newExternalRig(t, 0, frozenClock(), runTaskBodySynchronously)
 	sessionID := rig.readySession(t)
-	key := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
+	key := externalTransferKey(rig.libraryID, sessionID)
 
 	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, external.TransferPlan{}); err != nil {
 		t.Fatalf("启动传输失败: %v", err)
@@ -238,7 +254,7 @@ func TestExternalTransferPartialFailureNamesItsOwnVariant(t *testing.T) {
 	rig := newExternalRig(t, 2, frozenClock(), runTaskBodySynchronously)
 	sessionID := rig.readySession(t)
 	plan := rig.plan(t, sessionID)
-	key := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
+	key := externalTransferKey(rig.libraryID, sessionID)
 
 	// 把第一本的源文件抽走：拷贝在 os.Open 上失败，第二本照常传完。
 	if err := os.Remove(plan.Operations[0].SourcePath); err != nil {
@@ -271,7 +287,7 @@ func TestExternalTransferCancellationLandsCancelled(t *testing.T) {
 	rig := newExternalRig(t, 2, frozenClock(), func(fn func()) { body = fn })
 	sessionID := rig.readySession(t)
 	plan := rig.plan(t, sessionID)
-	key := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
+	key := externalTransferKey(rig.libraryID, sessionID)
 
 	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
 		t.Fatalf("启动传输失败: %v", err)
@@ -303,7 +319,7 @@ func TestExternalScanReportsWholeFramesAndCompletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建外部库会话: %v", err)
 	}
-	key := externalLibraryScanTaskKey(rig.libraryID, snap.SessionID)
+	key := externalScanKey(rig.libraryID, snap.SessionID)
 
 	if err := rig.c.launchExternalLibraryScanTask(rig.libraryID, snap.SessionID); err != nil {
 		t.Fatalf("启动外部库扫描失败: %v", err)
@@ -335,7 +351,7 @@ func TestExternalScanEmptyNamesItsOwnVariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建外部库会话: %v", err)
 	}
-	key := externalLibraryScanTaskKey(rig.libraryID, snap.SessionID)
+	key := externalScanKey(rig.libraryID, snap.SessionID)
 
 	if err := rig.c.launchExternalLibraryScanTask(rig.libraryID, snap.SessionID); err != nil {
 		t.Fatalf("启动外部库扫描失败: %v", err)
@@ -355,7 +371,7 @@ func TestExternalTasksQueueSecondLaunchOnSameKey(t *testing.T) {
 	sessionID := rig.readySession(t)
 	plan := rig.plan(t, sessionID)
 
-	transferKey := externalLibraryTransferTaskKey(rig.libraryID, sessionID)
+	transferKey := externalTransferKey(rig.libraryID, sessionID)
 	if err := rig.c.launchExternalLibraryTransferTask(rig.libraryID, sessionID, plan); err != nil {
 		t.Fatalf("首次启动传输失败: %v", err)
 	}
@@ -367,7 +383,7 @@ func TestExternalTasksQueueSecondLaunchOnSameKey(t *testing.T) {
 	}
 	body()
 
-	scanKey := externalLibraryScanTaskKey(rig.libraryID, sessionID)
+	scanKey := externalScanKey(rig.libraryID, sessionID)
 	if err := rig.c.launchExternalLibraryScanTask(rig.libraryID, sessionID); err != nil {
 		t.Fatalf("首次启动扫描失败: %v", err)
 	}

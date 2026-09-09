@@ -292,11 +292,20 @@ export function useExternalLibrary({
   // 3. 监听后台任务进度（来自 task-progress 事件）
   useEffect(() => {
     const handler = (event: Event) => {
-      const customEvent = event as CustomEvent<{ key?: string; type?: string; status?: string }>;
+      const customEvent = event as CustomEvent<{
+        type?: string;
+        status?: string;
+        params?: Record<string, string>;
+      }>;
       const progress = customEvent.detail;
       if (!progress || !externalSession?.session_id || !libId) return;
-      const isScan = progress.key === externalScanTaskKey && progress.type === 'scan_external_library';
-      const isTransfer = progress.key === externalTransferTaskKey && progress.type === 'transfer_external_library';
+      // 认这一帧属不属于本页那次扫描/传输：比的是任务类型加载荷里的会话 id，
+      // 而不是任务键——契约上不再有它（ADR 0007）。会话 id 由启动点作为重启入参落下，
+      // 因此每一帧运行快照都带着它。两个 taskKey 仍留着：它们说的是「这一步我发起过没有」。
+      const sameSession = progress.params?.session_id === externalSession.session_id;
+      const isScan = externalScanTaskKey !== null && sameSession && progress.type === 'scan_external_library';
+      const isTransfer =
+        externalTransferTaskKey !== null && sameSession && progress.type === 'transfer_external_library';
       if (!isScan && !isTransfer) return;
       if (progress.status !== 'completed' && progress.status !== 'failed') return;
 

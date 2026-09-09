@@ -29,8 +29,11 @@ type RunSpec struct {
 	// Trigger 是**发起方**：谁叫来的。
 	Trigger Trigger
 
-	// Key 与 ScopeName 是**过渡期**字段，原样落到运行上，本包不解释它们。见 Run.Key。
-	Key       string
+	// Key 是这次运行的**任务键**：一个给人读的串，本包不解释它，也**不落盘**——它唯一的去处是
+	// 交给 DecorateRunContext，由那里挂上任务体的 ctx，好让沿途每一行日志都带着它（ADR 0007：
+	// 键退出寻址，不退出日志）。谁也不能从它反解身份，身份是四要素显式给出的那份。
+	Key string
+	// ScopeName 是作用域在界面上的显示名，是**过渡期**字段，原样落到运行上，本包不解释它。
 	ScopeName string
 
 	// StartCode 与 StartParams 是起始文案的 i18n 码与占位参数。
@@ -179,7 +182,6 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 	now := e.clock()
 	run := Run{
 		TaskID:    owner.ID,
-		Key:       spec.Key,
 		ScopeName: spec.ScopeName,
 		Trigger:   spec.Trigger,
 		NthRun:    highest + 1,
@@ -312,7 +314,7 @@ func (e *Engine) beginLocked(run Run, spec RunSpec, body Body) func() {
 	gate := taskcontrol.NewPauseGate()
 	runCtx := taskcontrol.WithPauseGate(ctx, gate)
 	if e.decorate != nil {
-		runCtx = e.decorate(runCtx, run)
+		runCtx = e.decorate(runCtx, run, spec)
 	}
 	e.runtimes[run.ID] = &taskRuntime{
 		ctx:       runCtx,

@@ -23,7 +23,7 @@ func runsForKey(t *testing.T, c *Controller, key string) []RunStatus {
 	}
 	matched := make([]RunStatus, 0, 2)
 	for _, item := range items {
-		if item.Key == key {
+		if belongsToKey(t, item, key) {
 			matched = append(matched, item)
 		}
 	}
@@ -113,7 +113,7 @@ func TestRepeatedStartsReuseTheSameIdentity(t *testing.T) {
 		})
 	}
 
-	runs, err := e.runStore.ListRuns(context.Background(), task.RunFilter{Key: key})
+	runs, err := e.runStore.ListRuns(context.Background(), task.RunFilter{TaskID: taskIDForKey(t, e, key)})
 	if err != nil {
 		t.Fatalf("列运行失败: %v", err)
 	}

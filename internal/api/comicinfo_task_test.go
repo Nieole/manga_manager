@@ -40,6 +40,9 @@ func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Con
 	e, snapshots := newBackgroundTestEngine(t, run, c.diskWork)
 	e.now = now
 	c.taskEngine = e
+	// 键由生产的启动点自己拼，身份也在那里声明（见 launchWriteSeriesComicInfoTask）：
+	// 契约上不再有键（ADR 0007），装置的取数按身份走，两样在这里一次登记齐。
+	rememberTaskKey(writeComicInfoTaskKey(comicInfoSeriesID), seriesTask("write_comicinfo", comicInfoSeriesID, variantSole))
 	return c, snapshots
 }
 
@@ -111,7 +114,7 @@ func TestWriteComicInfoDeclarationLandsWhole(t *testing.T) {
 		t.Fatalf("启动 ComicInfo 回写失败: %v", err)
 	}
 
-	if got := publishedCountFor(snapshots(), key); got != 1 {
+	if got := publishedCountFor(t, snapshots(), key); got != 1 {
 		t.Fatalf("任务诞生投递了 %d 条载荷, want 1 —— 声明被拆成了启动之后的多次写入", got)
 	}
 	task := firstPublishedTask(t, snapshots(), key)
@@ -151,7 +154,7 @@ func TestWriteComicInfoFrameIsPublishedWhole(t *testing.T) {
 		t.Fatalf("启动 ComicInfo 回写失败: %v", err)
 	}
 
-	frames := publishedTasksWithCode(snapshots(), key, "task.msg.write_comicinfo.progress")
+	frames := publishedTasksWithCode(t, snapshots(), key, "task.msg.write_comicinfo.progress")
 	want := []struct {
 		item    string
 		written int64

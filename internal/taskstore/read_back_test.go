@@ -13,34 +13,35 @@ import (
 	"manga-manager/internal/task"
 )
 
-// seedRun 落一条带任务键与状态的运行，用例只关心其中几项时其余取默认值。
-func seedRun(t *testing.T, store *Store, taskID int64, key string, status task.RunStatus, sequence int64) task.Run {
+// seedRun 落一条带作用域显示名与状态的运行，用例只关心其中几项时其余取默认值。
+// 用例拿显示名当这条运行的标签：契约与库上都不再有**任务键**（ADR 0007），而这一列认得出是哪一条。
+func seedRun(t *testing.T, store *Store, taskID int64, scopeName string, status task.RunStatus, sequence int64) task.Run {
 	t.Helper()
 	run, err := store.CreateRun(context.Background(), task.Run{
-		TaskID:   taskID,
-		Key:      key,
-		Trigger:  task.TriggerManual,
-		NthRun:   1,
-		Status:   status,
-		Sequence: sequence,
+		TaskID:    taskID,
+		ScopeName: scopeName,
+		Trigger:   task.TriggerManual,
+		NthRun:    1,
+		Status:    status,
+		Sequence:  sequence,
 	})
 	if err != nil {
-		t.Fatalf("落运行 %q 失败: %v", key, err)
+		t.Fatalf("落运行 %q 失败: %v", scopeName, err)
 	}
 	return run
 }
 
-func listKeys(t *testing.T, store *Store, filter task.RunFilter) []string {
+func listScopeNames(t *testing.T, store *Store, filter task.RunFilter) []string {
 	t.Helper()
 	runs, err := store.ListRuns(context.Background(), filter)
 	if err != nil {
 		t.Fatalf("列运行失败: %v", err)
 	}
-	keys := make([]string, 0, len(runs))
+	names := make([]string, 0, len(runs))
 	for _, run := range runs {
-		keys = append(keys, run.Key)
+		names = append(names, run.ScopeName)
 	}
-	return keys
+	return names
 }
 
 // TestIdentityPredicatesJoinTheIdentityTable 守类型、作用域与作用域 id 三条谓词判的是**任务行**
@@ -69,11 +70,10 @@ func TestIdentityPredicatesJoinTheIdentityTable(t *testing.T) {
 		{"按类型", task.RunFilter{Types: []task.Type{"scan_library"}}, []string{"scan_library_1", "scan_library_2"}},
 		{"按作用域", task.RunFilter{Scope: task.ScopeSystem}, []string{"rebuild_index"}},
 		{"按作用域 id", task.RunFilter{Scope: task.ScopeLibrary, ScopeID: &scopeID}, []string{"scan_library_1"}},
-		{"按任务键精确匹配", task.RunFilter{Key: "scan_library_1"}, []string{"scan_library_1"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := listKeys(t, store, tc.filter)
+			got := listScopeNames(t, store, tc.filter)
 			if len(got) != len(tc.want) {
 				t.Fatalf("取回 %v, want %v", got, tc.want)
 			}
@@ -100,7 +100,7 @@ func TestSystemScopeIDIsAddressable(t *testing.T) {
 	seedRun(t, store, ensureTask(t, store, 1), "scan_library_1", task.StatusCompleted, 2)
 
 	systemScope := int64(0)
-	if got := listKeys(t, store, task.RunFilter{ScopeID: &systemScope}); len(got) != 1 || got[0] != "rebuild_index" {
+	if got := listScopeNames(t, store, task.RunFilter{ScopeID: &systemScope}); len(got) != 1 || got[0] != "rebuild_index" {
 		t.Fatalf("按系统级作用域 id 取回 %v, want [rebuild_index]", got)
 	}
 }
@@ -167,7 +167,7 @@ func TestLiveFirstOrderPutsChangingRunsUpFront(t *testing.T) {
 	seedRun(t, store, ensureTask(t, store, 2), "scan_library_2", task.StatusCompleted, 20)
 	seedRun(t, store, ensureTask(t, store, 3), "scan_library_3", task.StatusCompleted, 30)
 
-	got := listKeys(t, store, task.RunFilter{Order: task.OrderLiveFirst})
+	got := listScopeNames(t, store, task.RunFilter{Order: task.OrderLiveFirst})
 	want := []string{"scan_library_1", "scan_library_3", "scan_library_2"}
 	for i := range want {
 		if got[i] != want[i] {
@@ -198,7 +198,7 @@ func TestDeleteRunsNeverTakesLiveRuns(t *testing.T) {
 	if removed != 1 {
 		t.Fatalf("删掉了 %d 条, want 1 —— 仍会变化的运行被带走了", removed)
 	}
-	if got := listKeys(t, store, task.RunFilter{}); len(got) != 4 {
+	if got := listScopeNames(t, store, task.RunFilter{}); len(got) != 4 {
 		t.Fatalf("删除之后剩 %v, want 四条仍会变化的运行", got)
 	}
 }
@@ -217,7 +217,7 @@ func TestDeleteRunsCascadesSideTables(t *testing.T) {
 		t.Fatalf("写指标失败: %v", err)
 	}
 
-	if _, err := store.DeleteRuns(ctx, task.RunFilter{Key: "scan_library_1"}); err != nil {
+	if _, err := store.DeleteRuns(ctx, task.RunFilter{TaskID: run.TaskID}); err != nil {
 		t.Fatalf("删除失败: %v", err)
 	}
 
@@ -280,14 +280,13 @@ func TestLoadTasksAndSideDataRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTaskKeyColumnSurvivesTheRoundTrip 守**过渡期**那两列写得进去也读得回来：
-// 六个控制端点与对外契约今天全靠任务键寻址，读不回来就等于每条历史运行都点不动。
-func TestTaskKeyColumnSurvivesTheRoundTrip(t *testing.T) {
+// TestScopeNameSurvivesTheRoundTrip 守**作用域显示名**那一列写得进去也读得回来：
+// 任务清单与运行列表的关键词搜索判在它身上，读不回来就等于打库名一条也搜不到。
+func TestScopeNameSurvivesTheRoundTrip(t *testing.T) {
 	store := newStoreForTest(t)
 
 	created, err := store.CreateRun(context.Background(), task.Run{
 		TaskID:    ensureTask(t, store, 1),
-		Key:       "scan_library_1",
 		ScopeName: "Main",
 		Trigger:   task.TriggerManual,
 		NthRun:    1,
@@ -301,8 +300,8 @@ func TestTaskKeyColumnSurvivesTheRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读回运行失败: %v", err)
 	}
-	if readBack.Key != "scan_library_1" || readBack.ScopeName != "Main" {
-		t.Fatalf("过渡期的两列读回来是 %q / %q", readBack.Key, readBack.ScopeName)
+	if readBack.ScopeName != "Main" {
+		t.Fatalf("作用域显示名读回来是 %q", readBack.ScopeName)
 	}
 }
 

@@ -60,10 +60,10 @@ func TestHistoryDoesNotDisplaceActiveRuns(t *testing.T) {
 			// 真实场景里一个长时间无进度上报的大库扫描正是如此。
 			floodFinishedRuns(t, engine, taskCenterPageSize+10)
 
-			keys := taskCenterFirstPage(t, controller)
-			if indexOfKey(keys, activeKey) < 0 {
-				t.Fatalf("活动运行被历史挤出了第一页（页首三条：%v）—— 用户看不到自己刚发起的那一条",
-					keys[:min(3, len(keys))])
+			page := taskCenterFirstPage(t, controller)
+			if indexOfKey(t, page, activeKey) < 0 {
+				t.Fatalf("活动运行被历史挤出了第一页（页首三条：%+v）—— 用户看不到自己刚发起的那一条",
+					firstOfPage(page, 3))
 			}
 
 			// 更新仍然生效，说明那条运行还在、还认得它的**运行句柄**。

@@ -119,7 +119,7 @@ func TestSnapshotFrameCarriesTheWholeRun(t *testing.T) {
 		t.Fatalf("最后一帧不是运行快照: %+v", last)
 	}
 	// 一帧计数推进带着的是整条运行，不只是变了的那两个数。
-	if last.Run.Key != "scan_library_1" || last.Run.Type != "scan_library" ||
+	if !belongsToKey(t, *last.Run, "scan_library_1") || last.Run.Type != "scan_library" ||
 		last.Run.ScopeName != "甲库" || last.Run.Total != 100 || last.Run.Current != 7 {
 		t.Errorf("推来的不是全量快照: %+v", *last.Run)
 	}
