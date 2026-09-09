@@ -355,9 +355,11 @@ export default function Layout() {
 
     const handleScanLibrary = async (id: string, force: boolean = false) => {
         try {
-            await apiClient.post(`/api/libraries/${id}/scan?force=${force}`);
+            const res = await apiClient.post(`/api/libraries/${id}/scan?force=${force}`);
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
-            showToast(force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued'), 'success');
+            // 后端带回一句话时以它为准：这个库已经排着一次扫描的话，本次强制重扫会被并进那一次，
+            // 而那一次不是强制的——此时说「已提交」就是骗人。其余情况后端不带话，用本地这两句。
+            showToast(res.data.message || (force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued')), 'success');
         } catch (error) {
             console.error("Trigger scan failed", error);
             showToast(t('layout.toast.scanFailed'), 'error');

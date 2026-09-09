@@ -11,6 +11,7 @@ var apiMessages = map[string]map[string]string{
 		"library.validation.interval_min":  "扫描间隔至少为 1 分钟。",
 		"library.validation.formats_empty": "至少保留一个受支持的扫描格式。",
 		"library.validation.path_in_use":   "这个目录已经被其他资源库使用。",
+		"library.scan.force_coalesced":     "这个库已经排着一次扫描，本次强制重扫并入了那一次——而那一次不是强制的。想要强制重扫，请等它跑完之后再点一次。",
 
 		"koreader.validation.username_required": "用户名不能为空。",
 		"koreader.validation.base_path_slash":   "同步路径必须以 / 开头。",
@@ -68,6 +69,7 @@ var apiMessages = map[string]map[string]string{
 		"library.validation.interval_min":  "Scan interval must be at least 1 minute.",
 		"library.validation.formats_empty": "Keep at least one supported scan format.",
 		"library.validation.path_in_use":   "This directory is already used by another library.",
+		"library.scan.force_coalesced":     "This library already has a scan queued, so the forced rescan was merged into it — and that one is not a forced scan. To force a rescan, wait for it to finish and trigger one again.",
 
 		"koreader.validation.username_required": "Username cannot be empty.",
 		"koreader.validation.base_path_slash":   "The sync path must start with /.",
