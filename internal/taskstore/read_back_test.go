@@ -6,6 +6,7 @@ package taskstore
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -123,6 +124,35 @@ func TestQueryPredicateIsPushedDown(t *testing.T) {
 	}
 	if len(runs) != 1 || runs[0].ID != failed.ID {
 		t.Fatalf("按关键词取回 %+v, want 只有那条带错误串的运行", runs)
+	}
+}
+
+// TestQueryMatchesScopeName 守运行列表的关键词匹配的是作用域**显示名**、文案码与错误这三格。
+// 用户在搜索框里打的是界面上看得见的库名与系列名，而任务键是界面上从不出现的内部串。
+func TestQueryMatchesScopeName(t *testing.T) {
+	store := newStoreForTest(t)
+	corpus := seedScopeNameCorpus(t, store)
+
+	cases := []struct {
+		name  string
+		query string
+		want  []int64
+	}{
+		{name: "打库名筛出该库的运行", query: "manga vault", want: []int64{corpus.library.ID}},
+		{name: "打系列名筛出该系列的运行", query: "one piece", want: []int64{corpus.series.ID}},
+		{name: "打类型名仍然命中，那来自文案码", query: "scan_library", want: []int64{corpus.library.ID}},
+		{name: "任务键那种内部串筛不出东西", query: "scan_library_1", want: nil},
+		{name: "显示名为空的运行照样按文案码命中", query: "rebuild_index", want: []int64{corpus.system.ID}},
+		{name: "显示名为空不把它卷进别人的搜索", query: "piece", want: []int64{corpus.series.ID}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runIDs(t, store, task.RunFilter{Query: tc.query})
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("按 %q 筛出 %v, want %v", tc.query, got, tc.want)
+			}
+		})
 	}
 }
 

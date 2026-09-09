@@ -122,8 +122,7 @@ func taskFilterClause(filter task.TaskFilter) (string, []any) {
 		args = append(args, statusArgs...)
 	}
 	if filter.LastRunQuery != "" {
-		// 与运行列表同口径：键、文案码与错误串接起来做大小写无关的子串匹配。
-		clauses = append(clauses, `LOWER(r.task_key || ' ' || r.message_code || ' ' || r.error) LIKE ?`)
+		clauses = append(clauses, keywordClause("r"))
 		args = append(args, "%"+strings.ToLower(filter.LastRunQuery)+"%")
 	}
 	if len(clauses) == 0 {

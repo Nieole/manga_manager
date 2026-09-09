@@ -5,6 +5,7 @@ package taskstore
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -98,7 +99,7 @@ func TestListTasksMatchesIdentityAndKeyword(t *testing.T) {
 	second := ensureTask(t, store, 2)
 
 	run := createRun(t, store, first, task.StatusCompleted, 1)
-	run.Key = "scan_library_1"
+	run.ScopeName = "Manga Vault"
 	if err := store.SaveRun(context.Background(), run); err != nil {
 		t.Fatalf("save run failed: %v", err)
 	}
@@ -111,8 +112,36 @@ func TestListTasksMatchesIdentityAndKeyword(t *testing.T) {
 	if got := taskIDsOf(listTasks(t, store, task.TaskFilter{Types: []task.Type{"rebuild_index"}})); len(got) != 0 {
 		t.Fatalf("按不存在的类型筛出 %v, want 空", got)
 	}
-	if got := taskIDsOf(listTasks(t, store, task.TaskFilter{LastRunQuery: "LIBRARY_1"})); len(got) != 1 || got[0] != first {
+	if got := taskIDsOf(listTasks(t, store, task.TaskFilter{LastRunQuery: "MANGA VAULT"})); len(got) != 1 || got[0] != first {
 		t.Fatalf("按关键词筛出 %v, want [%d]（大小写无关）", got, first)
+	}
+}
+
+// TestListTasksMatchesLastRunScopeName 守任务清单这一句的关键词与运行列表**同口径**：判的是末次
+// 运行上的显示名、文案码与错误。两处分岔的话，同一个词在任务中心上下两层筛出来的行对不上。
+func TestListTasksMatchesLastRunScopeName(t *testing.T) {
+	store := newStoreForTest(t)
+	corpus := seedScopeNameCorpus(t, store)
+
+	cases := []struct {
+		name  string
+		query string
+		want  []int64
+	}{
+		{name: "打库名筛出该库那一行", query: "MANGA VAULT", want: []int64{corpus.library.TaskID}},
+		{name: "打系列名筛出该系列那一行", query: "one piece", want: []int64{corpus.series.TaskID}},
+		{name: "打类型名仍然命中，那来自文案码", query: "scan_series", want: []int64{corpus.series.TaskID}},
+		{name: "任务键那种内部串筛不出东西", query: "scan_library_1", want: nil},
+		{name: "显示名为空的任务照样按文案码命中", query: "rebuild_index", want: []int64{corpus.system.TaskID}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := taskIDsOf(listTasks(t, store, task.TaskFilter{LastRunQuery: tc.query}))
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("按 %q 筛出 %v, want %v", tc.query, got, tc.want)
+			}
+		})
 	}
 }
 

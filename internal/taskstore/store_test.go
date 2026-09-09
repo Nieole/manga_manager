@@ -64,6 +64,59 @@ func createRun(t *testing.T, store *Store, taskID int64, status task.RunStatus, 
 	return run
 }
 
+// seedCompletedRun 落一条**已完成**的运行，原样带上调用方给的显示名、文案码与任务键，其余取默认值。
+func seedCompletedRun(t *testing.T, store *Store, run task.Run) task.Run {
+	t.Helper()
+	run.Trigger = task.TriggerManual
+	run.NthRun = 1
+	run.Status = task.StatusCompleted
+	created, err := store.CreateRun(context.Background(), run)
+	if err != nil {
+		t.Fatalf("落运行 %q 失败: %v", run.ScopeName, err)
+	}
+	return created
+}
+
+// scopeNameCorpus 是关键词匹配那两组用例共用的种子：一条库级、一条系列级、一条系统级运行。
+// 每条 task.Run 上运行 id 与任务 id 都在，运行列表与任务清单各取自己要断言的那一个。
+type scopeNameCorpus struct {
+	library task.Run
+	series  task.Run
+	system  task.Run
+}
+
+// seedScopeNameCorpus 摆出三条运行：显示名分别是「界面上看得见的库名」「系列名」与**空串**。
+// 三条的任务键都还在，好让用例反过来断言那种内部串一条都筛不出来。
+func seedScopeNameCorpus(t *testing.T, store *Store) scopeNameCorpus {
+	t.Helper()
+	ctx := context.Background()
+
+	series, err := store.EnsureTask(ctx, task.Identity{Type: "scan_series", Scope: task.ScopeSeries, ScopeID: 7})
+	if err != nil {
+		t.Fatalf("建系列级身份失败: %v", err)
+	}
+	system, err := store.EnsureTask(ctx, task.Identity{Type: "rebuild_index", Scope: task.ScopeSystem})
+	if err != nil {
+		t.Fatalf("建系统级身份失败: %v", err)
+	}
+
+	return scopeNameCorpus{
+		library: seedCompletedRun(t, store, task.Run{
+			TaskID: ensureTask(t, store, 1), Key: "scan_library_1",
+			ScopeName: "Manga Vault", MessageCode: "task.msg.scan_library.completed", Sequence: 1,
+		}),
+		series: seedCompletedRun(t, store, task.Run{
+			TaskID: series.ID, Key: "scan_series_7",
+			ScopeName: "One Piece", MessageCode: "task.msg.scan_series.completed", Sequence: 2,
+		}),
+		// 系统作用域解析不出名字，落库的是空串而不是 NULL——那一列 NOT NULL DEFAULT ''。
+		system: seedCompletedRun(t, store, task.Run{
+			TaskID: system.ID, Key: "rebuild_index",
+			ScopeName: "", MessageCode: "task.msg.rebuild_index.completed", Sequence: 3,
+		}),
+	}
+}
+
 // finishRun 把一条运行写成**终态**并指定它的收尾时刻，供保留裁剪的用例摆出「多久以前跑完的」。
 func finishRun(t *testing.T, store *Store, run task.Run, status task.RunStatus, finishedAt time.Time) task.Run {
 	t.Helper()

@@ -219,9 +219,7 @@ func runFilterClause(filter task.RunFilter) (string, []any) {
 		args = append(args, filter.Key)
 	}
 	if filter.Query != "" {
-		// 与旧引擎同口径：键、文案码与错误串接起来做大小写无关的子串匹配。
-		// LOWER 只作用于 ASCII，而这三样都是本仓自己生成的标识串，不含大小写敏感的非 ASCII。
-		clauses = append(clauses, `LOWER(task_key || ' ' || message_code || ' ' || error) LIKE ?`)
+		clauses = append(clauses, keywordClause(""))
 		args = append(args, "%"+strings.ToLower(filter.Query)+"%")
 	}
 	if identity, identityArgs := identityClause(filter); identity != "" {
@@ -232,6 +230,23 @@ func runFilterClause(filter task.RunFilter) (string, []any) {
 		return "", args
 	}
 	return ` WHERE ` + strings.Join(clauses, " AND "), args
+}
+
+// keywordClause 拼出关键词那一句谓词，`alias` 给出运行行的表别名：任务清单那边连了末次运行，
+// 别名是 `r`；运行列表那边判在运行表自己身上，别名为空串。
+//
+// 匹配的是作用域**显示名**、文案码与错误，不含**任务键**：用户打进搜索框的是界面上看得见的
+// 库名与系列名，而任务键是本仓自己拼出来、界面上从不出现的内部串。两处搜索共用这一份——
+// 各写一份的话，口径分岔不会有编译错误，后果是同一个词在任务中心上下两层筛出来的行对不上。
+//
+// 大小写无关靠两侧各折一次得到，而 SQLite 的 LOWER 只折 ASCII、调用方折的是整个 Unicode：
+// 显示名里的大写非 ASCII 字母两边因此对不上，照着界面原样打也不中。中日英不受影响。
+func keywordClause(alias string) string {
+	if alias != "" {
+		alias += "."
+	}
+	columns := []string{alias + "scope_name", alias + "message_code", alias + "error"}
+	return `LOWER(` + strings.Join(columns, ` || ' ' || `) + `) LIKE ?`
 }
 
 // identityClause 把身份那三项谓词拼成一句对身份表的子查询；一项都没给时返回空串。
