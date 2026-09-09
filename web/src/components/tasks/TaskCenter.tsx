@@ -198,11 +198,16 @@ function runMetric(run: RunStatus, key: string) {
  *
  * 数走 runMetric 而不是直接读参数：它们已经搬进指标，只读参数的话这一条搬完就少五格；
  * 而 runMetric 的参数回落让升级前落下的运行照样显示。零与空不占格——那是「没有这回事」。
+ *
+ * 描述性那一半全空时整条不画：这一条答的是「这次 IO 跑在哪块盘上」，指认不出盘就没有这一条。
+ * 跨资料库的运行没有单一画像可报（见 launchRebuildThumbnailsTask）。那几个数都在 taskMetricKeys
+ * 里，指标面板照样各给它们一格，不会因为这道门没人显示。
  */
 function runIOParams(run: RunStatus): [string, string][] {
   const descriptive = taskIOParamKeys.descriptive
     .map((key): [string, string] => [key, run.params?.[key] ?? ''])
     .filter(([, value]) => value !== '' && value !== '0');
+  if (descriptive.length === 0) return [];
   const numeric = taskIOParamKeys.numeric
     .map((key): [string, number] => [key, runMetric(run, key)])
     .filter(([, value]) => value > 0)
