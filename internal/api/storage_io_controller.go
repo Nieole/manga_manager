@@ -113,10 +113,9 @@ func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
 
 // taskArchiveOpenRate 估这条运行的归档打开速率。
 //
-// 指标优先、任务参数兜底：上报侧今天有两条通道——跨库的重建走**累加指标**，单库扫描把整份报文
-// 写成**重启入参**里的一批字符串。上一版看不出差别，因为累加值当时还被镜像成一份字符串塞回
-// params；镜像随 params 堆一起没了，而把扫描那条改道是一次用户可见的搬家（数字会从参数面板
-// 挪进指标面板），因此没有随接线一起做。前端的 taskMetric 早就是同一个口径：先看 metrics，再退回 params。
+// 指标优先、任务参数兜底：两条上报通道今天都落进指标（跨库的重建走**累加指标**，单库扫描整帧
+// 定版），参数那一半只为升级前落下的运行留着——它们的这批数还是**重启入参**里的字符串。
+// 前端的 runMetric 是同一个口径：先看 metrics，再退回 params。
 func taskArchiveOpenRate(task *RunStatus) float64 {
 	if task == nil {
 		return 0

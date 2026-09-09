@@ -1562,6 +1562,8 @@ export const messages: MessageCatalog = {
     'settings.maintenance.taskPhase.writing': 'Writing archives',
     'settings.maintenance.taskPhase.collecting_series': 'Collecting series',
     'settings.maintenance.taskPhase.completed': 'Completed',
+    'settings.maintenance.taskMetric.discovered_archives': 'Discovered archives',
+    'settings.maintenance.taskMetric.skipped_archives': 'Skipped archives',
     'settings.maintenance.taskMetric.processed_archives': 'Processed archives',
     'settings.maintenance.taskMetric.opened_archives': 'Opened archives',
     'settings.maintenance.taskMetric.failed_archives': 'Failed archives',

@@ -93,8 +93,10 @@ func (h *Handle) Phase(phase, code string, params map[string]string) {
 	h.Report(Frame{Phase: phase, Code: code, Params: params})
 }
 
-// MergeParams 按键合并**任务参数**：**重启函数**读回入参、存储 IO 面板读取扫描计数用的正是这一份。
+// MergeParams 按键合并**任务参数**：**重启函数**读回入参用的正是这一份。
 // 上报方手里握着这些参数的全量当前值时用它。
+//
+// 可聚合的计数与时长不走这里——它们走指标（判据见 api.taskScanObserver.Metrics）。
 //
 // 它与 Frame.Params 只差一个字，去处却不同——那一路是文案占位参数。接反不会有编译错误，
 // 后果是任务参数丢失，或者文案把占位符原样渲染出来。

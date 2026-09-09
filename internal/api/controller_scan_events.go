@@ -58,26 +58,39 @@ func (o *taskScanObserver) Warn(warning scanner.ScanWarning) {
 	o.progress.Warn(warning.Code, warning.Detail, warning.Count)
 }
 
+// Metrics 把扫描收尾的那份报文定版进这条运行的**指标**。
+//
+// **一个数报到哪，判据是这个**：可聚合的计数与时长走指标——那张表可查询可聚合，「这个库最近
+// 十次扫描平均处理了多少归档」因此是一句 SQL；描述「这次是在什么条件下跑的」走**任务参数**
+// 或**上限**表；同一件事只报一次。报文里那四个描述性值因此不在这里——发起声明
+// （见 startLibraryScanRun）与上限表里已经各有一份，而这一路解析的是同一条存储策略。
+//
+// 走整帧上报而不是**累加指标**：单库扫描的每份进度报文送的已经是快照绝对值（见
+// scanner.ScanProgressReport.Metrics），累加会把收尾的总量再加到那份绝对值上，翻一倍。
+// 累加那条通道属于跨资料库的运行（见 rebuildThumbLibrary.Metrics），那里每份报文只覆盖一个库。
+//
+// 十三个数一次报完，不拆成两次写入——理由见 runhandle.Handle.Report。
 func (o *taskScanObserver) Metrics(report scanner.ScanMetricsReport) {
-	o.progress.MergeParams(map[string]string{
-		"storage_profile":          report.StorageProfile,
-		"volume_key":               report.VolumeKey,
-		"archive_open_concurrency": strconv.Itoa(report.ArchiveOpenConcurrency),
-		"cover_concurrency":        strconv.Itoa(report.CoverConcurrency),
-		"discovered_archives":      strconv.FormatInt(report.DiscoveredArchives, 10),
-		"skipped_archives":         strconv.FormatInt(report.SkippedArchives, 10),
-		"processed_archives":       strconv.FormatInt(report.ProcessedArchives, 10),
-		"opened_archives":          strconv.FormatInt(report.OpenedArchives, 10),
-		"hashed_files":             strconv.FormatInt(report.HashedFiles, 10),
-		"queued_covers":            strconv.FormatInt(report.QueuedCovers, 10),
-		"failed_archives":          strconv.FormatInt(report.FailedArchives, 10),
-		"rehomed_books":            strconv.FormatInt(report.RehomedBooks, 10),
-		"stale_series_stats":       strconv.FormatInt(report.StaleSeriesStats, 10),
-		"format_filtered_archives": strconv.FormatInt(report.FormatFilteredArchives, 10),
-		"io_wait_ms":               strconv.FormatInt(report.IOWaitMillis, 10),
-		"paused_ms":                strconv.FormatInt(report.PausedMillis, 10),
-		"duration_ms":              strconv.FormatInt(report.DurationMillis, 10),
-	})
+	o.progress.Report(runhandle.Frame{Metrics: scanMetricValues(report)})
+}
+
+// scanMetricValues 把一份扫描指标报文摊成指标那张表里的十三个键。
+func scanMetricValues(report scanner.ScanMetricsReport) map[string]int64 {
+	return map[string]int64{
+		"discovered_archives":      report.DiscoveredArchives,
+		"skipped_archives":         report.SkippedArchives,
+		"processed_archives":       report.ProcessedArchives,
+		"opened_archives":          report.OpenedArchives,
+		"hashed_files":             report.HashedFiles,
+		"queued_covers":            report.QueuedCovers,
+		"failed_archives":          report.FailedArchives,
+		"rehomed_books":            report.RehomedBooks,
+		"stale_series_stats":       report.StaleSeriesStats,
+		"format_filtered_archives": report.FormatFilteredArchives,
+		"io_wait_ms":               report.IOWaitMillis,
+		"paused_ms":                report.PausedMillis,
+		"duration_ms":              report.DurationMillis,
+	}
 }
 
 // scanProgressFrame 把扫描器的一份进度报文翻成**一帧**任务进度。
