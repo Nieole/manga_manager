@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 规格覆盖：用户故事 37、38、39、40；实施决策 12、13、18、23。
 
