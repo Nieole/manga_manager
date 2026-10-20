@@ -403,42 +403,55 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [accountActionId, setAccountActionId] = useState<number | null>(null);
   const configRef = useRef<Config | null>(null);
-  const koreaderStatusRef = useRef<KOReaderStatus | null>(null);
+  const [sectionVersions, setSectionVersions] = useState<Partial<Record<ConfigSectionKey, string>>>({});
+  const sectionVersionRef = useRef<Partial<Record<ConfigSectionKey, string>>>({});
+  const sectionBases = useRef<Partial<Record<ConfigSectionKey, Config>>>({});
+  const [koreaderVersion, setKOReaderVersion] = useState<string>('');
   const { showToast } = useToast();
 
   useEffect(() => {
     configRef.current = config;
   }, [config]);
 
-  useEffect(() => {
-    koreaderStatusRef.current = koreaderStatus;
-  }, [koreaderStatus]);
-
-  // savedSection 表示「刚保存完什么」：
-  //   - undefined：首屏加载，整份替换（此时 prev 为 null，本来也没有草稿可保）；
-  //   - 某个配置分区：只把该分区刷成服务端的新值，其余分区保留用户手上的草稿；
-  //   - 'koreader'：KOReader 的表单是独立 state（koreaderForm），不在 config 草稿里，
-  //     所以这里一个 config 分区都不该动。
-  //
-  // 「只保存本分区」的对偶就是「只刷新本分区」。少了这一半，保存 AI 设置会顺手把
-  // 资料库分区没保存的草稿整片抹掉、侧边栏的脏点也一起熄灭，全程没有任何提示——
-  // 方向比原缺陷安全（丢的是本地草稿不是写库），但同样是静默的。
+  // 未保存的分区草稿保留自己的基线。服务端改变同一分区时不得给旧草稿换上新版本，
+  // 否则后续保存会覆盖尚未展示的目录策略等改动。干净分区与刚保存的分区可直接刷新。
   const fetchConfig = useCallback(async (savedSection?: ConfigSectionKey | 'koreader') => {
     const res = await apiClient.get<ConfigEnvelope>('/api/system/config');
-    setConfig((prev) => {
-      if (!prev || savedSection === undefined) return res.data.config;
-      if (savedSection === 'koreader') return prev;
-      return applySectionSnapshot(prev, res.data.config, savedSection);
-    });
+    const version = res.headers.etag || '';
+    const draft = configRef.current;
+    let nextDraft = draft || res.data.config;
+    {
+      const versions: Partial<Record<ConfigSectionKey, string>> = {};
+      for (const section of Object.keys(SECTION_FIELD_PATHS) as ConfigSectionKey[]) {
+        const base = sectionBases.current[section];
+        versions[section] = sectionVersionRef.current[section];
+        const dirty = draft && base && JSON.stringify(pickSectionSnapshot(draft, section)) !== JSON.stringify(pickSectionSnapshot(base, section));
+        const changed = base && JSON.stringify(pickSectionSnapshot(base, section)) !== JSON.stringify(pickSectionSnapshot(res.data.config, section));
+        if (savedSection === undefined || savedSection === section || !dirty) {
+          nextDraft = applySectionSnapshot(nextDraft, res.data.config, section);
+          sectionBases.current[section] = res.data.config;
+          versions[section] = version;
+        } else if (!changed) {
+          sectionBases.current[section] = res.data.config;
+          versions[section] = version;
+        }
+      }
+      sectionVersionRef.current = versions;
+      setSectionVersions(versions);
+    }
+    configRef.current = nextDraft;
+    setConfig(nextDraft);
+    setKOReaderVersion(version);
     // initialConfig 是「服务端真相」的基线，必须整份更新。
     setInitialConfig(res.data.config);
     setValidation(res.data.validation);
     setCapabilities(res.data.capabilities);
-    setKOReaderForm((current) => buildKOReaderForm(res.data.config.koreader, koreaderStatusRef.current, current));
+    setKOReaderForm((current) => buildKOReaderForm(res.data.config.koreader, null, current));
   }, []);
 
   const fetchKOReader = useCallback(async () => {
     const res = await apiClient.get<KOReaderStatus>('/api/system/koreader');
+    setKOReaderVersion(res.headers.etag || '');
     setKOReaderStatus(res.data);
     setKOReaderForm((current) => {
       const nextForm = buildKOReaderForm(configRef.current?.koreader, res.data, current);
@@ -509,13 +522,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         // 敏感字段（LLM APIKey 等）在 initialConfig 里是占位符，后端会据此保留原值，
         // 所以这样叠加不会把密钥抹成掩码串。
         const payload = applySectionSnapshot(initialConfig, config, section);
-        const res = await apiClient.post('/api/system/config', payload);
+        const res = await apiClient.post('/api/system/config', payload, { headers: { 'If-Match': sectionVersions[section] || '' } });
         setValidation(res.data.validation);
         showToast(res.data.message || successMessage, 'success');
         await fetchConfig(section);
       } catch (error) {
         console.error(error);
-        if (isAxiosError(error) && error.response?.status === 422) {
+        if (isAxiosError(error) && error.response?.status === 409) {
+          showToast(t('settings.toast.configChanged'), 'error');
+        } else if (isAxiosError(error) && error.response?.status === 422) {
           const nextValidation = error.response.data?.validation;
           if (nextValidation) setValidation(nextValidation);
           showToast(t('settings.toast.configInvalid'), 'error');
@@ -526,7 +541,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSaving(false);
       }
     },
-    [config, initialConfig, fetchConfig, showToast, t],
+    [config, initialConfig, sectionVersions, fetchConfig, showToast, t],
   );
 
   // saveProtocols 保存协议开关。
@@ -548,11 +563,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         },
       } as Config;
       const payload = applySectionSnapshot(initialConfig, draft, 'connections');
-      const res = await apiClient.post('/api/system/config', payload);
+      const res = await apiClient.post('/api/system/config', payload, { headers: { 'If-Match': sectionVersions.connections || '' } });
       setValidation(res.data.validation);
       await fetchConfig('connections');
     },
-    [config, initialConfig, fetchConfig],
+    [config, initialConfig, sectionVersions, fetchConfig],
   );
 
   const handleTestLLM = useCallback(async () => {
@@ -591,7 +606,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (!koreaderForm) return;
     setSavingKOReader(true);
     try {
-      const res = await apiClient.post<KOReaderStatus>('/api/system/koreader', koreaderForm);
+      const res = await apiClient.post<KOReaderStatus>('/api/system/koreader', koreaderForm, { headers: { 'If-Match': koreaderVersion } });
       const requiresMaintenance = Boolean(
         koreaderStatus &&
           (koreaderStatus.match_mode !== koreaderForm.match_mode ||
@@ -607,7 +622,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       await Promise.all([fetchConfig('koreader'), fetchKOReaderAccounts(), fetchKOReaderUnmatched(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
-      if (isAxiosError(error) && error.response?.status === 422) {
+      if (isAxiosError(error) && error.response?.status === 409) {
+        showToast(t('settings.toast.configChanged'), 'error');
+      } else if (isAxiosError(error) && error.response?.status === 422) {
         const nextValidation = error.response.data?.validation;
         if (nextValidation) setKOReaderValidation(nextValidation);
         showToast(t('settings.toast.koreaderInvalid'), 'error');
@@ -617,7 +634,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     } finally {
       setSavingKOReader(false);
     }
-  }, [config?.koreader, fetchConfig, fetchKOReaderAccounts, fetchKOReaderDevices, fetchKOReaderUnmatched, koreaderForm, koreaderStatus, showToast, t]);
+  }, [config?.koreader, fetchConfig, fetchKOReaderAccounts, fetchKOReaderDevices, fetchKOReaderUnmatched, koreaderForm, koreaderStatus, koreaderVersion, showToast, t]);
 
   const handleApplyMatchingChanges = useCallback(async () => {
     setApplyingMatching(true);
@@ -646,7 +663,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       await Promise.all([fetchKOReader(), fetchKOReaderAccounts(), fetchKOReaderDevices()]);
     } catch (error) {
       console.error(error);
-      if (isAxiosError(error) && error.response?.status === 422) {
+      if (isAxiosError(error) && error.response?.status === 409) {
+        showToast(t('settings.toast.configChanged'), 'error');
+      } else if (isAxiosError(error) && error.response?.status === 422) {
         const nextValidation = error.response.data?.validation;
         if (nextValidation) setKOReaderValidation(nextValidation);
       }

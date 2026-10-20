@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -141,45 +140,16 @@ func (w *Watcher) run(events <-chan fsnotify.Event, errs <-chan error) {
 
 // reload 读盘、校验、比对、生效。任一环节不通过都保留当前内存配置。
 func (w *Watcher) reload() {
-	newCfg, err := LoadConfigFile(w.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// 编辑器「先 rename 走再写回」的中间态。保留当前配置，等写回后的事件再重载。
-			slog.Warn("Config file is temporarily missing, keeping the current configuration", "path", w.path)
-			return
-		}
-		slog.Error("Failed to reload config during hot-swap", "error", err)
+	if err := w.manager.Reload(w.path, w.apply, func() {
+		applied := w.manager.Snapshot()
+		slog.Info("Config hot-reload applied successfully",
+			"log_level", applied.Logging.Level,
+			"pool_size", applied.Scanner.ArchivePoolSize,
+			"ai_concurrency", applied.Scanner.MaxAiConcurrency)
+	}); err != nil {
+		slog.Error("Config hot-reload failed; keeping current configuration", "path", w.path, "error", err)
 		return
 	}
-
-	// 只跑纯值域校验（契约见 Watcher 类型注释）。不通过就整份拒绝：坏值会被下游在使用点实时读到，
-	// 比如 thumbnail_format="gif" 会让缩略图立刻开始写出无法解码的文件。
-	if result := ValidateConfigValues(newCfg); !result.Valid {
-		slog.Error("Config hot-reload rejected by validation, keeping the current configuration",
-			"path", w.path,
-			"issues", FormatValidationIssues(result.Issues),
-			"hint", "hot-reload stays disabled until these are fixed; the running process keeps its previous configuration")
-		return
-	}
-
-	current := w.manager.Snapshot()
-	if configsEqual(newCfg, &current) {
-		// 设置页保存走的也是 AtomicWriteFile，必然回弹一次事件。内容没变就不必重建派生资源
-		// （重建会重开归档句柄池、重设 images 信号量），否则每次 UI 保存都白折腾一次。
-		return
-	}
-
-	w.manager.Replace(newCfg)
-	applied := w.manager.Snapshot()
-	if w.apply != nil {
-		if err := w.apply(&applied); err != nil {
-			slog.Error("Failed to apply runtime config during hot-swap", "error", err)
-		}
-	}
-	slog.Info("Config hot-reload applied successfully",
-		"log_level", applied.Logging.Level,
-		"pool_size", applied.Scanner.ArchivePoolSize,
-		"ai_concurrency", applied.Scanner.MaxAiConcurrency)
 }
 
 // configsEqual 按 YAML 序列化结果比较两份配置。
