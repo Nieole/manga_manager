@@ -2,9 +2,20 @@ package relocation
 
 import (
 	"context"
+	"strconv"
 
 	"manga-manager/internal/config"
 )
+
+type PolicyFacts struct {
+	StorageProfile  string                        `json:"storage_profile"`
+	IOPolicy        config.StorageIOPolicy        `json:"io_policy"`
+	StoragePolicies []config.LibraryStoragePolicy `json:"storage_policies"`
+}
+
+func policyFacts(cfg config.Config) PolicyFacts {
+	return PolicyFacts{StorageProfile: cfg.Library.StorageProfile, IOPolicy: cfg.Library.IOPolicy, StoragePolicies: cfg.Library.StoragePolicies}
+}
 
 func samePolicy(a, b config.LibraryStoragePolicy) bool {
 	return a.StorageProfile == b.StorageProfile && a.IOPolicy == b.IOPolicy
@@ -76,22 +87,49 @@ UNION SELECT library_id,path FROM books WHERE library_id<>?`, plan.LibraryID, pl
 		path string
 	}
 	changes := []affected{}
-	for rows.Next() {
-		var item affected
-		if err = rows.Scan(&item.id, &item.path); err != nil {
-			rows.Close()
-			return err
+	seen := map[string]bool{}
+	consider := func(item affected) {
+		key := strconv.FormatInt(item.id, 10) + ":" + pathKey(item.path)
+		if seen[key] {
+			return
 		}
+		seen[key] = true
 		old := config.ResolveStoragePolicy(cfg, item.path)
 		next := config.ResolveStoragePolicy(after, item.path)
 		if old.StorageProfile != next.StorageProfile || old.IOPolicy != next.IOPolicy {
 			changes = append(changes, item)
 		}
 	}
+	for rows.Next() {
+		var item affected
+		if err = rows.Scan(&item.id, &item.path); err != nil {
+			rows.Close()
+			return err
+		}
+		consider(item)
+	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return err
+	}
+	libraries, err := s.Store.ListLibraries(ctx)
+	if err != nil {
+		return err
+	}
+	boundaries := append(append([]config.LibraryStoragePolicy{}, cfg.Library.StoragePolicies...), after.Library.StoragePolicies...)
+	for _, library := range libraries {
+		if library.ID == plan.LibraryID {
+			continue
+		}
+		// Policy functions are piecewise constant. Root and each intersecting
+		// policy boundary cover even descendants which have no stored records.
+		consider(affected{id: library.ID, path: library.Path})
+		for _, policy := range boundaries {
+			if _, mapErr := MapPath(library.Path, library.Path, policy.Path); mapErr == nil {
+				consider(affected{id: library.ID, path: policy.Path})
+			}
+		}
 	}
 	for _, item := range changes {
 		if err = s.add(ctx, plan, RelocationDetail{Kind: "blocker", RecordType: "library", RecordID: item.id, TargetPath: item.path, Reason: "policy_affects_other_library"}); err != nil {

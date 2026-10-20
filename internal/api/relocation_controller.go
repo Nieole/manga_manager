@@ -59,7 +59,7 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_check_queued", "error": "A relocation check is already queued"})
 		return
 	}
-	if err = c.relocation.SetRun(r.Context(), plan.ID, launched.Run.ID); err != nil {
+	if err = c.relocation.SetRun(context.WithoutCancel(r.Context()), plan.ID, launched.Run.ID); err != nil {
 		writeRelocationError(w, err)
 		return
 	}

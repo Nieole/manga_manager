@@ -19,8 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
@@ -403,6 +401,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		slog.Error("Failed to initialize relocation plans", "error", err)
 	}
 
+	c.config.SetAfterUpdate(c.configUpdated)
 	return c
 }
 
@@ -580,40 +579,24 @@ func validateOutboundLLMTarget(baseURL, endpoint string) error {
 }
 
 func (c *Controller) persistConfig(cfg *config.Config) error {
+	expected := c.currentConfig()
+	return c.persistConfigExpected(&expected, cfg)
+}
+
+func (c *Controller) persistConfigExpected(expected, cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	config.NormalizeConfig(cfg)
+	return c.config.Save(c.configPath, expected, func(next *config.Config) error {
+		*next = config.CloneConfig(*cfg)
+		return nil
+	}, runtimecfg.Apply, nil)
+}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(cfg.Cache.Dir, 0o755); err != nil {
-		return err
-	}
-
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	// 原子写：避免保存过程中崩溃留下半截 config.yaml 导致下次启动解析失败。
-	// 权限用 ConfigFilePerm(0600)：这条路径写的是 RestoreMaskedSecrets 回填后的**真实**密钥，
-	// 是明文 api_key 真正落盘的地方（首次生成时配置里还没有密钥）。
-	if err := config.AtomicWriteFile(c.configPath, data, config.ConfigFilePerm); err != nil {
-		return err
-	}
-	c.config.Replace(cfg)
-	// 与文件热重载走同一条 runtimecfg.Apply：重建 parser 池 / images 处理器并设置日志级别，使经 UI 保存的
-	// archive_pool_size / max_ai_concurrency 立即生效，不依赖文件监听回环（监听器失效时也能生效）。
-	if err := runtimecfg.Apply(cfg); err != nil {
-		return err
-	}
-	// 并发上限也在这份配置里，而它是**现读**的：调小无须做什么（在跑的不打断，占用自然降下来），
-	// 调大则要催一次队列放行——此刻没有任何运行收尾，队列却已经可以往前走。
+func (c *Controller) configUpdated() {
 	if c.taskEngine != nil {
 		c.taskEngine.releaseQueued()
 	}
-	return nil
 }
 
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {

@@ -1315,6 +1315,7 @@ export const messages: MessageCatalog = {
     'settings.toast.fetchFailed': 'Failed to load system settings',
     'settings.toast.configSaved': 'Configuration saved',
     'settings.toast.configInvalid': 'Configuration validation failed. Fix the highlighted fields first.',
+    'settings.toast.configChanged': 'Configuration changed elsewhere. Reload the page, review your changes, and save again.',
     'settings.toast.configSaveFailed': 'Save failed. Check configuration values and file permissions.',
     'settings.toast.actionFailed': 'Action failed. Please try again later.',
     'settings.toast.llmTestSucceeded': 'LLM connectivity test succeeded',

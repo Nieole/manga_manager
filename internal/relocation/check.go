@@ -3,7 +3,6 @@ package relocation
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -115,34 +114,37 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 			}
 		}
 	}
-	series, err := s.Store.ListSeriesByLibraryLite(ctx, plan.LibraryID)
-	if err != nil {
+	if err = s.Store.DB().QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM series WHERE library_id=?),(SELECT COUNT(*) FROM books WHERE library_id=?)`, plan.LibraryID, plan.LibraryID).Scan(&plan.SeriesCount, &plan.BookCount); err != nil {
 		return err
 	}
-	books, err := s.Store.ListBooksByLibrary(ctx, plan.LibraryID)
-	if err != nil {
-		return err
-	}
-	plan.SeriesCount, plan.BookCount = len(series), len(books)
 	seen := map[string]int64{}
+	occupied, err := s.occupancy(ctx)
+	if err != nil {
+		return err
+	}
 	facts := sha256.New()
 	_, _ = fmt.Fprintf(facts, "%d\n%s\n%s\n%s\n", plan.LibraryID, plan.LibraryRoot, plan.SourceRoot, plan.TargetRoot)
-	for _, item := range series {
+	err = s.walkRecords(ctx, plan.LibraryID, "series", func(item storedRecord) error {
 		if err = handle.Checkpoint(ctx); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(facts, "series:%d:%s:%s\n", item.ID, item.Path, item.UpdatedAt)
-		if _, err = s.mapRecord(ctx, &plan, "series", item.ID, item.Path, 0, seen); err != nil {
+		_, _ = fmt.Fprintf(facts, "series:%d:%s:%s\n", item.ID, item.Path, item.ChangedAt)
+		if _, err = s.mapRecord(ctx, &plan, "series", item.ID, item.Path, 0, seen, occupied); err != nil {
 			return err
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	handle.Phase("files", "task.msg.relocation.checking", nil)
-	for i, item := range books {
+	processed := 0
+	err = s.walkRecords(ctx, plan.LibraryID, "book", func(item storedRecord) error {
 		if err = handle.Checkpoint(ctx); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(facts, "book:%d:%s:%d:%s\n", item.ID, item.Path, item.Size, item.FileModifiedAt)
-		mapped, mapErr := s.mapRecord(ctx, &plan, "book", item.ID, item.Path, item.Size, seen)
+		_, _ = fmt.Fprintf(facts, "book:%d:%s:%d:%s\n", item.ID, item.Path, item.Size, item.ChangedAt)
+		mapped, mapErr := s.mapRecord(ctx, &plan, "book", item.ID, item.Path, item.Size, seen, occupied)
 		if mapErr != nil {
 			return mapErr
 		}
@@ -181,14 +183,22 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 				}
 			}
 		}
-		handle.Advance(i+1, len(books), "task.msg.relocation.checking", nil)
+		processed++
+		handle.Advance(processed, plan.BookCount, "task.msg.relocation.checking", nil)
+		if processed%100 == 0 {
+			return s.save(ctx, plan)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	handle.Phase("policies", "task.msg.relocation.checking", nil)
 	cfg := s.Config.Snapshot()
 	if err = s.checkPolicies(ctx, &plan, cfg); err != nil {
 		return err
 	}
-	policies, err := json.Marshal(cfg.Library.StoragePolicies)
+	policies, err := json.Marshal(policyFacts(cfg))
 	if err != nil {
 		return err
 	}
@@ -201,7 +211,52 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	return nil
 }
 
-func (s *Service) mapRecord(ctx context.Context, plan *RelocationPlan, kind string, id int64, path string, size int64, seen map[string]int64) (string, error) {
+type storedRecord struct {
+	ID        int64
+	Path      string
+	Size      int64
+	ChangedAt string
+}
+
+func (s *Service) walkRecords(ctx context.Context, libraryID int64, kind string, visit func(storedRecord) error) error {
+	table, size := "series", "0"
+	if kind == "book" {
+		table, size = "books", "size"
+	}
+	var last int64
+	for {
+		query := fmt.Sprintf("SELECT id,path,%s,CAST(updated_at AS TEXT) FROM %s WHERE library_id=? AND id>? ORDER BY id LIMIT 100", size, table)
+		rows, err := s.Store.DB().QueryContext(ctx, query, libraryID, last)
+		if err != nil {
+			return err
+		}
+		batch := make([]storedRecord, 0, 100)
+		for rows.Next() {
+			var item storedRecord
+			if err = rows.Scan(&item.ID, &item.Path, &item.Size, &item.ChangedAt); err != nil {
+				rows.Close()
+				return err
+			}
+			batch = append(batch, item)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		for _, item := range batch {
+			if err = visit(item); err != nil {
+				return err
+			}
+			last = item.ID
+		}
+	}
+}
+
+func (s *Service) mapRecord(ctx context.Context, plan *RelocationPlan, kind string, id int64, path string, size int64, seen map[string]int64, occupied map[string][]int64) (string, error) {
 	mapped, err := MapPath(plan.SourceRoot, plan.TargetRoot, path)
 	if err != nil {
 		return "", s.add(ctx, plan, RelocationDetail{Kind: "blocker", RecordType: kind, RecordID: id, SourcePath: path, Reason: "outside_source_root"})
@@ -218,25 +273,42 @@ func (s *Service) mapRecord(ctx context.Context, plan *RelocationPlan, kind stri
 		}
 	}
 	seen[canonical] = id
-	table := "series"
-	if kind == "book" {
-		table = "books"
-	}
-	expression, key := "rtrim(path,'/')", strings.TrimRight(filepath.Clean(mapped), "/")
-	if runtime.GOOS == "windows" {
-		expression = `lower(replace(rtrim(path,'/\'),'\','/'))`
-		key = strings.ToLower(strings.TrimRight(filepath.ToSlash(filepath.Clean(mapped)), "/"))
-	}
-	var occupiedID int64
-	query := fmt.Sprintf("SELECT id FROM %s WHERE %s=? AND id<>? LIMIT 1", table, expression)
-	conflictErr := s.Store.DB().QueryRowContext(ctx, query, key, id).Scan(&occupiedID)
-	if conflictErr == nil {
-		detail.Kind, detail.Reason = "blocker", "record_occupied"
-		if err = s.add(ctx, plan, detail); err != nil {
-			return "", err
+	for _, occupiedID := range occupied[canonical] {
+		if occupiedID != id {
+			detail.Kind, detail.Reason = "blocker", "record_occupied"
+			if err = s.add(ctx, plan, detail); err != nil {
+				return "", err
+			}
+			break
 		}
-	} else if !errors.Is(conflictErr, sql.ErrNoRows) {
-		return "", conflictErr
+	}
+	for _, libraryID := range occupied["library:"+pathKey(mapped)] {
+		if libraryID != plan.LibraryID {
+			detail.Kind, detail.Reason = "blocker", "library_occupied"
+			if err = s.add(ctx, plan, detail); err != nil {
+				return "", err
+			}
+			break
+		}
 	}
 	return mapped, nil
+}
+
+func (s *Service) occupancy(ctx context.Context) (map[string][]int64, error) {
+	rows, err := s.Store.DB().QueryContext(ctx, `SELECT 'series',id,path FROM series UNION ALL SELECT 'book',id,path FROM books UNION ALL SELECT 'library',id,path FROM libraries`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[string][]int64{}
+	for rows.Next() {
+		var kind, path string
+		var id int64
+		if err = rows.Scan(&kind, &id, &path); err != nil {
+			return nil, err
+		}
+		key := kind + ":" + pathKey(path)
+		result[key] = append(result[key], id)
+	}
+	return result, rows.Err()
 }
