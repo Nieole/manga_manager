@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiClient, isAxiosError } from '../../api/client';
-import type { RelocationDetail, RelocationDetails, RelocationPlan, RelocationPolicy, RunLive, RunSnapshot } from '../../api/generated';
+import type { RelocationOperation, RelocationDetail, RelocationDetails, RelocationPlan, RelocationPolicy, RunLive, RunSnapshot } from '../../api/generated';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { ModalShell } from '../ui/ModalShell';
 import { modalGhostButtonClass, modalPrimaryButtonClass, modalSectionClass } from '../ui/modalStyles';
@@ -10,6 +10,8 @@ import { useDirectoryBrowser } from './useDirectoryBrowser';
 interface Props {
   library: { id: number; name: string; path: string };
   planID?: number;
+  initialTarget?: string;
+  onCompleted?: () => void;
   onClose: () => void;
 }
 
@@ -38,11 +40,15 @@ function PolicyPreview({ policy, title, description }: { policy: RelocationPolic
   </section>;
 }
 
-export function RelocationModal({ library, planID, onClose }: Props) {
+export function RelocationModal({ library, planID, initialTarget, onCompleted, onClose }: Props) {
   const { t } = useI18n();
   const browser = useDirectoryBrowser();
-  const [target, setTarget] = useState('');
+  const [target, setTarget] = useState(initialTarget || '');
   const [plan, setPlan] = useState<RelocationPlan | null>(null);
+  const [needsRecheck, setNeedsRecheck] = useState(false);
+  const completedCallback = useRef(onCompleted);
+  useEffect(() => { completedCallback.current = onCompleted; }, [onCompleted]);
+  const [operation, setOperation] = useState<RelocationOperation | null>(null);
   const [run, setRun] = useState<RunSnapshot | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -57,6 +63,8 @@ export function RelocationModal({ library, planID, onClose }: Props) {
   const id = plan?.id;
   const runID = plan?.run_id;
   const status = plan?.status;
+  const committing = operation?.status === 'pending' || operation?.status === 'paths_committed';
+  const canCommit = plan?.status === 'checked' && !plan.blocker_count && !plan.anomaly_count && !plan.policy_count && !operation && !plan?.operation_id && !needsRecheck;
   const busy = plan?.status === 'pending' || plan?.status === 'checking';
 
   useEffect(() => {
@@ -65,12 +73,12 @@ export function RelocationModal({ library, planID, onClose }: Props) {
     apiClient.get<RelocationPlan>(url).then(({ data }) => {
       if (!active) return;
       if (data.library_id !== library.id) { setError('relocation.loadError'); return; }
-      setPlan(data); setTarget(data.target_root);
+      setPlan(data); if (!initialTarget) setTarget(data.target_root);
     }).catch((err: unknown) => {
       if (active && (planID || !(isAxiosError(err) && err.response?.status === 404))) setError('relocation.loadError');
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [library.id, planID]);
+  }, [library.id, planID, initialTarget]);
 
   useEffect(() => {
     if (!busy || !id) return;
@@ -103,11 +111,44 @@ export function RelocationModal({ library, planID, onClose }: Props) {
     return () => { active = false; };
   }, [id, status, kind, offset, detailsRetry]);
 
+  const operationID = operation?.id || plan?.operation_id;
+  const operationStatus = operation?.status;
+  useEffect(() => {
+    if (!operationID || (operationStatus && operationStatus !== 'pending' && operationStatus !== 'paths_committed')) return;
+    let active = true;
+    let timer: number | undefined;
+    const refresh = async () => {
+      try {
+        const { data } = await apiClient.get<RelocationOperation>(`/api/relocation-operations/${operationID}`);
+        if (!active) return;
+        setOperation(data);
+        if (data.status === 'pending' || data.status === 'paths_committed') timer = window.setTimeout(refresh, 1000);
+        else if (data.status === 'completed') completedCallback.current?.();
+      } catch { if (active) setError('relocation.operationLoadError'); }
+    };
+    void refresh();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [operationID, operationStatus]);
+
+  const commit = async () => {
+    if (!plan || target !== plan.target_root) return;
+    setSubmitting(true); setError('');
+    try {
+      const { data } = await apiClient.post<RelocationOperation>(`/api/relocation-plans/${plan.id}/commit`, {});
+      setOperation(data);
+      if (data.status === 'completed') onCompleted?.();
+    } catch (err: unknown) {
+      const code = isAxiosError(err) ? err.response?.data?.code : '';
+      setNeedsRecheck(Boolean(code));
+      setError(code ? `relocation.commitError.${code}` : 'relocation.commitError.generic');
+    } finally { setSubmitting(false); }
+  };
+
   const check = async () => {
     setSubmitting(true); setError(''); setCancelling(false);
     try {
       const { data } = await apiClient.post<RelocationPlan>(`/api/libraries/${library.id}/relocation-plans`, { target_root: target });
-      setPlan(data); setOffset(0); setPage(null); setRun(null);
+      setPlan(data); setOperation(null); setNeedsRecheck(false); setOffset(0); setPage(null); setRun(null);
     } catch { setError('relocation.checkError'); }
     finally { setSubmitting(false); }
   };
@@ -137,27 +178,34 @@ export function RelocationModal({ library, planID, onClose }: Props) {
   return <ModalShell open onClose={onClose} title={t('relocation.title')} description={t('relocation.description')} size="standard"
     footer={<><button type="button" className={modalGhostButtonClass} onClick={onClose}>{t('relocation.close')}</button>
       {busy ? <button type="button" className={modalGhostButtonClass} disabled={cancelling || run?.can_cancel === false} onClick={cancel}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCheck')}</button>
-        : <button type="button" className={modalPrimaryButtonClass} disabled={!target || submitting || loading} onClick={check}>{t('relocation.check')}</button>}</>}>
+        : <>{!committing && <button type="button" className={modalGhostButtonClass} disabled={!target || submitting || loading} onClick={check}>{t('relocation.check')}</button>}{canCommit && <button type="button" className={modalPrimaryButtonClass} disabled={target !== plan.target_root || submitting || loading} onClick={commit}>{t('relocation.commit')}</button>}</>}</>}>
     <div className="space-y-5 text-gray-300">
       {loading && <p role="status">{t('common.loading')}</p>}
       <div className={modalSectionClass}><p className="font-medium text-white">{library.name}</p>
         <p className="mt-3 text-xs text-gray-400">{t('relocation.source')}</p><p className="break-all text-sm">{plan?.source_root || library.path}</p>
         <p className="mt-3 text-xs text-gray-400">{t('relocation.target')}</p>
-        <fieldset disabled={busy || submitting || loading} className="mt-2"><DirectoryPicker value={target} onChange={setTarget} recentPaths={[]}
+        <fieldset disabled={busy || committing || submitting || loading} className="mt-2"><DirectoryPicker value={target} onChange={setTarget} recentPaths={[]}
           browsing={browser.browsing} browseCurrent={browser.browseCurrent} browseParent={browser.browseParent} browseDirs={browser.browseDirs} browseDrives={browser.browseDrives}
           onOpen={browser.openDirectoryBrowser} onClose={() => browser.setBrowsing(false)} onNavigate={browser.navigateDirectoryBrowser}
           onChooseCurrent={() => { setTarget(browser.browseCurrent); browser.setBrowsing(false); }} /></fieldset>
         <p className="mt-3 text-xs text-gray-400">{t('relocation.scopeHint')}</p>
       </div>
-      {error && <p role="alert" className="text-red-300">{t(error)}</p>}
+      {error && <p role="alert" className="text-red-300">{t(error, undefined, t('relocation.commitError.generic'))}</p>}
       {plan && <>
         <section className={modalSectionClass} aria-live="polite">
           <p className="font-medium text-white">{t(`relocation.status.${plan.status}`)}</p>
           <p className="mt-2 text-sm">{t('relocation.counts', { series: plan.series_count, books: plan.book_count, policies: plan.policy_count })}</p>
           {run && <p className="mt-2 text-sm">{t(`settings.maintenance.taskPhase.${run.phase || 'roots'}`)} · {run.current}/{run.total}</p>}
-          {plan.status === 'checked' && <p className="mt-2 text-sm text-amber-200">{t('relocation.checkedHint')}</p>}
+          {plan.status === 'checked' && !operation && <p className="mt-2 text-sm text-amber-200">{t('relocation.checkedHint')}</p>}
           <a className="mt-3 inline-block text-sm text-komgaPrimary hover:underline" href="/ops?tab=tasks">{t('relocation.taskCenter')}</a>
         </section>
+        {operation && <section className={modalSectionClass} aria-live="polite">
+          <p className="font-medium text-white">{t(`relocation.operation.${operation.status}`)}</p>
+          <p className="mt-2 text-sm">{t('relocation.operationCounts', { series: operation.series_count, books: operation.book_count })}</p>
+          {operation.code && <p className="mt-2 text-amber-200">{t(`relocation.commitError.${operation.code}`, undefined, t('relocation.commitError.generic'))}</p>}
+          {committing && <p className="mt-2 text-sm">{t('relocation.noCancelCommit')}</p>}
+          {operation.status === 'completed' && <p className="mt-2 text-sm">{t('relocation.completedHint')}</p>}
+        </section>}
         {plan.samples.length > 0 && <section className={modalSectionClass}><h3>{t('relocation.examples')}</h3><ul>{plan.samples.map(detailRow)}</ul></section>}
         <section className={modalSectionClass}>
           <div className="flex flex-wrap gap-2" role="tablist">{[['blocker', 'blockers', plan.blocker_count], ['anomaly', 'anomalies', plan.anomaly_count], ['policy', 'policies', plan.policy_count], ['mapping', 'mappings', plan.series_count + plan.book_count]].map(([value, label, count]) =>
