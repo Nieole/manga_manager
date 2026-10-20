@@ -29,6 +29,7 @@ type RelocationOperation struct {
 }
 
 var ErrPlanNotReady = errors.New("relocation_plan_not_ready")
+var ErrStalePlan = errors.New("relocation_stale_plan")
 
 type commitAccess struct {
 	mu       sync.Mutex
@@ -38,14 +39,16 @@ type commitAccess struct {
 func (s *Service) Operation(ctx context.Context, id int64) (RelocationOperation, error) {
 	var op RelocationOperation
 	var data string
-	err := s.Store.DB().QueryRowContext(ctx, `SELECT id,plan_id,library_id,run_id,status,result FROM relocation_operations WHERE id=?`, id).Scan(&op.ID, &op.PlanID, &op.LibraryID, &op.RunID, &op.Status, &data)
+	var runID int64
+	var status string
+	err := s.Store.DB().QueryRowContext(ctx, `SELECT run_id,status,result FROM relocation_operations WHERE id=?`, id).Scan(&runID, &status, &data)
 	if err != nil {
 		return op, err
 	}
 	if err = json.Unmarshal([]byte(data), &op); err != nil {
 		return op, err
 	}
-	err = s.Store.DB().QueryRowContext(ctx, `SELECT run_id,status FROM relocation_operations WHERE id=?`, id).Scan(&op.RunID, &op.Status)
+	op.ID, op.RunID, op.Status = id, runID, status
 	return op, err
 }
 
@@ -84,6 +87,10 @@ func (s *Service) Prepare(ctx context.Context, planID int64) (RelocationOperatio
 		return op, false, err
 	}
 	op.ID = existing
+	if n == 0 {
+		existingOp, e := s.Operation(ctx, existing)
+		return existingOp, false, e
+	}
 	if err = s.saveOperation(ctx, op); err != nil {
 		return op, false, err
 	}
@@ -134,17 +141,42 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		if plan.Status != "checked" {
 			return ErrPlanNotReady
 		}
+		inspection := &Service{Store: s.Store, Config: config.NewManager(&cfg), Files: s.Files, transient: true}
+		if e = inspection.Check(ctx, plan.ID, handle, nil); e != nil {
+			return e
+		}
+		if inspection.evaluated.FactsDigest != plan.FactsDigest || inspection.evaluated.BlockerCount != 0 {
+			return ErrStalePlan
+		}
+		if e = handle.DisableCancellation(); e != nil {
+			return e
+		}
+		if e = ctx.Err(); e != nil {
+			return e
+		}
+		handle.Phase("commit", "task.msg.relocation.committing", nil)
 		tx, e := s.Store.DB().BeginTx(ctx, nil)
 		if e != nil {
 			return e
 		}
 		defer tx.Rollback()
+		if _, e = tx.ExecContext(ctx, `UPDATE relocation_plans SET status=status WHERE id=? AND status='checked'`, plan.ID); e != nil {
+			return e
+		}
+		inspection.db = tx
+		if e = inspection.Check(ctx, plan.ID, handle, nil); e != nil {
+			return e
+		}
+		checked := inspection.evaluated
+		if checked.FactsDigest != plan.FactsDigest || checked.BlockerCount != 0 || checked.AnomalyCount != 0 || checked.PolicyCount != 0 {
+			return ErrStalePlan
+		}
 		for _, kind := range []string{"series", "book"} {
 			table := "series"
 			if kind == "book" {
 				table = "books"
 			}
-			e = s.walkRecords(ctx, op.LibraryID, kind, func(item storedRecord) error {
+			e = inspection.walkRecords(ctx, op.LibraryID, kind, func(item storedRecord) error {
 				mapped, mapErr := MapPath(op.SourceRoot, op.TargetRoot, item.Path)
 				if mapErr != nil {
 					return mapErr
@@ -172,6 +204,13 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 	if err != nil {
 		op.Status = "failed"
 		op.Code = "relocation_commit_failed"
+		if errors.Is(err, context.Canceled) {
+			op.Status = "cancelled"
+			op.Code = "relocation_not_committed"
+		}
+		if errors.Is(err, ErrStalePlan) {
+			op.Code = "relocation_stale_plan"
+		}
 		_ = s.saveOperation(context.WithoutCancel(ctx), op)
 		return err
 	}
@@ -200,6 +239,66 @@ func (s *Service) finish(ctx context.Context, op RelocationOperation) error {
 	s.access.mu.Unlock()
 	if release != nil {
 		release()
+	}
+	return nil
+}
+
+// Recover reserves every unfinished committed library before replaying effects.
+// It never reapplies path mappings or restarts an uncommitted confirmation.
+func (s *Service) Recover(ctx context.Context) error {
+	if err := s.Initialize(ctx); err != nil {
+		return err
+	}
+	rows, err := s.Store.DB().QueryContext(ctx, `SELECT id FROM relocation_operations WHERE status IN ('pending','paths_committed') ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	var committed []RelocationOperation
+	for _, id := range ids {
+		op, e := s.Operation(ctx, id)
+		if e != nil {
+			return e
+		}
+		if op.Status == "pending" {
+			op.Status = "interrupted"
+			op.Code = "relocation_not_committed"
+			if e = s.saveOperation(ctx, op); e != nil {
+				return e
+			}
+			continue
+		}
+		s.access.mu.Lock()
+		_, owned := s.access.releases[id]
+		s.access.mu.Unlock()
+		if !owned {
+			release, e := s.Acquire(ctx, op.LibraryID)
+			if e != nil {
+				return e
+			}
+			s.access.mu.Lock()
+			s.access.releases[id] = release
+			s.access.mu.Unlock()
+		}
+		committed = append(committed, op)
+	}
+	for _, op := range committed {
+		// finish persists an actionable recovery code and keeps the reservation
+		// on an external effect failure; unrelated libraries remain available.
+		_ = s.finish(ctx, op)
 	}
 	return nil
 }

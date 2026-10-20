@@ -373,8 +373,9 @@ func (e *Engine) Handle(runID int64) (*runhandle.Handle, bool) {
 // 由谁拿到句柄决定」这条结构约束重新打开。
 func (e *Engine) newHandle(runID int64) *runhandle.Handle {
 	return runhandle.New(runhandle.Writes{
-		Report:      func(frame runhandle.Frame) { e.report(runID, frame) },
-		MergeParams: func(args map[string]string) { e.mergeArgs(runID, args) },
+		Report:              func(frame runhandle.Frame) { e.report(runID, frame) },
+		DisableCancellation: func() error { return e.disableCancellation(runID) },
+		MergeParams:         func(args map[string]string) { e.mergeArgs(runID, args) },
 		AddMetrics: func(increments map[string]int64, args map[string]string) {
 			e.addMetrics(runID, increments, args)
 		},

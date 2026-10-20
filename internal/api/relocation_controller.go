@@ -33,7 +33,7 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 	}
 	if created {
 		launched, startErr := c.taskEngine.start(libraryTask("relocation_commit", op.LibraryID, variantSole), task.TriggerManual, RunSpec{
-			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: "", CanCancel: false,
+			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: "", CanCancel: true,
 			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.failed",
 			Labels: map[string]string{"plan_id": strconv.FormatInt(id, 10), "operation_id": strconv.FormatInt(op.ID, 10)},
 		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {

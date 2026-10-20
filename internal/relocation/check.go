@@ -47,6 +47,12 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	if err != nil {
 		return err
 	}
+	if err = s.dbtx().QueryRowContext(ctx, `SELECT path FROM libraries WHERE id=?`, plan.LibraryID).Scan(&plan.LibraryRoot); err != nil {
+		return err
+	}
+	plan.SeriesCount, plan.BookCount, plan.BlockerCount, plan.AnomalyCount, plan.PolicyCount = 0, 0, 0, 0, 0
+	plan.AnomalyCounts = map[string]int{}
+	plan.Samples = []RelocationDetail{}
 	plan.Status = "checking"
 	if err = s.save(ctx, plan); err != nil {
 		return err
@@ -68,7 +74,9 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 			return err
 		}
 	}
-	handle.Phase("roots", "task.msg.relocation.checking", nil)
+	if !s.transient {
+		handle.Phase("roots", "task.msg.relocation.checking", nil)
+	}
 	validTarget := true
 	if !filepath.IsAbs(plan.SourceRoot) || !filepath.IsAbs(plan.TargetRoot) {
 		validTarget = false
@@ -103,7 +111,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 			}
 		}
 	}
-	libs, err := s.Store.ListLibraries(ctx)
+	libs, err := s.libraryPaths(ctx)
 	if err != nil {
 		return err
 	}
@@ -114,7 +122,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 			}
 		}
 	}
-	if err = s.Store.DB().QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM series WHERE library_id=?),(SELECT COUNT(*) FROM books WHERE library_id=?)`, plan.LibraryID, plan.LibraryID).Scan(&plan.SeriesCount, &plan.BookCount); err != nil {
+	if err = s.dbtx().QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM series WHERE library_id=?),(SELECT COUNT(*) FROM books WHERE library_id=?)`, plan.LibraryID, plan.LibraryID).Scan(&plan.SeriesCount, &plan.BookCount); err != nil {
 		return err
 	}
 	seen := map[string]recordRef{}
@@ -137,7 +145,9 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	if err != nil {
 		return err
 	}
-	handle.Phase("files", "task.msg.relocation.checking", nil)
+	if !s.transient {
+		handle.Phase("files", "task.msg.relocation.checking", nil)
+	}
 	processed := 0
 	err = s.walkRecords(ctx, plan.LibraryID, "book", func(item storedRecord) error {
 		if err = handle.Checkpoint(ctx); err != nil {
@@ -184,7 +194,9 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 			}
 		}
 		processed++
-		handle.Advance(processed, plan.BookCount, "task.msg.relocation.checking", nil)
+		if !s.transient {
+			handle.Advance(processed, plan.BookCount, "task.msg.relocation.checking", nil)
+		}
 		if processed%100 == 0 {
 			return s.save(ctx, plan)
 		}
@@ -193,7 +205,9 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	if err != nil {
 		return err
 	}
-	handle.Phase("policies", "task.msg.relocation.checking", nil)
+	if !s.transient {
+		handle.Phase("policies", "task.msg.relocation.checking", nil)
+	}
 	cfg := s.Config.Snapshot()
 	if err = s.checkPolicies(ctx, &plan, cfg); err != nil {
 		return err
@@ -206,7 +220,9 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	_, _ = facts.Write(policies)
 	plan.FactsDigest = hex.EncodeToString(facts.Sum(nil))
 	plan.Status = "checked"
-	handle.Phase("checked", "task.msg.relocation.checked", nil)
+	if !s.transient {
+		handle.Phase("checked", "task.msg.relocation.checked", nil)
+	}
 	slog.InfoContext(ctx, "Library relocation preview checked", "plan_id", plan.ID, "books", plan.BookCount, "blockers", plan.BlockerCount, "anomalies", plan.AnomalyCount)
 	return nil
 }
@@ -226,7 +242,7 @@ func (s *Service) walkRecords(ctx context.Context, libraryID int64, kind string,
 	var last int64
 	for {
 		query := fmt.Sprintf("SELECT id,path,%s,CAST(updated_at AS TEXT) FROM %s WHERE library_id=? AND id>? ORDER BY id LIMIT 100", size, table)
-		rows, err := s.Store.DB().QueryContext(ctx, query, libraryID, last)
+		rows, err := s.dbtx().QueryContext(ctx, query, libraryID, last)
 		if err != nil {
 			return err
 		}
@@ -305,7 +321,7 @@ func (s *Service) mapRecord(ctx context.Context, plan *RelocationPlan, kind stri
 }
 
 func (s *Service) occupancy(ctx context.Context) (map[string][]int64, error) {
-	rows, err := s.Store.DB().QueryContext(ctx, `SELECT 'series',id,path FROM series UNION ALL SELECT 'book',id,path FROM books UNION ALL SELECT 'library',id,path FROM libraries`)
+	rows, err := s.dbtx().QueryContext(ctx, `SELECT 'series',id,path FROM series UNION ALL SELECT 'book',id,path FROM books UNION ALL SELECT 'library',id,path FROM libraries`)
 	if err != nil {
 		return nil, err
 	}

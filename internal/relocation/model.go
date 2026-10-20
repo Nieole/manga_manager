@@ -41,6 +41,8 @@ type RelocationPlan struct {
 	SourceRoot    string             `json:"source_root"`
 	TargetRoot    string             `json:"target_root"`
 	RunID         int64              `json:"run_id"`
+	OperationID   int64              `json:"operation_id,omitempty"`
+	CommitRunID   int64              `json:"commit_run_id,omitempty"`
 	Status        string             `json:"status"`
 	SeriesCount   int                `json:"series_count"`
 	BookCount     int                `json:"book_count"`

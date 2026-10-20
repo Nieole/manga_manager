@@ -272,6 +272,7 @@ func TestNoReadEndpointLeaksHostPath(t *testing.T) {
 		"{progressId}", "1", "{bookmarkId}", "1", "{sessionId}", "s",
 		"{runID}", "1",
 		"{planId}", "1",
+		"{operationId}", "1",
 		"/*", "/x",
 	)
 

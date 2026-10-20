@@ -228,6 +228,17 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "Library not found")
 		return
 	}
+	if !sameNativePath(existingLib.Path, req.Path) {
+		var populated bool
+		if err = c.store.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM series WHERE library_id=?) OR EXISTS(SELECT 1 FROM books WHERE library_id=?)`, libraryID, libraryID).Scan(&populated); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Unable to inspect library")
+			return
+		}
+		if populated {
+			jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_required", "error": "Use library path relocation to preserve existing records"})
+			return
+		}
+	}
 
 	if req.ScanInterval <= 0 {
 		req.ScanInterval = config.DefaultScanInterval

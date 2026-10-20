@@ -400,7 +400,10 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.relocation.Acquire = c.acquireLibraryExclusive
 	c.relocation.Effects = c.relocationEffects
 	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
-		slog.Error("Failed to initialize relocation plans", "error", err)
+		panic(fmt.Errorf("initialize relocation plans: %w", err))
+	}
+	if err := c.relocation.Recover(context.Background()); err != nil {
+		panic(fmt.Errorf("recover library relocation: %w", err))
 	}
 
 	c.config.SetAfterUpdate(c.configUpdated)
