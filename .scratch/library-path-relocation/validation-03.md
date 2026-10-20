@@ -16,4 +16,10 @@ Windows 沙盒组件尚待系统重启生效；用户选择稍后重启。按当
 - 已用 Python 内存 SQLite 执行源文件中的实际触发器与绑定 SQL，验证取消、失败、既有 `checked` 保留、终态清历史后绑定、无关任务不更新以及缺失绑定拒绝。此项不替代生产 Go / modernc SQLite 回归。
 - 本轮仅运行已安装的 `gofmt` 处理格式，不生成或执行测试程序。
 
+## 前端验证
+
+完整策略对比交互先在缺少前后策略卡片的界面上失败，再在实现后通过。对同为 `custom` 的策略，断言四项不同并发值与三个不同开关均可见，避免仅显示档位掩盖真实差异。
+
+合并后的前端门禁均通过：`npm run lint` 无警告，`npm run test` 为 78 个文件、832 项测试通过，`npm run build` 成功。`gofmt -l ./cmd ./internal` 与 `git diff --check` 输出为空。
+
 重启后的待执行门禁：Go 全量测试、03 HTTP 回归与 race、golangci-lint、tsgen 生成及漂移核对。策略 UI 的实拍更新也待补；已有截图版本见 `screenshots/README.md`。
