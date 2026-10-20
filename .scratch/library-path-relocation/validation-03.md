@@ -27,7 +27,7 @@
 
 - `go test -race ./internal/api -run Relocation -count=1` 通过，覆盖本票新增的迁移预览、取消、清理历史、访问协调与旧路径失效场景。
 - Go 1.26.5 下完整 `golangci-lint run` 退出码 0，输出 `0 issues.`。
-- 完整 `go test -race ./...` 属于扩展验证；执行时 `cmd/server` 的测试程序被 Windows 智能应用控制阻止，不能宣称完整 race 通过。其他包的最终结果另行记录；此阻断不覆盖已经通过的普通全量及本票定向 race。
+- 扩展 `go test -race ./...` 首轮中，除 `cmd/server` 的程序被智能应用控制阻止外，全部测试包通过：API 457.9 秒、database 426.4 秒，其余包均通过。随后仅重试 `go test -race ./cmd/server`，6.2 秒通过。完整包集合的 race 验证已覆盖；首轮命令本身退出码仍为 1，未将其改记为成功。
 - 最新真实 UI 策略实拍见 `screenshots/preview-policy.png`；检查与结果展示保持只读，未提供迁移提交入口。
 
 验收证据对应 `internal/api/relocation_preview_test.go`、`internal/api/library_access_test.go`、`web/src/components/layout/RelocationModal.test.tsx` 与 `RelocationEntry.test.tsx`。服务端领域计划和分页明细持久化，不依赖运行历史；前后端权限、路径边界、跨类型占用、文件分类、完整 IO 策略、取消与关闭重开均有行为验证。
