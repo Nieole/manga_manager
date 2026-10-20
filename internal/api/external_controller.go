@@ -52,6 +52,11 @@ func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
+	release, ok := c.guardLibraryRead(w, libraryID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req externalLibrarySessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -119,6 +124,11 @@ func (c *Controller) getExternalLibrarySeries(w http.ResponseWriter, r *http.Req
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
+	release, ok := c.guardLibraryRead(w, libraryID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	sessionID := chi.URLParam(r, "sessionId")
 	if strings.TrimSpace(sessionID) == "" {
@@ -161,6 +171,12 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
+	release, ok := c.guardLibraryRead(w, libraryID)
+	if !ok {
+		return
+	}
+	defer release()
+
 	sessionID := chi.URLParam(r, "sessionId")
 	if strings.TrimSpace(sessionID) == "" {
 		jsonError(w, http.StatusBadRequest, "Missing session ID")
@@ -287,11 +303,12 @@ func (c *Controller) launchExternalLibraryScanTask(libraryID int64, sessionID st
 func (c *Controller) launchExternalLibraryTransferTask(libraryID int64, sessionID string, plan external.TransferPlan) error {
 	total := len(plan.Operations)
 	spec := RunSpec{
-		Key:       externalLibraryTransferTaskKey(libraryID, sessionID),
-		StartCode: "task.msg.transfer_external_library.start",
-		Total:     total,
-		CanCancel: true,
-		CanPause:  true,
+		ValidateAccess: func() error { _, err := c.external.GetSession(libraryID, sessionID); return err },
+		Key:            externalLibraryTransferTaskKey(libraryID, sessionID),
+		StartCode:      "task.msg.transfer_external_library.start",
+		Total:          total,
+		CanCancel:      true,
+		CanPause:       true,
 		Metadata: map[string]string{
 			"session_id":   sessionID,
 			"series_count": strconv.Itoa(plan.SeriesCount),

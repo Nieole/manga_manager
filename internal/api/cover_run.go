@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -95,8 +96,16 @@ func (c *Controller) dispatchCoverBatch(batch *scanner.CoverBatch) {
 	if err != nil {
 		slog.Warn("Failed to launch cover run, generating covers without one", "library_id", libraryID, "error", err)
 	}
+	if errors.Is(err, errLibraryUnavailable) {
+		c.coverRuns.withdraw(batch)
+		return
+	}
 	if c.coverRuns.withdraw(batch) {
-		c.runBackground(func() { _ = batch.Drain(context.Background(), nil) })
+		release, err := c.taskEngine.engine.AcquireLibraryRead(libraryID)
+		if err != nil {
+			return
+		}
+		c.runBackground(func() { defer release(); _ = batch.Drain(context.Background(), nil) })
 	}
 }
 

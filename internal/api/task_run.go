@@ -85,6 +85,7 @@ func seriesTask(taskType string, seriesID int64, variant TaskVariant) TaskIdenti
 // 整份声明必须原子落地。拆成启动之后的多次补写，会留下一个「任务已经出现在列表里、却还没有
 // 作用域名」的窗口——那是任务列表接口能观察到的，而补写的那几帧还会被首帧刚写下的节流水位吞掉。
 type RunSpec struct {
+	ValidateAccess func() error
 	// Key 是这个任务的**任务键**：日志与 URL 靠它给人辨认，也随运行一起落盘。
 	// 它由启动点自己拼，与身份的四项**不互相推导**——身份不从它反解，它也不由身份生成。
 	//
@@ -184,20 +185,28 @@ func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec Run
 	e.rememberIdentity(owner.ID, identity)
 
 	runSpec := task.RunSpec{
-		Identity:     identity.domain(),
-		Trigger:      trigger,
-		Key:          spec.Key,
-		ScopeName:    strings.TrimSpace(spec.ScopeName),
-		StartCode:    spec.StartCode,
-		StartParams:  spec.StartParams,
-		Total:        spec.Total,
-		CanCancel:    spec.CanCancel,
-		CanPause:     spec.CanPause,
-		Args:         spec.Metadata,
-		Labels:       spec.Labels,
-		CompleteCode: spec.CompleteCode,
-		CancelCode:   spec.CancelCode,
-		FailCode:     spec.FailCode,
+		Identity:       identity.domain(),
+		ValidateAccess: spec.ValidateAccess,
+		Trigger:        trigger,
+		Key:            spec.Key,
+		ScopeName:      strings.TrimSpace(spec.ScopeName),
+		StartCode:      spec.StartCode,
+		StartParams:    spec.StartParams,
+		Total:          spec.Total,
+		CanCancel:      spec.CanCancel,
+		CanPause:       spec.CanPause,
+		Args:           spec.Metadata,
+		Labels:         spec.Labels,
+		CompleteCode:   spec.CompleteCode,
+		CancelCode:     spec.CancelCode,
+		FailCode:       spec.FailCode,
+	}
+	if e.libraryIDs != nil {
+		ids, err := e.libraryIDs(ctx, identity)
+		if err != nil {
+			return task.Launched{}, err
+		}
+		runSpec.LibraryIDs = ids
 	}
 	if spec.Limits != (RunLimits{}) {
 		runSpec.Limits = spec.Limits.domain()

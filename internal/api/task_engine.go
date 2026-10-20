@@ -100,8 +100,9 @@ type taskEngineConfig struct {
 type taskEngine struct {
 	// ---- 装配期注入，之后只读 ----
 
-	engine   *task.Engine
-	runStore task.Store
+	libraryIDs func(context.Context, TaskIdentity) ([]int64, error)
+	engine     *task.Engine
+	runStore   task.Store
 
 	// runBackground 与 now 是本层为**测试接缝**留下的两处间接。领域引擎在构造期就把它们收进去了，
 	// 而接缝的用法是「构造之后再换掉」——播种要在这一刻决定任务体何时、乃至是否执行，

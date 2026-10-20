@@ -602,3 +602,15 @@ func isSupportedArchive(path string) bool {
 		return false
 	}
 }
+
+// InvalidateLibrary removes comparisons and plans whose source paths have changed.
+// Call while holding exclusive library access, before reopening admission.
+func (m *Manager) InvalidateLibrary(libraryID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, s := range m.sessions {
+		if s.LibraryID == libraryID {
+			delete(m.sessions, id)
+		}
+	}
+}
