@@ -167,3 +167,46 @@ export interface StorageFailureResponse {
   path: string;
 }
 
+export interface RelocationDetail {
+  ordinal: number;
+  kind: string;
+  record_type: string;
+  record_id: number;
+  source_path: string;
+  target_path: string;
+  reason: string;
+  expected_size: number;
+  actual_size: number;
+  modified_ns: number;
+  run_id?: number;
+  run_status?: string;
+  can_cancel: boolean;
+}
+
+export interface RelocationPlan {
+  id: number;
+  library_id: number;
+  library_name: string;
+  library_root: string;
+  source_root: string;
+  target_root: string;
+  run_id: number;
+  status: string;
+  series_count: number;
+  book_count: number;
+  blocker_count: number;
+  anomaly_count: number;
+  policy_count: number;
+  anomaly_counts: Record<string, number>;
+  samples: RelocationDetail[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RelocationDetails {
+  items: RelocationDetail[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
