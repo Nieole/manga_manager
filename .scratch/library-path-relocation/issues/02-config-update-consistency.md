@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 规格覆盖：用户故事 34、36、46；实施决策 14、15、16、23。
 
@@ -27,3 +27,5 @@
 - `internal/api/config_consistency_test.go` covers stale and overlapping HTTP saves, completed-update browser staleness for both settings endpoints, Save/Reload barriers, pending external edits, persistence/application failures, reload rollback and queue publication ordering. `web/src/pages/settings/configVersion.test.tsx` covers version submission, conflict drafts and a dirty library draft after an unrelated save reveals moved policies.
 - Verified: full config/API tests; targeted config/API race run before the final added queue test; Go formatter empty; compatible Go 1.26.5 golangci-lint `0 issues.`; frontend lint/build; full frontend 821 tests followed by targeted 3 interaction tests after the section-version fix.
 - Final full `go test ./...` passed API/config/server and most packages, but Windows Application Control blocked booksort/logger/proposal test executables. Final race rerun passed config but the OS blocked api.test.exe. No security settings were changed; integration must repeat the final suite/race on its compatible toolchain.
+
+Integration verification (Go 1.26.5): API/config/server scoped tests passed; config/API config-version and queue race scenarios passed; formatter empty; scoped golangci-lint reports 0 issues.
