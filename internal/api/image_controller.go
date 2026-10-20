@@ -75,6 +75,11 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Request, bookID, pageNumber int64) {
 	started := time.Now()
+	release, ok := c.guardBookRead(w, r, bookID)
+	if !ok {
+		return
+	}
+	defer release()
 	ctx := r.Context()
 
 	source, err := c.getBookPageSource(ctx, bookID)
@@ -828,6 +833,11 @@ func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, ok := c.guardBookRead(w, r, bookID)
+	if !ok {
+		return
+	}
+	defer release()
 	ctx := r.Context()
 	book, err := c.store.GetBook(ctx, bookID)
 	if err != nil {

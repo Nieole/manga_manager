@@ -160,7 +160,11 @@ type Engine struct {
 	resume         func() ResumePolicy
 	codes          ControlCodes
 
-	mu sync.Mutex
+	mu               sync.Mutex
+	libraryVersion   uint64
+	libraryExclusive map[int64]bool
+	libraryReaders   map[int64]int
+	libraryRuns      map[int64][]int64
 	// seq 是运行的单调序号，装配期从库里已用掉的最大值接上，因此跨重启单调。
 	seq int64
 	// pausedAll 是「全部暂停」的闸门：关着时队列不放行，新发起的运行一律先进**排队中**。
@@ -199,24 +203,27 @@ func New(cfg Config) *Engine {
 		panic("task: Config.RunBackground 不得为 nil")
 	}
 	e := &Engine{
-		store:          cfg.Store,
-		publish:        cfg.Publish,
-		publishLive:    cfg.PublishLive,
-		runBackground:  cfg.RunBackground,
-		diskWork:       cfg.DiskWork,
-		decorate:       cfg.DecorateRunContext,
-		now:            cfg.Now,
-		slots:          cfg.Slots,
-		backoff:        cfg.Backoff,
-		sampleInterval: cfg.SampleInterval,
-		resume:         cfg.Resume,
-		codes:          cfg.ControlCodes,
-		runtimes:       make(map[int64]*taskRuntime),
-		queued:         make(map[int64]queuedRun),
-		gates:          make(map[int64]publishGate),
-		itemFailures:   make(map[int64]itemFailureTally),
-		samples:        make(map[int64]sampleGate),
-		settled:        make(map[int64][]chan struct{}),
+		store:            cfg.Store,
+		libraryExclusive: make(map[int64]bool),
+		libraryReaders:   make(map[int64]int),
+		libraryRuns:      make(map[int64][]int64),
+		publish:          cfg.Publish,
+		publishLive:      cfg.PublishLive,
+		runBackground:    cfg.RunBackground,
+		diskWork:         cfg.DiskWork,
+		decorate:         cfg.DecorateRunContext,
+		now:              cfg.Now,
+		slots:            cfg.Slots,
+		backoff:          cfg.Backoff,
+		sampleInterval:   cfg.SampleInterval,
+		resume:           cfg.Resume,
+		codes:            cfg.ControlCodes,
+		runtimes:         make(map[int64]*taskRuntime),
+		queued:           make(map[int64]queuedRun),
+		gates:            make(map[int64]publishGate),
+		itemFailures:     make(map[int64]itemFailureTally),
+		samples:          make(map[int64]sampleGate),
+		settled:          make(map[int64][]chan struct{}),
 	}
 	e.seq = e.restoredSequence()
 	return e
