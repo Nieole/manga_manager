@@ -65,3 +65,43 @@ it('cancels by run id and shows errors while reading a page', async () => {
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/system/runs/7/cancel'));
   await screen.findByText('relocation.detailsError');
 });
+
+it('keeps a failed detail page navigable and allows retry', async () => {
+  let fail = true;
+  get.mockImplementation((url: string) => {
+    if (url.includes('offset=50') && fail) return Promise.reject(new Error('offline'));
+    if (url.includes('details')) return Promise.resolve({ data: { items: [], total: 60, offset: 0, limit: 50 } });
+    return Promise.resolve({ data: plan });
+  });
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByText('relocation.next'));
+  await screen.findByText('relocation.detailsError');
+  fail = false;
+  fireEvent.click(screen.getByText('relocation.retryDetails'));
+  await waitFor(() => expect(screen.queryByText('relocation.detailsError')).toBeNull());
+  fireEvent.click(screen.getByText('relocation.previous'));
+  await waitFor(() => expect(get).toHaveBeenLastCalledWith('/api/relocation-plans/12/details?kind=blocker&offset=0&limit=50'));
+});
+
+it('ignores a slow detail response after switching categories', async () => {
+  let resolveOld: (value: unknown) => void = () => {};
+  get.mockImplementation((url: string) => {
+    if (url.includes('kind=blocker')) return new Promise((resolve) => { resolveOld = resolve; });
+    if (url.includes('details')) return Promise.resolve({ data: { items: [{ ordinal: 2, kind: 'anomaly', target_path: '/new/missing.cbz', reason: 'missing' }], total: 1 } });
+    return Promise.resolve({ data: plan });
+  });
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByText('relocation.anomalies'));
+  await screen.findByText('/new/missing.cbz');
+  resolveOld({ data: { items: [{ ordinal: 1, kind: 'blocker', target_path: '/stale/conflict.cbz', reason: 'record_occupied' }], total: 1 } });
+  await waitFor(() => expect(screen.queryByText('/stale/conflict.cbz')).toBeNull());
+  expect(screen.getByText('/new/missing.cbz')).toBeTruthy();
+});
+
+it('keeps the selected detail page when the active category is clicked again', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [{ ordinal: 1, kind: 'blocker', target_path: '/occupied/book.cbz', reason: 'record_occupied' }], total: 1 } : plan }));
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  await screen.findByText('/occupied/book.cbz');
+  fireEvent.click(screen.getByText('relocation.blockers'));
+  expect(screen.getByText('/occupied/book.cbz')).toBeTruthy();
+});
