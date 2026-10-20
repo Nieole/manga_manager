@@ -32,15 +32,27 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if created {
+		lib, loadErr := c.store.GetLibrary(r.Context(), op.LibraryID)
+		if loadErr != nil {
+			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_commit_failed")
+			writeRelocationError(w, loadErr)
+			return
+		}
 		launched, startErr := c.taskEngine.start(libraryTask("relocation_commit", op.LibraryID, variantSole), task.TriggerManual, RunSpec{
-			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: "", CanCancel: true,
+			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: lib.Name, CanCancel: true,
 			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.failed",
 			Labels: map[string]string{"plan_id": strconv.FormatInt(id, 10), "operation_id": strconv.FormatInt(op.ID, 10)},
 		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 			return RunResult{}, c.relocation.Commit(ctx, op.ID, handle)
 		})
 		if startErr != nil {
+			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
 			writeRelocationError(w, startErr)
+			return
+		}
+		if launched.Coalesced {
+			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
+			jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_conflict", "error": "A relocation is already queued"})
 			return
 		}
 		if err = c.relocation.BindOperationRun(context.WithoutCancel(r.Context()), op.ID, launched.Run.ID); err != nil {
@@ -74,15 +86,21 @@ func (c *Controller) relocationEffects(ctx context.Context, op RelocationOperati
 	c.purgeReadingPathCaches()
 	c.invalidateDashboardStatsCache("library_relocated")
 	c.external.InvalidateLibrary(op.LibraryID)
+	lib, err := c.store.GetLibrary(ctx, op.LibraryID)
+	if err != nil {
+		return err
+	}
 	if c.watcher != nil {
 		c.watcher.UnwatchLibrary(op.SourceRoot)
-		lib, err := c.store.GetLibrary(ctx, op.LibraryID)
-		if err != nil {
-			return err
+	}
+	if lib.ScanMode == "watch" {
+		if c.watcherInitErr != nil {
+			return c.watcherInitErr
 		}
-		if lib.ScanMode == "watch" {
-			return c.watcher.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
+		if c.watcher == nil {
+			return errors.New("file watcher unavailable")
 		}
+		return c.watcher.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
 	}
 	return nil
 }

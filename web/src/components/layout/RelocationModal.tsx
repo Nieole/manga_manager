@@ -49,6 +49,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   const completedCallback = useRef(onCompleted);
   useEffect(() => { completedCallback.current = onCompleted; }, [onCompleted]);
   const [operation, setOperation] = useState<RelocationOperation | null>(null);
+  const [commitRun, setCommitRun] = useState<RunSnapshot | null>(null);
   const [run, setRun] = useState<RunSnapshot | null>(null);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -122,7 +123,13 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
         const { data } = await apiClient.get<RelocationOperation>(`/api/relocation-operations/${operationID}`);
         if (!active) return;
         setOperation(data);
-        if (data.status === 'pending' || data.status === 'paths_committed') timer = window.setTimeout(refresh, 1000);
+        if (data.status === 'pending' || data.status === 'paths_committed') {
+          try {
+            const live = await apiClient.get<RunLive>('/api/system/tasks/live');
+            if (active) setCommitRun(live.data.runs?.find((item) => item.run_id === data.run_id) || null);
+          } catch { /* Persisted results remain available without live progress. */ }
+          if (active) timer = window.setTimeout(refresh, 1000);
+        }
         else if (data.status === 'completed') completedCallback.current?.();
       } catch { if (active) setError('relocation.operationLoadError'); }
     };
@@ -158,6 +165,12 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     try { await apiClient.post(`/api/system/runs/${plan.run_id}/cancel`); }
     catch { setError('relocation.cancelError'); setCancelling(false); }
   };
+  const cancelCommit = async () => {
+    if (!commitRun?.can_cancel) return;
+    setCancelling(true);
+    try { await apiClient.post(`/api/system/runs/${commitRun.run_id}/cancel`); }
+    catch { setError('relocation.cancelError'); setCancelling(false); }
+  };
   const detailRow = (item: RelocationDetail) => (
     <li key={item.ordinal} className="space-y-1 border-b border-gray-800 py-3 text-sm last:border-0">
       {item.reason && <p className={item.kind === 'blocker' ? 'text-red-300' : 'text-amber-200'}>{t(item.kind === 'policy' ? `settings.library.storageProfile.${item.reason}` : `relocation.reason.${item.reason}`, undefined, item.reason)}</p>}
@@ -177,6 +190,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
 
   return <ModalShell open onClose={onClose} title={t('relocation.title')} description={t('relocation.description')} size="standard"
     footer={<><button type="button" className={modalGhostButtonClass} onClick={onClose}>{t('relocation.close')}</button>
+      {committing && commitRun?.can_cancel && <button type="button" className={modalGhostButtonClass} disabled={cancelling} onClick={cancelCommit}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCommit')}</button>}
       {busy ? <button type="button" className={modalGhostButtonClass} disabled={cancelling || run?.can_cancel === false} onClick={cancel}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCheck')}</button>
         : <>{!committing && <button type="button" className={modalGhostButtonClass} disabled={!target || submitting || loading} onClick={check}>{t('relocation.check')}</button>}{canCommit && <button type="button" className={modalPrimaryButtonClass} disabled={target !== plan.target_root || submitting || loading} onClick={commit}>{t('relocation.commit')}</button>}</>}</>}>
     <div className="space-y-5 text-gray-300">
@@ -202,8 +216,9 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
         {operation && <section className={modalSectionClass} aria-live="polite">
           <p className="font-medium text-white">{t(`relocation.operation.${operation.status}`)}</p>
           <p className="mt-2 text-sm">{t('relocation.operationCounts', { series: operation.series_count, books: operation.book_count })}</p>
+          {commitRun && committing && <p className="mt-2 text-sm">{t(`settings.maintenance.taskPhase.${commitRun.phase || 'revalidate'}`)} · {commitRun.current}/{commitRun.total}</p>}
           {operation.code && <p className="mt-2 text-amber-200">{t(`relocation.commitError.${operation.code}`, undefined, t('relocation.commitError.generic'))}</p>}
-          {committing && <p className="mt-2 text-sm">{t('relocation.noCancelCommit')}</p>}
+          {committing && !commitRun?.can_cancel && <p className="mt-2 text-sm">{t('relocation.noCancelCommit')}</p>}
           {operation.status === 'completed' && <p className="mt-2 text-sm">{t('relocation.completedHint')}</p>}
         </section>}
         {plan.samples.length > 0 && <section className={modalSectionClass}><h3>{t('relocation.examples')}</h3><ul>{plan.samples.map(detailRow)}</ul></section>}

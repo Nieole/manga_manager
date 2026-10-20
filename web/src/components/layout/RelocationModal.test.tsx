@@ -163,6 +163,16 @@ it('reopens a persisted commit and shows its real stage without offering cancell
 });
 
 
+it('shows a cancellable commit revalidation run and cancels by its run identifier', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : url.includes('tasks/live') ? { runs: [{ run_id: 9, phase: 'revalidate', current: 1, total: 2, can_cancel: true }] } : url.includes('relocation-operations') ? {
+    id: 5, run_id: 9, status: 'pending', series_count: 1, book_count: 2, code: '',
+  } : { ...plan, operation_id: 5 } }));
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByText('relocation.cancelCommit'));
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/system/runs/9/cancel'));
+  expect(screen.getByText(/settings.maintenance.taskPhase.revalidate/)).toBeTruthy();
+});
+
 it('requires a new check after a stale confirmation instead of retrying an old plan', async () => {
   get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : { ...plan, blocker_count: 0, anomaly_count: 0 } }));
   post.mockRejectedValue({ response: { data: { code: 'relocation_stale_plan' } } });

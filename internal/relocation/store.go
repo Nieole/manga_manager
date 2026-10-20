@@ -13,17 +13,18 @@ import (
 )
 
 type Service struct {
-	Store     database.Store
-	Config    *config.Manager
-	Files     FileSystem
-	Acquire   func(context.Context, int64) (func(), error)
-	Effects   func(context.Context, RelocationOperation) error
-	access    commitAccess
-	transient bool
-	evaluated RelocationPlan
-	db        database.DBTX
-	once      sync.Once
-	err       error
+	Store            database.Store
+	Config           *config.Manager
+	Files            FileSystem
+	Acquire          func(context.Context, int64) (func(), error)
+	AcquireOperation func(context.Context, RelocationOperation) (func(), error)
+	Effects          func(context.Context, RelocationOperation) error
+	access           commitAccess
+	transient        bool
+	evaluated        RelocationPlan
+	db               database.DBTX
+	once             sync.Once
+	err              error
 }
 
 func (s *Service) dbtx() database.DBTX {

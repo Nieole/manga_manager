@@ -102,6 +102,20 @@ func (s *Service) BindOperationRun(ctx context.Context, id, runID int64) error {
 	return err
 }
 
+// FailUnstarted records admission failure without changing a committed result.
+func (s *Service) FailUnstarted(ctx context.Context, id int64, code string) error {
+	op, err := s.Operation(ctx, id)
+	if err != nil {
+		return err
+	}
+	if op.Status != "pending" {
+		return nil
+	}
+	op.Status = "failed"
+	op.Code = code
+	return s.saveOperation(ctx, op)
+}
+
 func (s *Service) saveOperation(ctx context.Context, op RelocationOperation) error {
 	op.UpdatedAt = time.Now().UTC()
 	data, err := json.Marshal(op)
@@ -119,7 +133,10 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 	if err != nil {
 		return err
 	}
-	release, err := s.Acquire(ctx, op.LibraryID)
+	if op.Status != "pending" {
+		return nil
+	}
+	release, err := s.acquireOperation(ctx, op)
 	if err != nil {
 		op.Status = "failed"
 		op.Code = "relocation_conflict"
@@ -222,6 +239,13 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 	return s.finish(context.WithoutCancel(ctx), op)
 }
 
+func (s *Service) acquireOperation(ctx context.Context, op RelocationOperation) (func(), error) {
+	if s.AcquireOperation != nil {
+		return s.AcquireOperation(ctx, op)
+	}
+	return s.Acquire(ctx, op.LibraryID)
+}
+
 func (s *Service) finish(ctx context.Context, op RelocationOperation) error {
 	if err := s.Effects(ctx, op); err != nil {
 		op.Code = "relocation_recovering"
@@ -285,7 +309,7 @@ func (s *Service) Recover(ctx context.Context) error {
 		_, owned := s.access.releases[id]
 		s.access.mu.Unlock()
 		if !owned {
-			release, e := s.Acquire(ctx, op.LibraryID)
+			release, e := s.acquireOperation(ctx, op)
 			if e != nil {
 				return e
 			}

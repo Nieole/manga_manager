@@ -5,17 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sync"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
 )
 
 func TestRelocationCommitPreservesIdentityAndReadsNewLocation(t *testing.T) {
@@ -196,47 +198,169 @@ func TestLibraryRootEditingRequiresRelocationOnlyWhenPopulated(t *testing.T) {
 }
 
 func TestRelocationDuplicateConfirmationAndDatabaseFailureAreDurable(t *testing.T) {
-	for _,failDB:=range []bool{false,true} {
-		c,store,_,root:=newTestController(t)
-		lib,_,book:=seedBookFixture(t,store,root,"source","series","book.cbz",1)
-		seedBookArchivePages(t,c,book,png1x1)
-		target:=filepath.Join(root,"target");if err:=os.Rename(lib.Path,target);err!=nil{t.Fatal(err)}
-		plan:=startRelocationPreview(t,c,lib.ID,target)
-		if failDB {if _,err:=store.DB().Exec(`CREATE TRIGGER fail_relocation BEFORE UPDATE OF path ON libraries BEGIN SELECT RAISE(ABORT,'disk full'); END`);err!=nil{t.Fatal(err)}}
+	for _, failDB := range []bool{false, true} {
+		c, store, _, root := newTestController(t)
+		lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+		seedBookArchivePages(t, c, book, png1x1)
+		target := filepath.Join(root, "target")
+		if err := os.Rename(lib.Path, target); err != nil {
+			t.Fatal(err)
+		}
+		plan := startRelocationPreview(t, c, lib.ID, target)
+		if failDB {
+			if _, err := store.DB().Exec(`CREATE TRIGGER fail_relocation BEFORE UPDATE OF path ON libraries BEGIN SELECT RAISE(ABORT,'disk full'); END`); err != nil {
+				t.Fatal(err)
+			}
+		}
 		var wg sync.WaitGroup
-		results:=make(chan RelocationOperation,2)
-		for range 2 {wg.Add(1);go func(){defer wg.Done();results<-submitRelocation(t,c,plan.ID)}()}
-		wg.Wait();close(results)
+		results := make(chan RelocationOperation, 2)
+		for range 2 {
+			wg.Add(1)
+			go func() { defer wg.Done(); results <- submitRelocation(t, c, plan.ID) }()
+		}
+		wg.Wait()
+		close(results)
 		var id int64
-		for op:=range results{if id!=0 && id!=op.ID{t.Fatalf("duplicate operations: %d %d",id,op.ID)};id=op.ID}
-		op:=awaitRelocationOperation(t,c,id)
-		want:="completed";if failDB{want="failed"}
-		if op.Status!=want{t.Fatalf("database boundary: %+v",op)}
-		got,_:=store.GetBook(context.Background(),book.ID)
-		if failDB && got.Path!=book.Path{t.Fatal("failed transaction changed child path")}
-		if again:=submitRelocation(t,c,plan.ID);again.ID!=id || again.Status!=want{t.Fatalf("retry replayed operation: %+v",again)}
+		for op := range results {
+			if id != 0 && id != op.ID {
+				t.Fatalf("duplicate operations: %d %d", id, op.ID)
+			}
+			id = op.ID
+		}
+		op := awaitRelocationOperation(t, c, id)
+		want := "completed"
+		if failDB {
+			want = "failed"
+		}
+		if op.Status != want {
+			t.Fatalf("database boundary: %+v", op)
+		}
+		got, _ := store.GetBook(context.Background(), book.ID)
+		if failDB && got.Path != book.Path {
+			t.Fatal("failed transaction changed child path")
+		}
+		if again := submitRelocation(t, c, plan.ID); again.ID != id || again.Status != want {
+			t.Fatalf("retry replayed operation: %+v", again)
+		}
 		var count int
-		if err:=store.DB().QueryRow(`SELECT COUNT(*) FROM relocation_operations`).Scan(&count);err!=nil || count!=1{t.Fatalf("operation count %d %v",count,err)}
+		if err := store.DB().QueryRow(`SELECT COUNT(*) FROM relocation_operations`).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("operation count %d %v", count, err)
+		}
 	}
 }
 
 func TestRelocationQueuedCancellationSurvivesPrunedHistoryAndRestart(t *testing.T) {
-	c,store,_,root:=newTestController(t)
-	lib,_,book:=seedBookFixture(t,store,root,"source","series","book.cbz",1)
-	seedBookArchivePages(t,c,book,png1x1)
-	target:=filepath.Join(root,"target");if err:=os.Rename(lib.Path,target);err!=nil{t.Fatal(err)}
-	plan:=startRelocationPreview(t,c,lib.ID,target)
-	if _,err:=c.taskEngine.pauseAll(context.Background());err!=nil{t.Fatal(err)}
-	op:=submitRelocation(t,c,plan.ID)
-	rec:=httptest.NewRecorder()
-	c.cancelRun(rec,requestWithRouteParam(http.MethodPost,"/api/system/runs/1/cancel",nil,"runID",strconv.FormatInt(op.RunID,10)))
-	if rec.Code!=http.StatusAccepted{t.Fatalf("queued cancel: %d %s",rec.Code,rec.Body.String())}
-	clearCancelledPreviewRuns(t,c)
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	seedBookArchivePages(t, c, book, png1x1)
+	target := filepath.Join(root, "target")
+	if err := os.Rename(lib.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	if _, err := c.taskEngine.pauseAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	op := submitRelocation(t, c, plan.ID)
+	rec := httptest.NewRecorder()
+	c.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("queued cancel: %d %s", rec.Code, rec.Body.String())
+	}
+	clearCancelledPreviewRuns(t, c)
 	c.Close()
-	reopened:=restartController(t,c,store,root)
-	op=awaitRelocationOperation(t,reopened,op.ID)
-	if op.Status!="cancelled"{t.Fatalf("cancel fact lost: %+v",op)}
-	got,_:=store.GetBook(context.Background(),book.ID);if got.Path!=book.Path{t.Fatal("queued cancel changed paths")}
+	reopened := restartController(t, c, store, root)
+	op = awaitRelocationOperation(t, reopened, op.ID)
+	if op.Status != "cancelled" {
+		t.Fatalf("cancel fact lost: %+v", op)
+	}
+	got, _ := store.GetBook(context.Background(), book.ID)
+	if got.Path != book.Path {
+		t.Fatal("queued cancel changed paths")
+	}
+}
+
+func TestRelocationCommitRejectsWorkWhoseOtherLibraryCoversMappedFiles(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	seedBookArchivePages(t, c, book, png1x1)
+	target := filepath.Join(root, "target")
+	if err := os.Rename(lib.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "parent", Path: root, ScanMode: "none", ScanInterval: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	started, resume := make(chan struct{}), make(chan struct{})
+	if err = c.taskEngine.Run(libraryTask("test_transfer", other.ID, variantSole), task.TriggerManual, RunSpec{Key: "test_transfer", CanCancel: false}, func(context.Context, *runhandle.Handle) (RunResult, error) {
+		close(started)
+		<-resume
+		return RunResult{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	op := submitRelocation(t, c, plan.ID)
+	op = awaitRelocationOperation(t, c, op.ID)
+	close(resume)
+	if op.Status != "failed" || op.Code != "relocation_conflict" {
+		t.Fatalf("overlapping work accepted: %+v", op)
+	}
+	got, _ := store.GetBook(context.Background(), book.ID)
+	if got.Path != book.Path {
+		t.Fatal("conflict changed paths")
+	}
+}
+
+func TestRelocationWatchRecoveryKeepsLibraryBlockedWhenTargetCannotBeWatched(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	if _, err := store.DB().Exec(`UPDATE libraries SET scan_mode='watch' WHERE id=?`, lib.ID); err != nil {
+		t.Fatal(err)
+	}
+	seedBookArchivePages(t, c, book, png1x1)
+	target := filepath.Join(root, "target")
+	if err := os.Rename(lib.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	effects := c.relocation.Effects
+	c.relocation.Effects = func(ctx context.Context, op RelocationOperation) error {
+		if err := effects(ctx, op); err != nil {
+			return err
+		}
+		return errors.New("completion interrupted")
+	}
+	op := submitRelocation(t, c, plan.ID)
+	op = awaitRelocationOperation(t, c, op.ID)
+	if op.Status != "paths_committed" {
+		t.Fatalf("initial incomplete operation: %+v", op)
+	}
+	c.Close()
+	offline := filepath.Join(root, "offline")
+	if err := os.Rename(target, offline); err != nil {
+		t.Fatal(err)
+	}
+	reopened := restartController(t, c, store, root)
+	op = awaitRelocationOperation(t, reopened, op.ID)
+	if op.Status != "paths_committed" || op.Code != "relocation_recovering" {
+		t.Fatalf("unwatched root reported complete: %+v", op)
+	}
+	rec := httptest.NewRecorder()
+	reopened.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("failed recovery exposed library: %d", rec.Code)
+	}
+	reopened.Close()
+	if err := os.Rename(offline, target); err != nil {
+		t.Fatal(err)
+	}
+	final := restartController(t, reopened, store, root)
+	if got := awaitRelocationOperation(t, final, op.ID); got.Status != "completed" {
+		t.Fatalf("watch recovery failed: %+v", got)
+	}
 }
 
 func submitRelocation(t *testing.T, c *Controller, planID int64) RelocationOperation {
@@ -321,7 +445,7 @@ func awaitRelocationOperation(t *testing.T, c *Controller, id int64) RelocationO
 		if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("result: %d %s %v", rec.Code, rec.Body.String(), err)
 		}
-		if op.Status != "pending" && (op.Status!="paths_committed" || op.Code=="relocation_recovering") {
+		if op.Status != "pending" && (op.Status != "paths_committed" || op.Code == "relocation_recovering") {
 			return op
 		}
 		select {

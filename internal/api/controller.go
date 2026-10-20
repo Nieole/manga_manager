@@ -54,13 +54,14 @@ type Controller struct {
 	config  *config.Manager
 	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
 	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**运行句柄**。
-	diskWork   *diskwork.Runner
-	koreader   *koreader.Service
-	external   *external.Manager
-	proposals  *proposal.Service
-	relocation *relocation.Service
-	configPath string
-	watcher    *scanner.FileWatcher
+	diskWork       *diskwork.Runner
+	koreader       *koreader.Service
+	external       *external.Manager
+	proposals      *proposal.Service
+	relocation     *relocation.Service
+	configPath     string
+	watcher        *scanner.FileWatcher
+	watcherInitErr error
 
 	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
 	sse *sseBroker
@@ -339,7 +340,7 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 }
 
 // newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
-// 它不启动任何后台 goroutine，也不碰文件监听——那些属于「运行」而非「装配」，由 NewController 负责。
+// 它预备文件监听资源并恢复迁移；事件派发与后台服务由 NewController 启动。
 //
 // 白盒测试构造 Controller 必须调用这里，不得手工拼装字段：手工拼装在新增组件字段时容易漏掉，
 // 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
@@ -397,7 +398,12 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
 	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
+	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
+		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
+		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },
+	})
 	c.relocation.Acquire = c.acquireLibraryExclusive
+	c.relocation.AcquireOperation = c.acquireRelocationAccess
 	c.relocation.Effects = c.relocationEffects
 	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
 		panic(fmt.Errorf("initialize relocation plans: %w", err))
@@ -424,15 +430,10 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 
 	// 初始化文件系统监控。派生出去的扫描与清理各建一条**发起方**为「监听」的运行：
 	// 监听器自己不碰扫描器，它只知道「这个库该扫了」。
-	fw, err := scanner.NewFileWatcher(scanner.WatcherHooks{
-		ScanLibrary:        c.runWatchedLibraryScan,
-		CleanupLibrary:     c.runWatchedLibraryCleanup,
-		LibraryScanRunning: scan.LibraryScanActive,
-	})
-	if err != nil {
-		slog.Warn("Failed to create file watcher", "error", err)
+	if c.watcherInitErr != nil {
+		slog.Warn("Failed to create file watcher", "error", c.watcherInitErr)
 	} else {
-		c.watcher = fw
+		fw := c.watcher
 		fw.Start(c.PublishEvent)
 		// 为现有库开启监听
 		c.runBackground(func() {
@@ -443,7 +444,12 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 			}
 			for _, lib := range libs {
 				if lib.ScanMode == "watch" {
+					release, accessErr := c.taskEngine.engine.AcquireLibraryRead(lib.ID)
+					if accessErr != nil {
+						continue
+					}
 					_ = fw.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
+					release()
 				}
 			}
 		})
