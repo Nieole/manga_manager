@@ -1315,6 +1315,7 @@ export const messages: MessageCatalog = {
     'settings.toast.fetchFailed': '无法加载系统配置',
     'settings.toast.configSaved': '配置已保存',
     'settings.toast.configInvalid': '配置未通过校验，请先修正高亮字段。',
+    'settings.toast.configChanged': '配置已被其他操作修改，请刷新页面后重新检查并保存。',
     'settings.toast.configSaveFailed': '保存失败，请检查配置和文件权限。',
     'settings.toast.actionFailed': '操作失败，请稍后重试。',
     'settings.toast.llmTestSucceeded': 'LLM 联通性测试成功',

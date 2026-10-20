@@ -332,6 +332,7 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 
 	postReq := httptest.NewRequest(http.MethodPost, "/api/system/config", bytes.NewReader(body))
 	postRec := httptest.NewRecorder()
+	postReq.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateSystemConfig(postRec, postReq)
 
 	if postRec.Code != http.StatusOK {
@@ -373,6 +374,7 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
+	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateKOReaderSettings(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -415,6 +417,7 @@ func TestGeneratedKOReaderAccountCanAuthenticateThroughClientHashedHeader(t *tes
 		"path_ignore_extension": false
 	}`)))
 	settingsRec := httptest.NewRecorder()
+	settingsReq.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateKOReaderSettings(settingsRec, settingsReq)
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", settingsRec.Code, settingsRec.Body.String())
@@ -489,6 +492,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
+	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d", rec.Code)
@@ -581,6 +585,7 @@ func TestKOReaderAuthSupportsVendorJSON(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
+	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -621,6 +626,7 @@ func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
+	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -683,6 +689,7 @@ func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
+	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -745,6 +752,7 @@ func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
 	}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
+	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -1021,6 +1029,7 @@ func TestUpdateSystemConfigRejectsInvalidConfiguration(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/system/config", bytes.NewReader(payload))
+	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
 	controller.updateSystemConfig(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -4459,7 +4468,7 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 		"path_ignore_extension": false
 	}`)
 	settingsRec := httptest.NewRecorder()
-	controller.updateKOReaderSettings(settingsRec, httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(settingsBody)))
+	controller.updateKOReaderSettings(settingsRec, versionedConfigRequest(controller, settingsBody, "/api/system/koreader"))
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", settingsRec.Code, settingsRec.Body.String())
 	}
@@ -4507,7 +4516,7 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 		"path_ignore_extension": false
 	}`)
 	closedSettingsRec := httptest.NewRecorder()
-	controller.updateKOReaderSettings(closedSettingsRec, httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(closedBody)))
+	controller.updateKOReaderSettings(closedSettingsRec, versionedConfigRequest(controller, closedBody, "/api/system/koreader"))
 	if closedSettingsRec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d", closedSettingsRec.Code)
 	}

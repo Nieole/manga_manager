@@ -172,6 +172,7 @@ func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request)
 		stats.HashedBooks = indexed
 	}
 	cfg := c.currentConfig()
+	w.Header().Set("ETag", c.config.Version(cfg))
 	jsonResponse(w, http.StatusOK, KOReaderSystemResponse{
 		Enabled:             cfg.KOReader.Enabled,
 		BasePath:            cfg.KOReader.BasePath,
@@ -612,6 +613,7 @@ func (c *Controller) resetKOReaderProgress(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Request) {
+	expected := c.currentConfig()
 	var req UpdateKOReaderSettingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid KOReader settings payload")
@@ -646,13 +648,20 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	cfg := c.currentConfig()
+	if !c.requireConfigVersion(w, r, expected) {
+		return
+	}
+	cfg := config.CloneConfig(expected)
 	cfg.KOReader.Enabled = req.Enabled
 	cfg.KOReader.BasePath = req.BasePath
 	cfg.KOReader.AllowRegistration = req.AllowRegistration
 	cfg.KOReader.MatchMode = req.MatchMode
 	cfg.KOReader.PathIgnoreExtension = req.PathIgnoreExtension
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.persistConfigExpected(&expected, &cfg); err != nil {
+		if errors.Is(err, config.ErrConflict) {
+			jsonError(w, http.StatusConflict, err.Error())
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, "Failed to persist KOReader configuration")
 		return
 	}
