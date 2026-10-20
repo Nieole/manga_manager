@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient, isAxiosError } from '../../api/client';
-import type { RelocationDetail, RelocationDetails, RelocationPlan, RunLive, RunSnapshot } from '../../api/generated';
+import type { RelocationDetail, RelocationDetails, RelocationPlan, RelocationPolicy, RunLive, RunSnapshot } from '../../api/generated';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { ModalShell } from '../ui/ModalShell';
 import { modalGhostButtonClass, modalPrimaryButtonClass, modalSectionClass } from '../ui/modalStyles';
@@ -11,6 +11,31 @@ interface Props {
   library: { id: number; name: string; path: string };
   planID?: number;
   onClose: () => void;
+}
+
+function PolicyPreview({ policy, title, description }: { policy: RelocationPolicy; title: string; description: string }) {
+  const { t } = useI18n();
+  const io = policy.io_policy;
+  const values = [
+    ['profile', t(`settings.library.storageProfile.${policy.storage_profile}`, undefined, policy.storage_profile)],
+    ['scanConcurrency', io.scan_concurrency],
+    ['archiveOpenConcurrency', io.archive_open_concurrency],
+    ['coverConcurrency', io.cover_concurrency],
+    ['hashConcurrency', io.hash_concurrency],
+    ['pauseWhenReading', t(io.pause_background_when_reading ? 'relocation.policy.enabled' : 'relocation.policy.disabled')],
+    ['idleOnlyHeavyTasks', t(io.idle_only_heavy_tasks ? 'relocation.policy.enabled' : 'relocation.policy.disabled')],
+    ['disableSameDiskPageCache', t(io.disable_same_disk_page_cache ? 'relocation.policy.enabled' : 'relocation.policy.disabled')],
+  ];
+  return <section aria-label={t(title)} className="rounded-lg border border-gray-700 bg-gray-950/40 p-3">
+    <h4 className="font-medium text-white">{t(title)}</h4>
+    <p className="mt-1 text-xs text-gray-400">{t(description)}</p>
+    <dl className="mt-3 space-y-2 text-xs">
+      {values.map(([label, value]) => <div key={label} className="flex justify-between gap-3">
+        <dt className="text-gray-400">{t(`relocation.policy.${label}`)}</dt>
+        <dd className="shrink-0 text-gray-100">{value}</dd>
+      </div>)}
+    </dl>
+  </section>;
 }
 
 export function RelocationModal({ library, planID, onClose }: Props) {
@@ -100,6 +125,12 @@ export function RelocationModal({ library, planID, onClose }: Props) {
       {item.run_id ? <p>{t('relocation.work', { id: item.run_id, status: t(`logs.runStatus.${item.run_status}`) })}</p> : null}
       {item.conflict_record_id ? <p>{t('relocation.conflictingRecord', { kind: t(`relocation.record.${item.conflict_record_type}`), id: item.conflict_record_id })}</p> : null}
       {item.reason === 'size_mismatch' && <p>{t('relocation.sizes', { expected: item.expected_size, actual: item.actual_size })}</p>}
+      {(item.policy_before || item.policy_after) && <div className="grid gap-3 pt-2 sm:grid-cols-2">
+        {item.policy_before && <PolicyPreview policy={item.policy_before} title="relocation.policy.before"
+          description={item.reason === 'policy_affects_other_library' ? 'relocation.policy.effectiveBefore' : item.reason === 'policy_conflict' ? 'relocation.policy.destinationExisting' : 'relocation.policy.sourceExplicit'} />}
+        {item.policy_after && <PolicyPreview policy={item.policy_after} title="relocation.policy.after"
+          description={item.reason === 'policy_affects_other_library' ? 'relocation.policy.effectiveAfter' : 'relocation.policy.destinationProposed'} />}
+      </div>}
     </li>
   );
 
