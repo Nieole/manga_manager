@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RelocationModal } from './RelocationModal';
 
@@ -104,4 +104,33 @@ it('keeps the selected detail page when the active category is clicked again', a
   await screen.findByText('/occupied/book.cbz');
   fireEvent.click(screen.getByText('relocation.blockers'));
   expect(screen.getByText('/occupied/book.cbz')).toBeTruthy();
+});
+
+
+it('compares the actual IO limits when custom policies conflict', async () => {
+  const before = { storage_profile: 'custom', io_policy: { scan_concurrency: 1, archive_open_concurrency: 2, cover_concurrency: 3, hash_concurrency: 4,
+    pause_background_when_reading: true, idle_only_heavy_tasks: false, disable_same_disk_page_cache: true } };
+  const after = { storage_profile: 'custom', io_policy: { scan_concurrency: 5, archive_open_concurrency: 6, cover_concurrency: 7, hash_concurrency: 8,
+    pause_background_when_reading: false, idle_only_heavy_tasks: true, disable_same_disk_page_cache: false } };
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? {
+    items: [{ ordinal: 1, kind: 'blocker', reason: 'policy_conflict', source_path: '/old', target_path: '/new', policy_before: before, policy_after: after }], total: 1,
+  } : plan }));
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByText('relocation.blockers'));
+  await screen.findByText('relocation.reason.policy_conflict');
+  expect(screen.getByText('relocation.policy.destinationExisting')).toBeTruthy();
+  expect(screen.getByText('relocation.policy.destinationProposed')).toBeTruthy();
+  for (const [label, numbers, flags] of [
+    ['relocation.policy.before', ['1', '2', '3', '4'], ['relocation.policy.enabled', 'relocation.policy.disabled', 'relocation.policy.enabled']],
+    ['relocation.policy.after', ['5', '6', '7', '8'], ['relocation.policy.disabled', 'relocation.policy.enabled', 'relocation.policy.disabled']],
+  ] as const) {
+    const panel = within(screen.getByRole('region', { name: label }));
+    expect(panel.getByText('settings.library.storageProfile.custom')).toBeTruthy();
+    for (const value of numbers) expect(panel.getByText(value)).toBeTruthy();
+    const labels = ['scanConcurrency', 'archiveOpenConcurrency', 'coverConcurrency', 'hashConcurrency', 'pauseWhenReading', 'idleOnlyHeavyTasks', 'disableSameDiskPageCache'];
+    labels.forEach((key) => expect(panel.getByText(`relocation.policy.${key}`)).toBeTruthy());
+    const booleanValues = panel.getAllByText(/relocation.policy.(enabled|disabled)/).map((node) => node.textContent);
+    expect(booleanValues).toEqual(flags);
+  }
+  expect(post).not.toHaveBeenCalled();
 });
