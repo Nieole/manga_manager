@@ -800,3 +800,9 @@ describe('指标面板认得扫描报的每一个数', () => {
     expect(screen.getByText(/taskMetric\.skipped_archives/)).toBeTruthy();
   });
 });
+
+it('opens the exact older relocation result from run history', () => {
+  const older = makeRun({ type: 'relocation_check', scope_id: 4, run_id: 7, status: 'completed', labels: { plan_id: '12' } });
+  renderCenter({ tasks: [makeSummary({ task_id: 1, last_run: makeRun({ run_id: 9, type: 'relocation_check', labels: { plan_id: '15' } }) })], history: { taskId: 1, runs: [older] } });
+  expect(screen.getByRole('link', { name: 'relocation.viewResult' }).getAttribute('href')).toBe('/library/4?relocation_plan=12');
+});

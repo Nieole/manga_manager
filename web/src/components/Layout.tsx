@@ -7,6 +7,7 @@ import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle, BarChart3 } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { Library, SearchHit } from './layout/types';
+import { RelocationEntry } from './layout/RelocationEntry';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
@@ -53,6 +54,7 @@ export default function Layout() {
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
+    const [relocationLibraryID, setRelocationLibraryID] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     // 侧栏资料库列表加载失败标记，用于渲染一个「加载失败 · 重试」入口。
     const [librariesError, setLibrariesError] = useState(false);
@@ -780,6 +782,18 @@ export default function Layout() {
                                                             e.preventDefault();
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
+                                                            setRelocationLibraryID(String(lib.id));
+                                                        }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                    >
+                                                        <FolderOpen className="w-4 h-4 mr-2" />
+                                                        {t('layout.libraryActions.relocate')}
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
                                                             handleScanLibrary(String(lib.id), false);
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
@@ -903,6 +917,8 @@ export default function Layout() {
                     onClearFinished={clearFinishedTaskBubbles}
                 />
             </main>
+
+            <RelocationEntry libraries={libraries} isAdmin={isAdmin} selectedID={relocationLibraryID} onClose={() => setRelocationLibraryID(null)} />
 
             <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
