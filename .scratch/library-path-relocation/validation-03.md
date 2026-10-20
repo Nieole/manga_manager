@@ -7,14 +7,14 @@
 - 运行标签在准入互斥边界内先于运行发布与执行保存，触发器可关联尚未由 HTTP 返回路径绑定的计划。即使终态随后被清历史删除，计划事实仍保留；无法绑定且对应运行已不存在时明确返回持久化失败。
 - 取消回归先取消排队检查、立即经清历史 HTTP 接口删除运行，再重启并首次查询计划。另一条回归把取消、运行退出与清历史全部放在 `SetRun` 之前。两条都不以先查询计划作为持久化前提。
 
-## 本轮执行边界
+## 后端验证
 
-Windows 沙盒组件尚待系统重启生效；用户选择稍后重启。按当前明确约束，本轮未执行宿主 `go build`、`go test`、`go run`、`tsgen` 或新增 Go 可执行文件。
+用户允许在保留智能应用控制的条件下重试宿主测试；以下命令使用 Go 1.26.5、共享构建缓存和仓库临时目录执行。
 
-- 新增与修改的 Controller HTTP / 真实 SQLite 回归已编写，尚未执行，不能据此关闭 03。
-- `generated.ts` 按 Go 响应类型与生成目标顺序临时同步。重启后须实际运行 `go run ./cmd/tsgen` 并检查生成漂移。
-- 已用 Python 内存 SQLite 执行源文件中的实际触发器与绑定 SQL，验证取消、失败、既有 `checked` 保留、终态清历史后绑定、无关任务不更新以及缺失绑定拒绝。此项不替代生产 Go / modernc SQLite 回归。
-- 本轮仅运行已安装的 `gofmt` 处理格式，不生成或执行测试程序。
+- `go test ./internal/api -run Relocation -count=1` 通过，包含真实 Controller、SQLite、临时文件和运行历史清理回归。
+- `go run ./cmd/tsgen` 成功生成 20 个类型，`web/src/api/generated.ts` 无漂移。
+- `go test ./...` 全部通过。
+- `gofmt -l ./cmd ./internal` 与 `git diff --check` 输出为空。
 
 ## 前端验证
 
@@ -22,4 +22,12 @@ Windows 沙盒组件尚待系统重启生效；用户选择稍后重启。按当
 
 合并后的前端门禁均通过：`npm run lint` 无警告，`npm run test` 为 78 个文件、832 项测试通过，`npm run build` 成功。`gofmt -l ./cmd ./internal` 与 `git diff --check` 输出为空。
 
-重启后的待执行门禁：Go 全量测试、03 HTTP 回归与 race、golangci-lint、tsgen 生成及漂移核对。策略 UI 的实拍更新也待补；已有截图版本见 `screenshots/README.md`。
+
+## 并发检查与验收
+
+- `go test -race ./internal/api -run Relocation -count=1` 通过，覆盖本票新增的迁移预览、取消、清理历史、访问协调与旧路径失效场景。
+- Go 1.26.5 下完整 `golangci-lint run` 退出码 0，输出 `0 issues.`。
+- 完整 `go test -race ./...` 属于扩展验证；执行时 `cmd/server` 的测试程序被 Windows 智能应用控制阻止，不能宣称完整 race 通过。其他包的最终结果另行记录；此阻断不覆盖已经通过的普通全量及本票定向 race。
+- 最新真实 UI 策略实拍见 `screenshots/preview-policy.png`；检查与结果展示保持只读，未提供迁移提交入口。
+
+验收证据对应 `internal/api/relocation_preview_test.go`、`internal/api/library_access_test.go`、`web/src/components/layout/RelocationModal.test.tsx` 与 `RelocationEntry.test.tsx`。服务端领域计划和分页明细持久化，不依赖运行历史；前后端权限、路径边界、跨类型占用、文件分类、完整 IO 策略、取消与关闭重开均有行为验证。
