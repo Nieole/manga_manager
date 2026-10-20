@@ -18,6 +18,74 @@ type RelocationPlan = relocation.RelocationPlan
 type RelocationDetail = relocation.RelocationDetail
 type RelocationDetails = relocation.RelocationDetails
 type RelocationPolicy = relocation.RelocationPolicy
+type RelocationOperation = relocation.RelocationOperation
+
+func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "planId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid plan ID")
+		return
+	}
+	op, created, err := c.relocation.Prepare(r.Context(), id)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	if created {
+		launched, startErr := c.taskEngine.start(libraryTask("relocation_commit", op.LibraryID, variantSole), task.TriggerManual, RunSpec{
+			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: "", CanCancel: false,
+			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.failed",
+			Labels: map[string]string{"plan_id": strconv.FormatInt(id, 10), "operation_id": strconv.FormatInt(op.ID, 10)},
+		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
+			return RunResult{}, c.relocation.Commit(ctx, op.ID, handle)
+		})
+		if startErr != nil {
+			writeRelocationError(w, startErr)
+			return
+		}
+		if err = c.relocation.BindOperationRun(context.WithoutCancel(r.Context()), op.ID, launched.Run.ID); err != nil {
+			writeRelocationError(w, err)
+			return
+		}
+	}
+	op, err = c.relocation.Operation(r.Context(), op.ID)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusAccepted, op)
+}
+
+func (c *Controller) getRelocationOperation(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "operationId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid operation ID")
+		return
+	}
+	op, err := c.relocation.Operation(r.Context(), id)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, op)
+}
+
+func (c *Controller) relocationEffects(ctx context.Context, op RelocationOperation) error {
+	c.purgeReadingPathCaches()
+	c.invalidateDashboardStatsCache("library_relocated")
+	c.external.InvalidateLibrary(op.LibraryID)
+	if c.watcher != nil {
+		c.watcher.UnwatchLibrary(op.SourceRoot)
+		lib, err := c.store.GetLibrary(ctx, op.LibraryID)
+		if err != nil {
+			return err
+		}
+		if lib.ScanMode == "watch" {
+			return c.watcher.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
+		}
+	}
+	return nil
+}
 
 func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
@@ -69,6 +137,10 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 }
 
 func writeRelocationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, relocation.ErrPlanNotReady) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_plan_not_ready", "error": "Recheck this relocation plan before confirming"})
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		jsonError(w, http.StatusNotFound, "Relocation plan or library not found")
 		return

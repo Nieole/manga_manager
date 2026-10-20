@@ -397,6 +397,8 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
 	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
+	c.relocation.Acquire = c.acquireLibraryExclusive
+	c.relocation.Effects = c.relocationEffects
 	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
 		slog.Error("Failed to initialize relocation plans", "error", err)
 	}
@@ -777,6 +779,8 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/libraries/{libraryId}/relocation-plans/latest", c.latestRelocationPlan)
 		r.Get("/relocation-plans/{planId}", c.getRelocationPlan)
 		r.Get("/relocation-plans/{planId}/details", c.relocationDetails)
+		r.Post("/relocation-plans/{planId}/commit", c.commitRelocationPlan)
+		r.Get("/relocation-operations/{operationId}", c.getRelocationOperation)
 		r.Get("/libraries/{libraryId}/franchise", c.getLibraryFranchiseGraph)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Post("/libraries/{libraryId}/external-libraries/session", c.createExternalLibrarySession)

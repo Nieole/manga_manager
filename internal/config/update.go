@@ -12,6 +12,14 @@ import (
 // ErrConflict means an expected configuration or the on-disk configuration changed.
 var ErrConflict = errors.New("configuration changed; reload before saving")
 
+// WithSnapshot holds the update boundary without writing or publishing config.
+// The callback must not call Save, Reload or Replace on this manager.
+func (m *Manager) WithSnapshot(fn func(Config) error) error {
+	m.updateMu.Lock()
+	defer m.updateMu.Unlock()
+	return fn(m.Snapshot())
+}
+
 // Save serializes read, expected-state validation, mutation, persistence and application.
 // A nil expected value mutates the latest state. Callbacks must not call Save, Reload
 // or Replace on this Manager. Snapshot remains available during callbacks.

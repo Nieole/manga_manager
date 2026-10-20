@@ -13,15 +13,18 @@ import (
 )
 
 type Service struct {
-	Store  database.Store
-	Config *config.Manager
-	Files  FileSystem
-	once   sync.Once
-	err    error
+	Store   database.Store
+	Config  *config.Manager
+	Files   FileSystem
+	Acquire func(context.Context, int64) (func(), error)
+	Effects func(context.Context, RelocationOperation) error
+	access  commitAccess
+	once    sync.Once
+	err     error
 }
 
 func NewService(store database.Store, cfg *config.Manager) *Service {
-	return &Service{Store: store, Config: cfg, Files: HostFiles{}}
+	return &Service{Store: store, Config: cfg, Files: HostFiles{}, access: commitAccess{releases: map[int64]func(){}}}
 }
 
 // Initialize is idempotent for existing databases. Plans deliberately have no
@@ -42,6 +45,11 @@ CREATE TABLE IF NOT EXISTS relocation_details (
  FOREIGN KEY(plan_id) REFERENCES relocation_plans(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_relocation_details_kind ON relocation_details(plan_id,kind,ordinal);
+CREATE TABLE IF NOT EXISTS relocation_operations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL UNIQUE,
+ library_id INTEGER NOT NULL, run_id INTEGER NOT NULL DEFAULT 0,
+ status TEXT NOT NULL, result TEXT NOT NULL
+);
 CREATE TRIGGER IF NOT EXISTS relocation_check_terminal
 AFTER UPDATE OF status ON runs
 WHEN NEW.status IN ('completed','cancelled','failed','interrupted')
