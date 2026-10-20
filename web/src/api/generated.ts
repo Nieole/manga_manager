@@ -183,6 +183,23 @@ export interface RelocationDetail {
   can_cancel: boolean;
   conflict_record_type?: string;
   conflict_record_id?: number;
+  policy_before?: RelocationPolicy;
+  policy_after?: RelocationPolicy;
+}
+
+export interface RelocationPolicy {
+  storage_profile: string;
+  io_policy: StorageIOPolicy;
+}
+
+export interface StorageIOPolicy {
+  scan_concurrency: number;
+  archive_open_concurrency: number;
+  cover_concurrency: number;
+  hash_concurrency: number;
+  pause_background_when_reading: boolean;
+  idle_only_heavy_tasks: boolean;
+  disable_same_disk_page_cache: boolean;
 }
 
 export interface RelocationPlan {

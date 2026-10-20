@@ -35,6 +35,8 @@ var targets = []reflect.Type{
 	reflect.TypeOf(api.SystemCapabilitiesResponse{}),
 	reflect.TypeOf(api.StorageFailureResponse{}),
 	reflect.TypeOf(api.RelocationDetail{}),
+	reflect.TypeOf(api.RelocationPolicy{}),
+	reflect.TypeOf(config.StorageIOPolicy{}),
 	reflect.TypeOf(api.RelocationPlan{}),
 	reflect.TypeOf(api.RelocationDetails{}),
 }

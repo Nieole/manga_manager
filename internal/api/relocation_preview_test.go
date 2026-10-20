@@ -311,9 +311,8 @@ func TestRelocationPreviewQueuedCancellationSurvivesRunHistoryPruning(t *testing
 	if cancel.Code != http.StatusAccepted {
 		t.Fatalf("cancel queued preview: %d %s", cancel.Code, cancel.Body.String())
 	}
-	if got := awaitRelocationPlan(t, c, plan.ID); got.Status != "cancelled" {
-		t.Fatalf("queued cancellation: %+v", got)
-	}
+	// Prune before any plan read: a GET must not be required to preserve the
+	// cancellation, and restarting must not turn it into interrupted.
 	if _, err = c.taskEngine.runStore.DeleteRuns(context.Background(), task.RunFilter{Statuses: []task.RunStatus{task.StatusCancelled}}); err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +321,34 @@ func TestRelocationPreviewQueuedCancellationSurvivesRunHistoryPruning(t *testing
 		t.Fatalf("pruning lost plan cancellation: %+v", got)
 	}
 	bodies[0]()
+}
+
+func TestRelocationPreviewExposesPolicyValuesForMappingsAndConflicts(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	target := t.TempDir()
+	cfg := c.config.Snapshot()
+	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{
+		{Path: lib.Path, StorageProfile: config.StorageProfileCustom, IOPolicy: config.StorageIOPolicy{ScanConcurrency: 3, ArchiveOpenConcurrency: 4, CoverConcurrency: 2, HashConcurrency: 5, PauseBackgroundWhenReading: true, IdleOnlyHeavyTasks: true, DisableSameDiskPageCache: true}},
+		{Path: target, StorageProfile: config.StorageProfileCustom, IOPolicy: config.StorageIOPolicy{ScanConcurrency: 7, ArchiveOpenConcurrency: 8, CoverConcurrency: 6, HashConcurrency: 9}},
+	}
+	c.config.Replace(&cfg)
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	mappings := previewDetails(t, c, plan.ID, "kind=policy")
+	if len(mappings.Items) != 1 { t.Fatalf("policy mapping: %+v", mappings) }
+	mapping := mappings.Items[0]
+	if mapping.PolicyBefore == nil || mapping.PolicyAfter == nil || mapping.PolicyBefore.StorageProfile != "custom" || mapping.PolicyBefore.IOPolicy.ScanConcurrency != 3 || mapping.PolicyAfter.IOPolicy.ArchiveOpenConcurrency != 4 || !mapping.PolicyAfter.IOPolicy.DisableSameDiskPageCache {
+		t.Fatalf("mapping lacks actual IO values: %+v", mapping)
+	}
+	blockers := previewDetails(t, c, plan.ID, "kind=blocker")
+	for _, detail := range blockers.Items {
+		if detail.Reason != "policy_conflict" { continue }
+		if detail.PolicyBefore == nil || detail.PolicyAfter == nil || detail.PolicyBefore.IOPolicy.ScanConcurrency != 7 || detail.PolicyBefore.IOPolicy.HashConcurrency != 9 || detail.PolicyAfter.IOPolicy.ScanConcurrency != 3 || !detail.PolicyAfter.IOPolicy.PauseBackgroundWhenReading || detail.PolicyBefore.IOPolicy.IdleOnlyHeavyTasks {
+			t.Fatalf("conflict lacks existing and proposed values: %+v", detail)
+		}
+		return
+	}
+	t.Fatalf("policy conflict missing: %+v", blockers)
 }
 
 func TestRelocationPreviewReportsCancellingAndQueuedWorkWithoutCountingItself(t *testing.T) {

@@ -21,6 +21,10 @@ func samePolicy(a, b config.LibraryStoragePolicy) bool {
 	return a.StorageProfile == b.StorageProfile && a.IOPolicy == b.IOPolicy
 }
 
+func previewPolicy(profile string, policy config.StorageIOPolicy) *RelocationPolicy {
+	return &RelocationPolicy{StorageProfile: profile, IOPolicy: policy}
+}
+
 // MappedPolicies returns only directory policy configuration. Ancestors and
 // unrelated policies retain their existing order and values.
 func MappedPolicies(cfg config.Config, source, target string) []config.LibraryStoragePolicy {
@@ -60,12 +64,15 @@ func (s *Service) checkPolicies(ctx context.Context, plan *RelocationPlan, cfg c
 			continue
 		}
 		detail := RelocationDetail{Kind: "policy", RecordType: "policy", SourcePath: policy.Path, TargetPath: mapped, Reason: policy.StorageProfile}
+		detail.PolicyBefore = previewPolicy(policy.StorageProfile, policy.IOPolicy)
+		detail.PolicyAfter = previewPolicy(policy.StorageProfile, policy.IOPolicy)
 		if err = s.add(ctx, plan, detail); err != nil {
 			return err
 		}
 		for _, existing := range cfg.Library.StoragePolicies {
 			if pathKey(existing.Path) == pathKey(mapped) && pathKey(existing.Path) != pathKey(policy.Path) && !samePolicy(existing, policy) {
 				detail.Kind, detail.Reason = "blocker", "policy_conflict"
+				detail.PolicyBefore = previewPolicy(existing.StorageProfile, existing.IOPolicy)
 				if err = s.add(ctx, plan, detail); err != nil {
 					return err
 				}
@@ -85,6 +92,8 @@ UNION SELECT library_id,path FROM books WHERE library_id<>?`, plan.LibraryID, pl
 	type affected struct {
 		id   int64
 		path string
+		before *RelocationPolicy
+		after *RelocationPolicy
 	}
 	changes := []affected{}
 	seen := map[string]bool{}
@@ -97,6 +106,8 @@ UNION SELECT library_id,path FROM books WHERE library_id<>?`, plan.LibraryID, pl
 		old := config.ResolveStoragePolicy(cfg, item.path)
 		next := config.ResolveStoragePolicy(after, item.path)
 		if old.StorageProfile != next.StorageProfile || old.IOPolicy != next.IOPolicy {
+			item.before = previewPolicy(old.StorageProfile, old.IOPolicy)
+			item.after = previewPolicy(next.StorageProfile, next.IOPolicy)
 			changes = append(changes, item)
 		}
 	}
@@ -132,7 +143,7 @@ UNION SELECT library_id,path FROM books WHERE library_id<>?`, plan.LibraryID, pl
 		}
 	}
 	for _, item := range changes {
-		if err = s.add(ctx, plan, RelocationDetail{Kind: "blocker", RecordType: "library", RecordID: item.id, TargetPath: item.path, Reason: "policy_affects_other_library"}); err != nil {
+		if err = s.add(ctx, plan, RelocationDetail{Kind: "blocker", RecordType: "library", RecordID: item.id, TargetPath: item.path, Reason: "policy_affects_other_library", PolicyBefore: item.before, PolicyAfter: item.after}); err != nil {
 			return err
 		}
 	}

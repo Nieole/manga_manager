@@ -17,6 +17,7 @@ import (
 type RelocationPlan = relocation.RelocationPlan
 type RelocationDetail = relocation.RelocationDetail
 type RelocationDetails = relocation.RelocationDetails
+type RelocationPolicy = relocation.RelocationPolicy
 
 func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")

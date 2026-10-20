@@ -4,7 +4,14 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"manga-manager/internal/config"
 )
+
+type RelocationPolicy struct {
+	StorageProfile string                 `json:"storage_profile"`
+	IOPolicy       config.StorageIOPolicy `json:"io_policy"`
+}
 
 type RelocationDetail struct {
 	Ordinal            int64  `json:"ordinal"`
@@ -22,6 +29,8 @@ type RelocationDetail struct {
 	CanCancel          bool   `json:"can_cancel"`
 	ConflictRecordType string `json:"conflict_record_type,omitempty"`
 	ConflictRecordID   int64  `json:"conflict_record_id,omitempty"`
+	PolicyBefore       *RelocationPolicy `json:"policy_before,omitempty"`
+	PolicyAfter        *RelocationPolicy `json:"policy_after,omitempty"`
 }
 
 type RelocationPlan struct {
