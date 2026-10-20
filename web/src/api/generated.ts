@@ -181,6 +181,8 @@ export interface RelocationDetail {
   run_id?: number;
   run_status?: string;
   can_cancel: boolean;
+  conflict_record_type?: string;
+  conflict_record_id?: number;
 }
 
 export interface RelocationPlan {

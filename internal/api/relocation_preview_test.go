@@ -446,6 +446,34 @@ func TestRelocationPreviewUsesNativeCaseAndSeparatorSemantics(t *testing.T) {
 	}
 }
 
+func TestRelocationPreviewDetectsOccupancyAcrossSeriesAndBookRecords(t *testing.T) {
+	for _, occupiedKind := range []string{"series", "book"} {
+		t.Run(occupiedKind, func(t *testing.T) {
+			c, store, _, root := newTestController(t)
+			lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+			other, otherSeries, _ := seedBookFixture(t, store, root, "other", "series", "other.cbz", 1)
+			target := t.TempDir()
+			if occupiedKind == "series" {
+				if _, err := store.CreateSeries(context.Background(), database.CreateSeriesParams{LibraryID: other.ID, Name: "occupied", Path: filepath.Join(target, "series", "book.cbz"), NameInitial: "O"}); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := store.CreateBook(context.Background(), database.CreateBookParams{LibraryID: other.ID, SeriesID: otherSeries.ID, Name: "occupied", Path: filepath.Join(target, "series"), Size: 1024, FileModifiedAt: time.Now()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			plan := startRelocationPreview(t, c, lib.ID, target)
+			page := previewDetails(t, c, plan.ID, "kind=blocker")
+			for _, detail := range page.Items {
+				if detail.Reason == "record_occupied" {
+					return
+				}
+			}
+			t.Fatalf("cross-kind occupancy missing: %+v", page.Items)
+		})
+	}
+}
+
 func awaitRelocationPlan(t *testing.T, c *Controller, id int64) RelocationPlan {
 	t.Helper()
 	deadline := time.After(10 * time.Second)

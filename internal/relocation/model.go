@@ -7,19 +7,21 @@ import (
 )
 
 type RelocationDetail struct {
-	Ordinal      int64  `json:"ordinal"`
-	Kind         string `json:"kind"`
-	RecordType   string `json:"record_type"`
-	RecordID     int64  `json:"record_id"`
-	SourcePath   string `json:"source_path"`
-	TargetPath   string `json:"target_path"`
-	Reason       string `json:"reason"`
-	ExpectedSize int64  `json:"expected_size"`
-	ActualSize   int64  `json:"actual_size"`
-	ModifiedNS   int64  `json:"modified_ns"`
-	RunID        int64  `json:"run_id,omitempty"`
-	RunStatus    string `json:"run_status,omitempty"`
-	CanCancel    bool   `json:"can_cancel"`
+	Ordinal            int64  `json:"ordinal"`
+	Kind               string `json:"kind"`
+	RecordType         string `json:"record_type"`
+	RecordID           int64  `json:"record_id"`
+	SourcePath         string `json:"source_path"`
+	TargetPath         string `json:"target_path"`
+	Reason             string `json:"reason"`
+	ExpectedSize       int64  `json:"expected_size"`
+	ActualSize         int64  `json:"actual_size"`
+	ModifiedNS         int64  `json:"modified_ns"`
+	RunID              int64  `json:"run_id,omitempty"`
+	RunStatus          string `json:"run_status,omitempty"`
+	CanCancel          bool   `json:"can_cancel"`
+	ConflictRecordType string `json:"conflict_record_type,omitempty"`
+	ConflictRecordID   int64  `json:"conflict_record_id,omitempty"`
 }
 
 type RelocationPlan struct {

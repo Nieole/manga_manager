@@ -117,7 +117,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	if err = s.Store.DB().QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM series WHERE library_id=?),(SELECT COUNT(*) FROM books WHERE library_id=?)`, plan.LibraryID, plan.LibraryID).Scan(&plan.SeriesCount, &plan.BookCount); err != nil {
 		return err
 	}
-	seen := map[string]int64{}
+	seen := map[string]recordRef{}
 	occupied, err := s.occupancy(ctx)
 	if err != nil {
 		return err
@@ -256,7 +256,12 @@ func (s *Service) walkRecords(ctx context.Context, libraryID int64, kind string,
 	}
 }
 
-func (s *Service) mapRecord(ctx context.Context, plan *RelocationPlan, kind string, id int64, path string, size int64, seen map[string]int64, occupied map[string][]int64) (string, error) {
+type recordRef struct {
+	kind string
+	id   int64
+}
+
+func (s *Service) mapRecord(ctx context.Context, plan *RelocationPlan, kind string, id int64, path string, size int64, seen map[string]recordRef, occupied map[string][]int64) (string, error) {
 	mapped, err := MapPath(plan.SourceRoot, plan.TargetRoot, path)
 	if err != nil {
 		return "", s.add(ctx, plan, RelocationDetail{Kind: "blocker", RecordType: kind, RecordID: id, SourcePath: path, Reason: "outside_source_root"})
@@ -265,26 +270,31 @@ func (s *Service) mapRecord(ctx context.Context, plan *RelocationPlan, kind stri
 	if err = s.add(ctx, plan, detail); err != nil {
 		return "", err
 	}
-	canonical := kind + ":" + pathKey(mapped)
-	if previous, ok := seen[canonical]; ok && previous != id {
+	canonical := pathKey(mapped)
+	if previous, ok := seen[canonical]; ok && (previous.id != id || previous.kind != kind) {
 		detail.Kind, detail.Reason = "blocker", "ambiguous_mapping"
+		detail.ConflictRecordID, detail.ConflictRecordType = previous.id, previous.kind
 		if err = s.add(ctx, plan, detail); err != nil {
 			return "", err
 		}
 	}
-	seen[canonical] = id
-	for _, occupiedID := range occupied[canonical] {
-		if occupiedID != id {
-			detail.Kind, detail.Reason = "blocker", "record_occupied"
-			if err = s.add(ctx, plan, detail); err != nil {
-				return "", err
+	seen[canonical] = recordRef{kind: kind, id: id}
+	for _, occupiedKind := range []string{"series", "book"} {
+		for _, occupiedID := range occupied[occupiedKind+":"+canonical] {
+			if occupiedID != id || occupiedKind != kind {
+				detail.Kind, detail.Reason = "blocker", "record_occupied"
+				detail.ConflictRecordType, detail.ConflictRecordID = occupiedKind, occupiedID
+				if err = s.add(ctx, plan, detail); err != nil {
+					return "", err
+				}
+				break
 			}
-			break
 		}
 	}
 	for _, libraryID := range occupied["library:"+pathKey(mapped)] {
 		if libraryID != plan.LibraryID {
 			detail.Kind, detail.Reason = "blocker", "library_occupied"
+			detail.ConflictRecordType, detail.ConflictRecordID = "library", libraryID
 			if err = s.add(ctx, plan, detail); err != nil {
 				return "", err
 			}
