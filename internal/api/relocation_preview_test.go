@@ -9,13 +9,19 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/relocation"
+	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestRelocationPreviewPreservesRecordsAndCanBeReadAfterReopen(t *testing.T) {
@@ -221,6 +227,222 @@ func TestRelocationPreviewPoliciesShowConflictsAndOtherLibraryEffects(t *testing
 				t.Fatal("policy preview changed live policies")
 			}
 		})
+	}
+}
+
+func TestRelocationPreviewDetectsPolicyChangesInEmptyOtherLibraryDescendants(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	if _, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "parent", Path: root, ScanMode: "none", ScanInterval: 60}); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	cfg := c.config.Snapshot()
+	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: filepath.Join(lib.Path, "empty-child"), StorageProfile: config.StorageProfileHDDExternal}}
+	c.config.Replace(&cfg)
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	page := previewDetails(t, c, plan.ID, "kind=blocker")
+	for _, detail := range page.Items {
+		if detail.Reason == "policy_affects_other_library" && detail.TargetPath == filepath.Join(lib.Path, "empty-child") {
+			return
+		}
+	}
+	t.Fatalf("empty descendant policy effect missing: %+v", page.Items)
+}
+
+func TestRelocationPreviewRequiresAdminAndCSRFForHostPathResults(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "private source", "series", "book.cbz", 1)
+	_ = mkTestUser(t, store, "admin", database.RoleAdmin)
+	_ = mkTestUser(t, store, "reader", database.RoleRegular)
+	router := chi.NewRouter()
+	c.SetupRoutes(router)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+	admin, reader := newAuthClient(t), newAuthClient(t)
+	_, login := authDo(t, admin, http.MethodPost, srv.URL+"/api/auth/login", "", map[string]string{"username": "admin", "password": "password1"})
+	var session authSessionResponse
+	if err := json.Unmarshal(login, &session); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = authDo(t, reader, http.MethodPost, srv.URL+"/api/auth/login", "", map[string]string{"username": "reader", "password": "password1"})
+	url := srv.URL + "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-plans"
+	target := t.TempDir()
+	if resp, _ := authDo(t, admin, http.MethodPost, url, "", map[string]string{"target_root": target}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing CSRF accepted: %d", resp.StatusCode)
+	}
+	resp, body := authDo(t, admin, http.MethodPost, url, session.CSRFToken, map[string]string{"target_root": target})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("admin preview: %d %s", resp.StatusCode, body)
+	}
+	var started RelocationPlan
+	if err := json.Unmarshal(body, &started); err != nil {
+		t.Fatal(err)
+	}
+	_ = awaitRelocationPlan(t, c, started.ID)
+	for _, path := range []string{"/api/relocation-plans/" + strconv.FormatInt(started.ID, 10), "/api/relocation-plans/" + strconv.FormatInt(started.ID, 10) + "/details", "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-plans/latest"} {
+		response, data := authDo(t, reader, http.MethodGet, srv.URL+path, "", nil)
+		if response.StatusCode != http.StatusForbidden || strings.Contains(string(data), target) || strings.Contains(string(data), lib.Path) {
+			t.Fatalf("reader received host plan: %d %s", response.StatusCode, data)
+		}
+	}
+}
+
+func TestRelocationPreviewQueuedCancellationSurvivesRunHistoryPruning(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	other, _, _ := seedBookFixture(t, store, root, "other", "series", "book.cbz", 1)
+	var bodies []func()
+	c.taskEngine.runBackground = func(fn func()) { bodies = append(bodies, fn) }
+	c.taskEngine.slots = func() int { return 1 }
+	err := c.taskEngine.Run(libraryTask("test_hold", other.ID, variantSole), task.TriggerManual, RunSpec{Key: "test_hold", CanCancel: true}, func(context.Context, *runhandle.Handle) (RunResult, error) { return RunResult{}, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
+	rec := httptest.NewRecorder()
+	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var plan RelocationPlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("queued preview: %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	cancel := httptest.NewRecorder()
+	c.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
+	if cancel.Code != http.StatusAccepted {
+		t.Fatalf("cancel queued preview: %d %s", cancel.Code, cancel.Body.String())
+	}
+	if got := awaitRelocationPlan(t, c, plan.ID); got.Status != "cancelled" {
+		t.Fatalf("queued cancellation: %+v", got)
+	}
+	if _, err = c.taskEngine.runStore.DeleteRuns(context.Background(), task.RunFilter{Statuses: []task.RunStatus{task.StatusCancelled}}); err != nil {
+		t.Fatal(err)
+	}
+	restarted := restartController(t, c, store, root)
+	if got := awaitRelocationPlan(t, restarted, plan.ID); got.Status != "cancelled" {
+		t.Fatalf("pruning lost plan cancellation: %+v", got)
+	}
+	bodies[0]()
+}
+
+func TestRelocationPreviewReportsCancellingAndQueuedWorkWithoutCountingItself(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	var bodies []func()
+	c.taskEngine.runBackground = func(fn func()) { bodies = append(bodies, fn) }
+	first, err := c.startLibraryScanRun(lib, false, task.TriggerManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.startLibraryScanRun(lib, false, task.TriggerWatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.taskEngine.cancelRun(first.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
+	rec := httptest.NewRecorder()
+	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var plan RelocationPlan
+	if err = json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("want held scan and preview bodies, got %d", len(bodies))
+	}
+	bodies[1]()
+	got := awaitRelocationPlan(t, c, plan.ID)
+	page := previewDetails(t, c, plan.ID, "kind=blocker")
+	statuses := map[int64]string{}
+	for _, detail := range page.Items {
+		if detail.RecordType == "work" {
+			statuses[detail.RunID] = detail.RunStatus
+		}
+	}
+	if statuses[first.Run.ID] != "cancelling" || statuses[second.Run.ID] != "queued" || statuses[plan.RunID] != "" || got.BlockerCount != 2 {
+		t.Fatalf("related work: %+v, plan %+v", page.Items, got)
+	}
+	if err = c.taskEngine.cancelRun(second.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+	bodies[0]()
+}
+
+func TestRelocationPreviewRestartMarksUnfinishedPlansInterruptedWithoutRunHistory(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	c.taskEngine.runBackground = func(func()) {}
+	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
+	rec := httptest.NewRecorder()
+	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var started RelocationPlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("start unfinished: %d %s", rec.Code, rec.Body.String())
+	}
+	restarted := restartController(t, c, store, root)
+	if got := awaitRelocationPlan(t, restarted, started.ID); got.Status != "interrupted" {
+		t.Fatalf("startup left unfinished preview: %+v", got)
+	}
+	if _, err := restarted.taskEngine.runStore.DeleteRuns(context.Background(), task.RunFilter{Statuses: []task.RunStatus{task.StatusInterrupted}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := awaitRelocationPlan(t, restarted, started.ID); got.Status != "interrupted" {
+		t.Fatalf("pruning erased domain terminal state: %+v", got)
+	}
+}
+
+func TestRelocationPreviewBoundsLargeResultPagesAndSamples(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, series, _ := seedBookFixture(t, store, root, "source", "series", "first.cbz", 1)
+	for i := range 124 {
+		name := strconv.Itoa(i) + ".cbz"
+		if _, err := store.CreateBook(context.Background(), database.CreateBookParams{LibraryID: lib.ID, SeriesID: series.ID, Name: name, Path: filepath.Join(series.Path, name), Size: 1024, FileModifiedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := startRelocationPreview(t, c, lib.ID, t.TempDir())
+	if plan.BookCount != 125 || plan.AnomalyCount != 125 || len(plan.Samples) != 6 {
+		t.Fatalf("bounded preview summary: %+v", plan)
+	}
+	page := previewDetails(t, c, plan.ID, "kind=anomaly&limit=99999")
+	last := previewDetails(t, c, plan.ID, "kind=anomaly&limit=100&offset=100")
+	if page.Total != 125 || page.Limit != 100 || len(page.Items) != 100 || len(last.Items) != 25 {
+		t.Fatalf("page bounds: %+v %+v", page, last)
+	}
+}
+
+func TestRelocationPreviewUsesNativeCaseAndSeparatorSemantics(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, series, _ := seedBookFixture(t, store, root, "source", "series", "case.cbz", 1)
+	if _, err := store.CreateBook(context.Background(), database.CreateBookParams{LibraryID: lib.ID, SeriesID: series.ID, Name: "CASE.cbz", Path: filepath.Join(series.Path, "CASE.cbz"), Size: 1024, FileModifiedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if runtime.GOOS == "windows" {
+		other, otherSeries, _ := seedBookFixture(t, store, root, "other", "other", "other.cbz", 1)
+		if _, err := store.CreateBook(context.Background(), database.CreateBookParams{LibraryID: other.ID, SeriesID: otherSeries.ID, Name: "collision.cbz", Path: filepath.ToSlash(strings.ToUpper(filepath.Join(target, "series", "case.cbz"))), Size: 1024, FileModifiedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body, _ := json.Marshal(map[string]string{"target_root": target + string(filepath.Separator)})
+	rec := httptest.NewRecorder()
+	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var started RelocationPlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
+		t.Fatal(err)
+	}
+	plan := awaitRelocationPlan(t, c, started.ID)
+	page := previewDetails(t, c, plan.ID, "kind=blocker")
+	reasons := map[string]bool{}
+	for _, item := range page.Items {
+		reasons[item.Reason] = true
+	}
+	if runtime.GOOS == "windows" {
+		if !reasons["ambiguous_mapping"] || !reasons["record_occupied"] {
+			t.Fatalf("Windows native canonicalization: %+v", page.Items)
+		}
+	} else if reasons["ambiguous_mapping"] {
+		t.Fatalf("case-sensitive host rejected distinct filenames: %+v", page.Items)
 	}
 }
 
