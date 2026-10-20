@@ -16,6 +16,7 @@ import { trackRunPush } from '../utils/runPush';
 import { isLiveRunStatus } from '../utils/runStatus';
 
 const TASK_TYPE_OPTIONS = [
+  'relocation_check',
   'scan_library',
   'scan_external_library',
   'scan_series',

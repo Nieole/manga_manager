@@ -26,6 +26,7 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/proposal"
+	"manga-manager/internal/relocation"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
@@ -57,6 +58,7 @@ type Controller struct {
 	koreader   *koreader.Service
 	external   *external.Manager
 	proposals  *proposal.Service
+	relocation *relocation.Service
 	configPath string
 	watcher    *scanner.FileWatcher
 
@@ -354,6 +356,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		config:             cfg,
 		external:           external.NewManager(store, 30*time.Minute),
 		proposals:          proposal.NewService(proposalDB{Store: store}),
+		relocation:         relocation.NewService(store, cfg),
 		configPath:         cfgPath,
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),
@@ -394,6 +397,9 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
 	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
+	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
+		slog.Error("Failed to initialize relocation plans", "error", err)
+	}
 
 	c.config.SetAfterUpdate(c.configUpdated)
 	return c
@@ -767,6 +773,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Put("/libraries/{libraryId}", c.updateLibrary)
+		r.Post("/libraries/{libraryId}/relocation-plans", c.createRelocationPlan)
+		r.Get("/libraries/{libraryId}/relocation-plans/latest", c.latestRelocationPlan)
+		r.Get("/relocation-plans/{planId}", c.getRelocationPlan)
+		r.Get("/relocation-plans/{planId}/details", c.relocationDetails)
 		r.Get("/libraries/{libraryId}/franchise", c.getLibraryFranchiseGraph)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Post("/libraries/{libraryId}/external-libraries/session", c.createExternalLibrarySession)

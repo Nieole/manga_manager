@@ -410,6 +410,9 @@ func (c *Controller) usersExist(ctx context.Context) bool {
 // 它是 GET，落到 authorize 的「读方法一律放行」分支里，于是任意已登录的普通账号
 // （设计上只该浏览漫画与记录本人进度）都能从 ?path=/ 起逐级枚举宿主机的完整目录结构。
 func isAdminOnlyPath(p string) bool {
+	if strings.HasPrefix(p, "/api/relocation-plans/") || (strings.HasPrefix(p, "/api/libraries/") && strings.Contains(p, "/relocation-plans")) {
+		return true
+	}
 	if strings.HasPrefix(p, "/api/system/") {
 		return true
 	}
