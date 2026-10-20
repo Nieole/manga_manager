@@ -98,6 +98,7 @@ export function RelocationModal({ library, planID, onClose }: Props) {
       {item.source_path && <p className="break-all text-gray-400">{item.source_path}</p>}
       {item.target_path && <p className="break-all text-gray-100">{item.target_path}</p>}
       {item.run_id ? <p>{t('relocation.work', { id: item.run_id, status: t(`logs.runStatus.${item.run_status}`) })}</p> : null}
+      {item.conflict_record_id ? <p>{t('relocation.conflictingRecord', { kind: t(`relocation.record.${item.conflict_record_type}`), id: item.conflict_record_id })}</p> : null}
       {item.reason === 'size_mismatch' && <p>{t('relocation.sizes', { expected: item.expected_size, actual: item.actual_size })}</p>}
     </li>
   );

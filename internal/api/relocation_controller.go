@@ -84,9 +84,10 @@ func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan Relocatio
 		run, loadErr := c.taskEngine.runStore.LoadRun(ctx, plan.RunID)
 		if errors.Is(loadErr, sql.ErrNoRows) || (loadErr == nil && run.Status.IsTerminal()) {
 			status := "failed"
-			if run.Status == task.StatusCancelled {
+			switch run.Status {
+			case task.StatusCancelled:
 				status = "cancelled"
-			} else if run.Status == task.StatusInterrupted {
+			case task.StatusInterrupted:
 				status = "interrupted"
 			}
 			if errors.Is(loadErr, sql.ErrNoRows) {

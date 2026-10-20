@@ -474,6 +474,83 @@ func TestRelocationPreviewDetectsOccupancyAcrossSeriesAndBookRecords(t *testing.
 	}
 }
 
+type blockingRelocationFiles struct {
+	relocation.HostFiles
+	path    string
+	started chan struct{}
+	resume  chan struct{}
+}
+
+func (f blockingRelocationFiles) Open(path string) (io.Closer, error) {
+	if path == f.path {
+		close(f.started)
+		<-f.resume
+	}
+	return f.HostFiles.Open(path)
+}
+
+func TestRelocationPreviewCancellationWaitsForFileCheckAndPreservesOriginalState(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	target := t.TempDir()
+	file := filepath.Join(target, "series", "book.cbz")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, make([]byte, 1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := blockingRelocationFiles{path: file, started: make(chan struct{}), resume: make(chan struct{})}
+	c.relocation.Files = files
+	body, _ := json.Marshal(map[string]string{"target_root": target})
+	rec := httptest.NewRecorder()
+	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var plan RelocationPlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-files.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("file check did not start")
+	}
+	cancel := httptest.NewRecorder()
+	c.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
+	if cancel.Code != http.StatusAccepted {
+		close(files.resume)
+		t.Fatalf("cancel: %d %s", cancel.Code, cancel.Body.String())
+	}
+	run, err := c.taskEngine.runStore.LoadRun(context.Background(), plan.RunID)
+	if err != nil || run.Status != task.StatusCancelling {
+		close(files.resume)
+		t.Fatalf("cancel request is not exit: %+v %v", run, err)
+	}
+	close(files.resume)
+	if got := awaitRelocationPlan(t, c, plan.ID); got.Status != "cancelled" {
+		t.Fatalf("cancelled preview: %+v", got)
+	}
+	original, _ := store.GetBook(context.Background(), book.ID)
+	if original.Path != book.Path {
+		t.Fatal("cancelled check changed original path")
+	}
+	data, err := os.ReadFile(file)
+	if err != nil || len(data) != 1024 {
+		t.Fatalf("check changed file: %d %v", len(data), err)
+	}
+}
+
+func TestRelocationPreviewAllowsUnchangedNestedLibrariesAndSelfMapping(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	if _, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "nested", Path: filepath.Join(lib.Path, "unrelated-nested"), ScanMode: "none", ScanInterval: 60}); err != nil {
+		t.Fatal(err)
+	}
+	plan := startRelocationPreview(t, c, lib.ID, lib.Path)
+	if plan.BlockerCount != 0 {
+		t.Fatalf("self mappings/nesting reported as occupancy: %+v", previewDetails(t, c, plan.ID, "kind=blocker"))
+	}
+}
+
 func awaitRelocationPlan(t *testing.T, c *Controller, id int64) RelocationPlan {
 	t.Helper()
 	deadline := time.After(10 * time.Second)
