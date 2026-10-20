@@ -27,4 +27,4 @@
 
 只读检查、持久化计划及有界明细、任务中心关联、权限与目录策略完整对比已完成。Controller HTTP 使用真实 SQLite、临时目录和配置验证路径映射与无写入，前端覆盖选目录、取消、冲突、分页、失败重试及关闭重开。记录终态先于运行历史清理持久化，检查完成明确区别于迁移完成。
 
-验证与真实 UI 截图见 `../validation-03.md` 和 `../screenshots/README.md`。普通 Go 全量、03 定向 race、tsgen 无漂移、完整 golangci-lint、gofmt、前端 lint / 832 项测试 / build 均通过。扩展完整 race 遭遇操作系统阻止 `cmd/server` 测试程序，未将其报告为完整通过；智能应用控制保持开启。
+验证与真实 UI 截图见 `../validation-03.md` 和 `../screenshots/README.md`。普通 Go 全量、03 定向 race、tsgen 无漂移、完整 golangci-lint、gofmt、前端 lint / 832 项测试 / build 均通过。扩展完整 race 首轮仅 `cmd/server` 被操作系统阻止，其余包全部通过；随后单独重试该包通过，完整包集合已覆盖，分轮结果见验证记录。智能应用控制保持开启。
