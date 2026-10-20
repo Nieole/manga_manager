@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ func NewService(store database.Store, cfg *config.Manager) *Service {
 
 // Initialize is idempotent for existing databases. Plans deliberately have no
 // cascading dependency on run history: pruning runs must preserve their facts.
+// database.Migrate must have initialized taskstore before this domain schema.
 func (s *Service) Initialize(ctx context.Context) error {
 	s.once.Do(func() {
 		_, s.err = s.Store.DB().ExecContext(ctx, `
@@ -39,7 +41,21 @@ CREATE TABLE IF NOT EXISTS relocation_details (
  detail TEXT NOT NULL, PRIMARY KEY(plan_id,ordinal),
  FOREIGN KEY(plan_id) REFERENCES relocation_plans(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_relocation_details_kind ON relocation_details(plan_id,kind,ordinal);`)
+CREATE INDEX IF NOT EXISTS idx_relocation_details_kind ON relocation_details(plan_id,kind,ordinal);
+CREATE TRIGGER IF NOT EXISTS relocation_check_terminal
+AFTER UPDATE OF status ON runs
+WHEN NEW.status IN ('completed','cancelled','failed','interrupted')
+ AND EXISTS (SELECT 1 FROM tasks WHERE id=NEW.task_id AND type='relocation_check' AND scope='library')
+BEGIN
+ UPDATE relocation_plans SET run_id=NEW.id
+ WHERE run_id=0 AND library_id=(SELECT scope_id FROM tasks WHERE id=NEW.task_id)
+  AND EXISTS (SELECT 1 FROM run_labels WHERE run_id=NEW.id AND key='plan_id' AND value=CAST(relocation_plans.id AS TEXT));
+ UPDATE relocation_plans
+ SET status=CASE WHEN NEW.status='completed' THEN 'failed' ELSE NEW.status END
+ WHERE status IN ('pending','checking')
+  AND library_id=(SELECT scope_id FROM tasks WHERE id=NEW.task_id)
+  AND run_id=NEW.id;
+END;`)
 	})
 	return s.err
 }
@@ -72,8 +88,31 @@ func (s *Service) Create(ctx context.Context, libraryID int64, source, target st
 }
 
 func (s *Service) SetRun(ctx context.Context, id, runID int64) error {
-	_, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET run_id=? WHERE id=?`, runID, id)
-	return err
+	// Admission writes labels under its mutex before publication or execution.
+	// The trigger can therefore bind a terminal check even before start returns,
+	// and history deletion cannot erase that fact. A failed label write followed
+	// by a missing unbound run is a persistence failure, not an inferred terminal.
+	result, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET run_id=?, status=
+ CASE WHEN status IN ('pending','checking') THEN COALESCE((
+  SELECT CASE WHEN status='completed' THEN 'failed' ELSE status END FROM runs
+  WHERE id=? AND status IN ('completed','cancelled','failed','interrupted')
+ ),status) ELSE status END
+ WHERE id=? AND (run_id=0 OR run_id=?) AND (run_id=? OR EXISTS (
+  SELECT 1 FROM runs JOIN tasks ON tasks.id=runs.task_id
+  WHERE runs.id=? AND tasks.type='relocation_check' AND tasks.scope='library'
+   AND tasks.scope_id=relocation_plans.library_id
+ ))`, runID, runID, id, runID, runID, runID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return errors.New("relocation run binding unavailable")
+	}
+	return nil
 }
 
 func (s *Service) SetStatus(ctx context.Context, id int64, status string) error {

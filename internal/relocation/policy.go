@@ -90,10 +90,10 @@ UNION SELECT library_id,path FROM books WHERE library_id<>?`, plan.LibraryID, pl
 		return err
 	}
 	type affected struct {
-		id   int64
-		path string
+		id     int64
+		path   string
 		before *RelocationPolicy
-		after *RelocationPolicy
+		after  *RelocationPolicy
 	}
 	changes := []affected{}
 	seen := map[string]bool{}

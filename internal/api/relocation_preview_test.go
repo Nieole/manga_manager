@@ -244,6 +244,9 @@ func TestRelocationPreviewDetectsPolicyChangesInEmptyOtherLibraryDescendants(t *
 	page := previewDetails(t, c, plan.ID, "kind=blocker")
 	for _, detail := range page.Items {
 		if detail.Reason == "policy_affects_other_library" && detail.TargetPath == filepath.Join(lib.Path, "empty-child") {
+			if detail.PolicyBefore == nil || detail.PolicyAfter == nil || detail.PolicyBefore.StorageProfile != "hdd_external" || detail.PolicyBefore.IOPolicy.ScanConcurrency != 1 || !detail.PolicyBefore.IOPolicy.DisableSameDiskPageCache || detail.PolicyAfter.StorageProfile != "auto" || detail.PolicyAfter.IOPolicy.DisableSameDiskPageCache {
+				t.Fatalf("other-library effect lacks effective policy values: %+v", detail)
+			}
 			return
 		}
 	}
@@ -313,14 +316,58 @@ func TestRelocationPreviewQueuedCancellationSurvivesRunHistoryPruning(t *testing
 	}
 	// Prune before any plan read: a GET must not be required to preserve the
 	// cancellation, and restarting must not turn it into interrupted.
-	if _, err = c.taskEngine.runStore.DeleteRuns(context.Background(), task.RunFilter{Statuses: []task.RunStatus{task.StatusCancelled}}); err != nil {
-		t.Fatal(err)
-	}
+	clearCancelledPreviewRuns(t, c)
 	restarted := restartController(t, c, store, root)
 	if got := awaitRelocationPlan(t, restarted, plan.ID); got.Status != "cancelled" {
 		t.Fatalf("pruning lost plan cancellation: %+v", got)
 	}
 	bodies[0]()
+}
+
+func TestRelocationPreviewCancellationAndPruningBeforePlanBinding(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	// This background boundary runs before start returns to the HTTP adapter.
+	// Cancel and prune there, before SetRun can bind the returned run identifier.
+	c.taskEngine.runBackground = func(body func()) {
+		liveRec := httptest.NewRecorder()
+		c.getTaskCenterLive(liveRec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
+		var live RunLive
+		if err := json.Unmarshal(liveRec.Body.Bytes(), &live); err != nil || len(live.Runs) != 1 {
+			t.Fatalf("live before binding: %s (%v)", liveRec.Body.String(), err)
+		}
+		runID := live.Runs[0].RunID
+		cancelRec := httptest.NewRecorder()
+		c.cancelRun(cancelRec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(runID, 10)))
+		if cancelRec.Code != http.StatusAccepted {
+			t.Fatalf("cancel before binding: %d %s", cancelRec.Code, cancelRec.Body.String())
+		}
+		body()
+		clearCancelledPreviewRuns(t, c)
+	}
+	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
+	rec := httptest.NewRecorder()
+	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var plan RelocationPlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("binding after terminal pruning: %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	restarted := restartController(t, c, store, root)
+	if got := awaitRelocationPlan(t, restarted, plan.ID); got.Status != "cancelled" || got.RunID == 0 {
+		t.Fatalf("terminal fact lost before binding: %+v", got)
+	}
+}
+
+func clearCancelledPreviewRuns(t *testing.T, c *Controller) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c.clearTasks(rec, httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=cancelled", nil))
+	var result struct {
+		Removed int `json:"removed"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil || rec.Code != http.StatusOK || result.Removed != 1 {
+		t.Fatalf("clear cancelled check history: %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
 }
 
 func TestRelocationPreviewExposesPolicyValuesForMappingsAndConflicts(t *testing.T) {
@@ -335,14 +382,18 @@ func TestRelocationPreviewExposesPolicyValuesForMappingsAndConflicts(t *testing.
 	c.config.Replace(&cfg)
 	plan := startRelocationPreview(t, c, lib.ID, target)
 	mappings := previewDetails(t, c, plan.ID, "kind=policy")
-	if len(mappings.Items) != 1 { t.Fatalf("policy mapping: %+v", mappings) }
+	if len(mappings.Items) != 1 {
+		t.Fatalf("policy mapping: %+v", mappings)
+	}
 	mapping := mappings.Items[0]
 	if mapping.PolicyBefore == nil || mapping.PolicyAfter == nil || mapping.PolicyBefore.StorageProfile != "custom" || mapping.PolicyBefore.IOPolicy.ScanConcurrency != 3 || mapping.PolicyAfter.IOPolicy.ArchiveOpenConcurrency != 4 || !mapping.PolicyAfter.IOPolicy.DisableSameDiskPageCache {
 		t.Fatalf("mapping lacks actual IO values: %+v", mapping)
 	}
 	blockers := previewDetails(t, c, plan.ID, "kind=blocker")
 	for _, detail := range blockers.Items {
-		if detail.Reason != "policy_conflict" { continue }
+		if detail.Reason != "policy_conflict" {
+			continue
+		}
 		if detail.PolicyBefore == nil || detail.PolicyAfter == nil || detail.PolicyBefore.IOPolicy.ScanConcurrency != 7 || detail.PolicyBefore.IOPolicy.HashConcurrency != 9 || detail.PolicyAfter.IOPolicy.ScanConcurrency != 3 || !detail.PolicyAfter.IOPolicy.PauseBackgroundWhenReading || detail.PolicyBefore.IOPolicy.IdleOnlyHeavyTasks {
 			t.Fatalf("conflict lacks existing and proposed values: %+v", detail)
 		}
