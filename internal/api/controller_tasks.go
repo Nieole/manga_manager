@@ -67,6 +67,10 @@ var errTaskAlreadyRunning = errors.New("task already running")
 // 将来某个真正的内部错误伪装成「已在运行」，用户等一个永远不会出现的任务。
 // 判定口径与 retryTask 一致；conflict 与 failure 是两条分支各自的英文提示。
 func writeTaskLaunchError(w http.ResponseWriter, err error, conflict, failure string) {
+	if errors.Is(err, errLibraryUnavailable) {
+		writeLibraryUnavailable(w)
+		return
+	}
 	if errors.Is(err, errTaskAlreadyRunning) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": conflict})
 		return

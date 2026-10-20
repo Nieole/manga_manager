@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,12 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
+
+	release, ok := c.guardLibraryRead(w, libraryID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if lib, err := c.store.GetLibrary(ctx, libraryID); err == nil && c.watcher != nil {
 		c.watcher.UnwatchLibrary(lib.Path)
@@ -210,6 +217,12 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Name and Path are required")
 		return
 	}
+	release, ok := c.guardLibraryRead(w, libraryID)
+	if !ok {
+		return
+	}
+	defer release()
+
 	existingLib, err := c.store.GetLibrary(ctx, libraryID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Library not found")
@@ -292,6 +305,19 @@ func (c *Controller) startLibraryScanRun(lib database.Library, force bool, trigg
 	storagePolicy := config.ResolveStoragePolicy(cfg, lib.Path)
 
 	spec := RunSpec{
+		ValidateAccess: func() error {
+			current, err := c.store.GetLibrary(context.Background(), lib.ID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if current.Path != lib.Path {
+				return errLibraryUnavailable
+			}
+			return nil
+		},
 		Key:         fmt.Sprintf("scan_library_%d", lib.ID),
 		StartCode:   "task.msg.scan_library.start",
 		StartParams: map[string]string{"name": lib.Name},

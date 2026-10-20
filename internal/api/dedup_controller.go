@@ -56,6 +56,24 @@ func (c *Controller) removeBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Acquire all affected libraries before changing any book, then reload paths below.
+	held := map[int64]bool{}
+	for _, id := range req.BookIDs {
+		book, err := c.store.GetBook(r.Context(), id)
+		if err != nil {
+			continue
+		}
+		if held[book.LibraryID] {
+			continue
+		}
+		release, ok := c.guardLibraryRead(w, book.LibraryID)
+		if !ok {
+			return
+		}
+		defer release()
+		held[book.LibraryID] = true
+	}
+
 	var trashDir string
 	if req.MoveToTrash {
 		trashDir = filepath.Join(filepath.Dir(c.currentConfig().Database.Path), "trash")

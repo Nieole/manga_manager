@@ -221,6 +221,17 @@ func (c *Controller) openSeriesDirectory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	release, ok := c.guardLibraryRead(w, series.LibraryID)
+	if !ok {
+		return
+	}
+	defer release()
+	series, err = c.store.GetSeries(r.Context(), seriesID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "Series not found")
+		return
+	}
+
 	path := strings.TrimSpace(series.Path)
 	if path == "" {
 		jsonError(w, http.StatusBadRequest, "Series directory is not available")

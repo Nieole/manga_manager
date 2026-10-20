@@ -394,6 +394,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	})
 	// 构建「再发起一次」的注册表：它同时是可重试与**可续跑**两条判据的来源，因此必须在任何运行
 	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
+	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
 
 	return c
@@ -1352,6 +1353,11 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, ok := c.guardBookRead(w, r, bookID)
+	if !ok {
+		return
+	}
+	defer release()
 	book, err := c.store.GetBook(ctx, bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book not found")
