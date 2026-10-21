@@ -2098,7 +2098,7 @@ export const messages: MessageCatalog = {
     "relocation.protection.active": "Relocation protection is active",
     "relocation.protection.manualScan": "Manual scan started. Relocation protection remains active; automatic processing and missing-record cleanup stay disabled.",
     "relocation.protection.explanation": "Automatic scans, watching and missing-record cleanup are disabled. Manual scans, returning files, restarts and ordinary edits do not remove protection. An administrator must explicitly restore processing.",
-    "relocation.protection.originalSettings": "Retained original settings: scan mode {{mode}}, interval {{interval}} minutes, formats {{formats}}.",
+    "relocation.protection.originalSettings": "Retained original settings: scan mode {{mode}}, interval (minutes) {{interval}}, formats {{formats}}.",
     "relocation.protection.consequences": "Accepting this plan's file anomalies relocates every original record. Some books may remain unreadable. Automatic processing will stop, and missing books, series and their associated records will receive persistent protection. Equal file sizes do not prove equal content.",
     "relocation.protection.acceptAnomalies": "I reviewed this plan's anomalies, accept that some books may remain unreadable, and agree to preserve all original records with relocation protection.",
     "relocation.protection.completedHint": "All original records and associations were relocated. Automatic processing is disabled and missing-record cleanup is persistently blocked. No scan was started.",
