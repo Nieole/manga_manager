@@ -175,7 +175,7 @@ func (s *Service) SetRun(ctx context.Context, id, runID int64) error {
 }
 
 func (s *Service) SetStatus(ctx context.Context, id int64, status string) error {
-	_, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET status=? WHERE id=?`, status, id)
+	_, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET status=? WHERE id=? AND status IN ('pending','checking')`, status, id)
 	return err
 }
 

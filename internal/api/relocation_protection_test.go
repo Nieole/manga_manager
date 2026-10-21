@@ -14,9 +14,94 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
+
+type previewReadBarrierKey struct{}
+
+type delayedPreviewRunStore struct {
+	task.Store
+	entered chan struct{}
+	resume  chan struct{}
+}
+
+func (s *delayedPreviewRunStore) LoadRun(ctx context.Context, id int64) (task.Run, error) {
+	if ctx.Value(previewReadBarrierKey{}) != nil {
+		close(s.entered)
+		<-s.resume
+	}
+	return s.Store.LoadRun(ctx, id)
+}
+
+type delayedPreviewFiles struct {
+	relocation.HostFiles
+	once    sync.Once
+	entered chan struct{}
+	resume  chan struct{}
+}
+
+func (f *delayedPreviewFiles) Stat(path string) (os.FileInfo, error) {
+	f.once.Do(func() { close(f.entered); <-f.resume })
+	return f.HostFiles.Stat(path)
+}
+
+func TestRelocationPreviewPollingCannotOverwriteCompletedFacts(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := &delayedPreviewFiles{entered: make(chan struct{}), resume: make(chan struct{})}
+	c.relocation.Files = files
+	originalRuns := c.taskEngine.runStore
+	runs := &delayedPreviewRunStore{Store: originalRuns, entered: make(chan struct{}), resume: make(chan struct{})}
+	c.taskEngine.runStore = runs
+	body, _ := json.Marshal(map[string]string{"target_root": target})
+	created := httptest.NewRecorder()
+	c.createRelocationPlan(created, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var plan RelocationPlan
+	if err := json.Unmarshal(created.Body.Bytes(), &plan); err != nil || created.Code != http.StatusAccepted {
+		t.Fatalf("create: %d %s %v", created.Code, created.Body.String(), err)
+	}
+	<-files.entered
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := requestWithRouteParam(http.MethodGet, "/api/relocation-plans/1", nil, "planId", strconv.FormatInt(plan.ID, 10))
+		req = req.WithContext(context.WithValue(req.Context(), previewReadBarrierKey{}, true))
+		c.getRelocationPlan(response, req)
+	}()
+	<-runs.entered
+	close(files.resume)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		run, err := originalRuns.LoadRun(context.Background(), plan.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Status.IsTerminal() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("check did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(runs.resume)
+	<-done
+	var got RelocationPlan
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil || response.Code != http.StatusOK || got.Status != "checked" {
+		t.Fatalf("poll overwrote completed check: %d %s %v", response.Code, response.Body.String(), err)
+	}
+	latest := awaitRelocationPlan(t, c, plan.ID)
+	if latest.Status != "checked" || latest.AnomalyCount != 1 {
+		t.Fatalf("completed facts lost: %+v", latest)
+	}
+}
 
 type delayedSeriesAdmissionStore struct {
 	database.Store

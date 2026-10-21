@@ -219,7 +219,9 @@ func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan Relocatio
 				status = "interrupted"
 			}
 			if err := c.relocation.SetStatus(ctx, plan.ID, status); err == nil {
-				plan.Status = status
+				if current, loadErr := c.relocation.Get(ctx, plan.ID); loadErr == nil {
+					return current
+				}
 			}
 		}
 	}
