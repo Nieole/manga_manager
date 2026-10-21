@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"manga-manager/internal/scanner"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"gopkg.in/yaml.v3"
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 )
 
@@ -91,4 +95,154 @@ func TestRestorationRecheckIsReadOnlyAndReleaseRequiresCurrentRiskConsent(t *tes
 	if response.StatusCode != http.StatusAccepted || duplicate.ID != operation.ID {
 		t.Fatalf("duplicate: %d %s", response.StatusCode, body)
 	}
+}
+
+func TestRestorationRejectsConfigPolicyEditedOnDiskAfterCheck(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "missing.cbz", 1)
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
+	check := startRestorationCheck(t, c, lib.ID)
+	if err := c.config.Save(c.configPath, nil, func(*config.Config) error { return nil }, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	disk, err := config.LoadConfigFile(c.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disk.Library.StorageProfile = "hdd_external"
+	encoded, err := yaml.Marshal(disk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = config.AtomicWriteFile(c.configPath, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	op := submitRestoration(t, c, lib.ID, check.ID, "none", true)
+	if op.Status != "failed" || op.Code != "relocation_stale_plan" {
+		t.Fatalf("external policy edit accepted: %+v", op)
+	}
+	if p, err := store.LibraryRelocationProtection(context.Background(), lib.ID); err != nil || p == nil {
+		t.Fatalf("stale consent removed protection: %+v %v", p, err)
+	}
+}
+
+func startRestorationCheck(t *testing.T, c *Controller, libraryID int64) RelocationPlan {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c.createRestorationCheck(rec, requestWithRouteParam(http.MethodPost, "/restore/checks", []byte(`{}`), "libraryId", strconv.FormatInt(libraryID, 10)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("check: %d %s", rec.Code, rec.Body.String())
+	}
+	var plan RelocationPlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	return awaitRelocationPlan(t, c, plan.ID)
+}
+
+func submitRestoration(t *testing.T, c *Controller, libraryID, planID int64, mode string, accept bool) RelocationOperation {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"plan_id": planID, "confirm_release": true, "accept_loss_risk": accept, "scan_mode": mode, "scan_interval": 23, "scan_formats": "cbz"})
+	rec := httptest.NewRecorder()
+	c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/restore/release", body, "libraryId", strconv.FormatInt(libraryID, 10)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("release: %d %s", rec.Code, rec.Body.String())
+	}
+	var op RelocationOperation
+	if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil {
+		t.Fatal(err)
+	}
+	return awaitRelocationOperation(t, c, op.ID)
+}
+
+func TestRestorationWatcherFailureKeepsProtectionThroughFreshStartup(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "missing.cbz", 1)
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(filepath.Join(target, "series"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
+	check := startRestorationCheck(t, c, lib.ID)
+	offline := target + "-offline"
+	effects := c.relocation.RestoreEffects
+	c.relocation.RestoreEffects = func(ctx context.Context, op RelocationOperation) error {
+		if err := os.Rename(target, offline); err != nil {
+			return err
+		}
+		return effects(ctx, op)
+	}
+	op := submitRestoration(t, c, lib.ID, check.ID, "watch", true)
+	if op.Status != "paths_committed" || op.Code != "restoration_recovering" || !op.Protected {
+		t.Fatalf("watch failure exposed half release: %+v", op)
+	}
+	if p, err := store.LibraryRelocationProtection(context.Background(), lib.ID); err != nil || p == nil {
+		t.Fatalf("watch failure lost protection: %+v %v", p, err)
+	}
+	if err := c.scanner.CleanupLibrary(context.Background(), lib.ID); !errors.Is(err, database.ErrLibraryProtected) {
+		t.Fatalf("pending release cleanup: %v", err)
+	}
+	if err := c.config.Save(c.configPath, nil, func(*config.Config) error { return nil }, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	fresh, freshStore := freshRestorationController(t, c, store, root)
+	op = awaitRelocationOperation(t, fresh, op.ID)
+	if op.Status != "paths_committed" || op.Code != "restoration_recovering" {
+		t.Fatalf("offline startup falsely completed: %+v", op)
+	}
+	if p, err := freshStore.LibraryRelocationProtection(context.Background(), lib.ID); err != nil || p == nil {
+		t.Fatalf("startup lost protection: %+v %v", p, err)
+	}
+	rec := httptest.NewRecorder()
+	fresh.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("pending recovery allowed access: %d", rec.Code)
+	}
+	if err := os.Rename(offline, target); err != nil {
+		t.Fatal(err)
+	}
+	final, finalStore := freshRestorationController(t, fresh, freshStore, root)
+	op = awaitRelocationOperation(t, final, op.ID)
+	if op.Status != "completed" || op.Protected {
+		t.Fatalf("restoration did not recover: %+v", op)
+	}
+	if p, err := finalStore.LibraryRelocationProtection(context.Background(), lib.ID); err != nil || p != nil {
+		t.Fatalf("completed recovery still protected: %+v %v", p, err)
+	}
+	if _, err := finalStore.GetBook(context.Background(), book.ID); err != nil {
+		t.Fatalf("release deleted missing book: %v", err)
+	}
+	for _, run := range taskCenterFirstPage(t, final) {
+		if run.Type == "scan_library" || run.Type == "cleanup_library" {
+			t.Fatalf("release started immediate processing: %+v", run)
+		}
+	}
+}
+
+func freshRestorationController(t *testing.T, previous *Controller, store database.Store, root string) (*Controller, database.Store) {
+	t.Helper()
+	previous.Close()
+	if _, err := store.DB().Exec(`DELETE FROM runs`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	freshStore, err := database.NewStore(filepath.Join(root, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = freshStore.Close() })
+	disk, err := config.LoadConfigFile(previous.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := config.NewManager(disk)
+	fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, previous.configPath, defaultControllerCacheSizes())
+	t.Cleanup(fresh.Close)
+	return fresh, freshStore
 }
