@@ -306,7 +306,7 @@ func writePolicyConfig(t *testing.T, path string, cfg config.Config) {
 }
 
 func TestRelocationPolicyDivergentEditsStayBlockedAcrossRestartsAndHistoryPruning(t *testing.T) {
-	for _, edit := range []string{"owned_policy", "default_profile", "default_io"} {
+	for _, edit := range []string{"owned_policy", "default_profile", "default_io", "ancestor_policy"} {
 		t.Run(edit, func(t *testing.T) {
 			c, store, _, root := newTestController(t)
 			lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
@@ -341,6 +341,8 @@ func TestRelocationPolicyDivergentEditsStayBlockedAcrossRestartsAndHistoryPrunin
 				diverged.Library.StoragePolicies[0].IOPolicy.ArchiveOpenConcurrency = 8
 			case "default_profile":
 				diverged.Library.StorageProfile = "network"
+			case "ancestor_policy":
+				diverged.Library.StoragePolicies = append(diverged.Library.StoragePolicies, config.LibraryStoragePolicy{Path: root, StorageProfile: "network"})
 			case "default_io":
 				diverged.Library.IOPolicy.ArchiveOpenConcurrency = 7
 			}

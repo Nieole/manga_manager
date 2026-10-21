@@ -158,8 +158,6 @@ func TestRelocationPolicyCrashProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	submitRelocation(t, c, planID)
-	select {
-	case <-time.After(20 * time.Second):
-		t.Fatal("durability boundary not reached")
-	}
+	<-time.After(20 * time.Second)
+	t.Fatal("durability boundary not reached")
 }

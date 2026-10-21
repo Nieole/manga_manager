@@ -15,6 +15,7 @@ var errPolicyRecoveryConflict = errors.New("relocation_policy_recovery_conflict"
 // policyJournal owns only affected directory entries. Unrelated settings and
 // credentials never enter durable recovery data or operation responses.
 type policyJournal struct {
+	Unowned        []config.LibraryStoragePolicy `json:"unowned"`
 	Version        int                           `json:"version"`
 	Keys           []string                      `json:"keys"`
 	Before         []config.LibraryStoragePolicy `json:"before"`
@@ -42,9 +43,19 @@ func (j policyJournal) entries(cfg config.Config) []config.LibraryStoragePolicy 
 	return result
 }
 
+func (j policyJournal) unowned(cfg config.Config) []config.LibraryStoragePolicy {
+	result := []config.LibraryStoragePolicy{}
+	for _, p := range cfg.Library.StoragePolicies {
+		if !j.owns(p.Path) {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
 func (j policyJournal) matches(cfg config.Config, entries []config.LibraryStoragePolicy) bool {
 	config.NormalizeLibraryStorageConfig(&cfg)
-	return cfg.Library.StorageProfile == j.DefaultProfile && cfg.Library.IOPolicy == j.DefaultIO && reflect.DeepEqual(j.entries(cfg), entries)
+	return cfg.Library.StorageProfile == j.DefaultProfile && cfg.Library.IOPolicy == j.DefaultIO && reflect.DeepEqual(j.entries(cfg), entries) && reflect.DeepEqual(j.unowned(cfg), j.Unowned)
 }
 
 func (j policyJournal) patch(cfg config.Config, entries []config.LibraryStoragePolicy) config.Config {
@@ -100,6 +111,7 @@ func (s *Service) preparePolicies(ctx context.Context, op *RelocationOperation, 
 	next := config.CloneConfig(disk)
 	next.Library.StoragePolicies = MappedPolicies(disk, op.SourceRoot, op.TargetRoot)
 	j.Before, j.After = j.entries(disk), j.entries(next)
+	j.Unowned = j.unowned(disk)
 	data, err := json.Marshal(j)
 	if err != nil {
 		return nil, err
