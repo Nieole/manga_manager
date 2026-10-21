@@ -2125,7 +2125,7 @@ export const messages: MessageCatalog = {
     "relocation.detailsError": "无法读取本页明细。",
     "relocation.retryDetails": "重试本页",
     "relocation.counts": "系列 {{series}} · 书 {{books}} · 策略 {{policies}}",
-    "relocation.checkedHint": "检查完成，请核对原根、目标根与映射。有阻断项、书文件异常或目录策略变更的计划暂不能提交。",
+    "relocation.checkedHint": "检查完成，请核对当前根、原记录根、目标根、路径映射及目录策略。阻断项必须先解决；书文件异常需明确接受后才能提交。",
     "relocation.taskCenter": "在任务中心查看检查与迁移运行",
     "relocation.viewResult": "查看路径迁移结果",
     "relocation.examples": "路径映射示例",

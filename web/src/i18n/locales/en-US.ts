@@ -2125,7 +2125,7 @@ export const messages: MessageCatalog = {
     "relocation.detailsError": "Could not load this page of details.",
     "relocation.retryDetails": "Retry this page",
     "relocation.counts": "Series: {{series}} · Books: {{books}} · Policies: {{policies}}",
-    "relocation.checkedHint": "Check complete. Review the roots and mappings before confirming. Plans with blockers, book anomalies or directory policy changes cannot be submitted yet.",
+    "relocation.checkedHint": "Check complete. Review the current root, recorded source root, target root, mappings and directory policies. Resolve blockers before submitting; explicitly accept any book file anomalies.",
     "relocation.taskCenter": "View checks and relocation runs in the task center",
     "relocation.viewResult": "View relocation result",
     "relocation.examples": "Path mapping examples",
