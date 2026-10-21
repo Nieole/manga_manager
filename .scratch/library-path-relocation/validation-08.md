@@ -14,7 +14,7 @@ The subprocess harness exits at the actual atomic configuration replacement, run
 
 Barrier-controlled browser saving and Reload share the migration publication boundary; stale browser updates return 409. External edits during runtime application or derived effects retain access restrictions and preserve edited bytes. Failed ordinary Save/Reload compensation also preserves a concurrent external editor's newer file. The latter two regressions were observed failing before their fixes. Source duplicate policy ambiguity and ancestor drift were likewise observed RED before implementation.
 
-UI tests preserve the single result view for prepared and paths-committed states and prevent replacing a recovery operation with a new check. The real UI evidence is supplied by the integration owner.
+UI tests preserve the single result view for prepared and paths-committed states and prevent replacing a recovery operation with a new check. The integration owner verified actual HTTP and Vite UI from `0962f35` against a dedicated temporary demonstration library. Library 3 and series 3 moved from `policy-source` to `policy-target`; preview showed one `hdd_external` policy and the operation completed. A separate inspection confirmed the policy path in the temporary configuration file became `policy-target`. The two screenshots and exact source provenance are recorded in `screenshots/README.md`. They do not claim to exercise the later zero-policy disk-facts fix.
 
 ## Checks
 
