@@ -532,3 +532,44 @@ func TestRelocationPolicyExternalEditDuringEffectsRemainsBlocked(t *testing.T) {
 		t.Fatalf("mixed policy read: %d", rec.Code)
 	}
 }
+
+func TestRelocationZeroPolicyPreviewRejectsUnpublishedDiskPolicy(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	seedBookArchivePages(t, c, book, png1x1)
+	target := filepath.Join(root, "target")
+	if err := os.Rename(lib.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	cfg := c.currentConfig()
+	if err := c.persistConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	if plan.PolicyCount != 0 {
+		t.Fatal("fixture must have no mapped policy")
+	}
+	edited := config.CloneConfig(cfg)
+	edited.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: filepath.Join(lib.Path, "series"), StorageProfile: "hdd_external"}}
+	writePolicyConfig(t, c.configPath, edited)
+	op := submitRelocation(t, c, plan.ID)
+	op = awaitPolicyOperation(t, c, op.ID)
+	if op.Status != "failed" || op.Code != "relocation_stale_plan" {
+		t.Fatalf("unpublished policy committed: %+v", op)
+	}
+	got, err := store.GetBook(context.Background(), book.ID)
+	if err != nil || got.Path != book.Path {
+		t.Fatalf("stale plan changed book path: %v %s", err, got.Path)
+	}
+	current, err := store.GetLibrary(context.Background(), lib.ID)
+	if err != nil || current.Path != lib.Path {
+		t.Fatal("stale plan changed library path")
+	}
+	disk, err := config.LoadConfigFile(c.configPath)
+	if err != nil || config.ResolveStoragePolicy(*disk, book.Path).StorageProfile != "hdd_external" {
+		t.Fatal("external policy lost")
+	}
+	if len(c.currentConfig().Library.StoragePolicies) != 0 {
+		t.Fatal("test accidentally reloaded disk edit")
+	}
+}

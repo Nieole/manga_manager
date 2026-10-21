@@ -220,7 +220,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		if _, e = tx.ExecContext(ctx, `UPDATE relocation_operations SET status=?,result=? WHERE id=?`, op.Status, data, op.ID); e != nil {
 			return e
 		}
-		if nextConfig != nil {
+		if session != nil {
 			if e = session.Verify(); e != nil {
 				return e
 			}
@@ -238,7 +238,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 			}
 		}
 		handle.Phase("refresh", "task.msg.relocation.committing", nil)
-		if nextConfig != nil {
+		if session != nil {
 			return s.finish(context.WithoutCancel(ctx), op, session.Verify)
 		}
 		return s.finish(context.WithoutCancel(ctx), op)

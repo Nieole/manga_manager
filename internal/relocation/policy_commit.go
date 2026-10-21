@@ -88,10 +88,13 @@ func (s *Service) withCommitConfig(fn func(config.Config, *config.UpdateSession)
 
 func (s *Service) preparePolicies(ctx context.Context, op *RelocationOperation, cfg config.Config, session *config.UpdateSession) (*config.Config, error) {
 	plan, err := s.Get(ctx, op.PlanID)
-	if err != nil || plan.PolicyCount == 0 {
+	if err != nil {
 		return nil, err
 	}
 	if session == nil {
+		if plan.PolicyCount == 0 {
+			return nil, nil
+		}
 		return nil, errors.New("configuration persistence unavailable")
 	}
 	disk, err := session.Read()
@@ -137,6 +140,9 @@ func (s *Service) preparePolicies(ctx context.Context, op *RelocationOperation, 
 		return nil, err
 	}
 	op.Status = "prepared"
+	if plan.PolicyCount == 0 {
+		return nil, nil
+	}
 	if err = session.Write(next); err != nil {
 		return nil, err
 	}
