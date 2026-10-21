@@ -283,7 +283,7 @@ func TestRelocationPreviewRequiresAdminAndCSRFForHostPathResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = awaitRelocationPlan(t, c, started.ID)
-	for _, path := range []string{"/api/relocation-plans/" + strconv.FormatInt(started.ID, 10), "/api/relocation-plans/" + strconv.FormatInt(started.ID, 10) + "/details", "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-plans/latest"} {
+	for _, path := range []string{"/api/relocation-plans/" + strconv.FormatInt(started.ID, 10), "/api/relocation-plans/" + strconv.FormatInt(started.ID, 10) + "/details", "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-plans/latest", "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-source-roots"} {
 		response, data := authDo(t, reader, http.MethodGet, srv.URL+path, "", nil)
 		if response.StatusCode != http.StatusForbidden || strings.Contains(string(data), target) || strings.Contains(string(data), lib.Path) {
 			t.Fatalf("reader received host plan: %d %s", response.StatusCode, data)

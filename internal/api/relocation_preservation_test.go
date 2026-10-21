@@ -18,6 +18,15 @@ import (
 )
 
 func TestRelocationCommitPreservesSeededMetadataAndUserAssociations(t *testing.T) {
+	assertRelocationPreservesAssociations(t, false)
+}
+
+func TestRelocationRepairPreservesSeededMetadataAndUserAssociations(t *testing.T) {
+	assertRelocationPreservesAssociations(t, true)
+}
+
+func assertRelocationPreservesAssociations(t *testing.T, repair bool) {
+	t.Helper()
 	c, store, _, root := newTestController(t)
 	ctx := context.Background()
 	lib, series, book := seedBookFixture(t, store, root, "原盘", "嵌套/系列", "第一卷.cbz", 10)
@@ -162,7 +171,15 @@ func TestRelocationCommitPreservesSeededMetadataAndUserAssociations(t *testing.T
 	if err = os.Rename(lib.Path, target); err != nil {
 		t.Fatal(err)
 	}
-	plan := startRelocationPreview(t, c, lib.ID, target)
+	var plan RelocationPlan
+	if repair {
+		if _, err = store.DB().Exec(`UPDATE libraries SET path=? WHERE id=?`, target, lib.ID); err != nil {
+			t.Fatal(err)
+		}
+		plan = startRepairPreview(t, c, lib.ID, lib.Path, target)
+	} else {
+		plan = startRelocationPreview(t, c, lib.ID, target)
+	}
 	if plan.Status != "checked" || plan.BlockerCount != 0 || plan.AnomalyCount != 0 {
 		t.Fatalf("preview: %+v", plan)
 	}

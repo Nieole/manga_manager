@@ -224,6 +224,12 @@ export interface RelocationPlan {
   updated_at: string;
 }
 
+export interface RelocationSourceRoots {
+  library_root: string;
+  records_outside_current_root: boolean;
+  candidates: string[];
+}
+
 export interface RelocationDetails {
   items: RelocationDetail[];
   total: number;
