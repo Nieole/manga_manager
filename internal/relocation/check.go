@@ -132,6 +132,17 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	}
 	facts := sha256.New()
 	_, _ = fmt.Fprintf(facts, "%d\n%s\n%s\n%s\n", plan.LibraryID, plan.LibraryRoot, plan.SourceRoot, plan.TargetRoot)
+	var scanMode, scanFormats string
+	var scanInterval int64
+	if err = s.dbtx().QueryRowContext(ctx, `SELECT scan_mode,scan_interval,scan_formats FROM libraries WHERE id=?`, plan.LibraryID).Scan(&scanMode, &scanInterval, &scanFormats); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(facts, "automatic:%s:%d:%s\n", scanMode, scanInterval, scanFormats)
+	var protectionOperation int64
+	if err = s.dbtx().QueryRowContext(ctx, `SELECT COALESCE((SELECT operation_id FROM library_relocation_protection WHERE library_id=?),0)`, plan.LibraryID).Scan(&protectionOperation); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(facts, "protection:%d\n", protectionOperation)
 	err = s.walkRecords(ctx, plan.LibraryID, "series", func(item storedRecord) error {
 		if err = handle.Checkpoint(ctx); err != nil {
 			return err

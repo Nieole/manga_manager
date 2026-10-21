@@ -6,6 +6,7 @@ export interface Library {
   koreader_sync_enabled?: boolean;
   scan_interval?: number;
   scan_formats?: string;
+  relocation_protected?: boolean;
 }
 
 export interface SearchHit {

@@ -149,3 +149,13 @@ CREATE TABLE IF NOT EXISTS user_series_review (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_series_review_series ON user_series_review(series_id);
+CREATE TABLE IF NOT EXISTS library_relocation_protection (
+ library_id INTEGER PRIMARY KEY REFERENCES libraries(id) ON DELETE CASCADE,
+ operation_id INTEGER NOT NULL,
+ plan_id INTEGER NOT NULL,
+ facts_digest TEXT NOT NULL,
+ anomaly_count INTEGER NOT NULL,
+ scan_mode TEXT NOT NULL,
+ scan_interval INTEGER NOT NULL,
+ scan_formats TEXT NOT NULL
+);

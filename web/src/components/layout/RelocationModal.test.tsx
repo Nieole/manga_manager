@@ -23,6 +23,34 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it('requires explicit consent bound to the displayed anomalous plan', async () => {
+  get.mockImplementation((url: string) => url.includes('details')
+    ? Promise.resolve({ data: { items: [], total: 0, offset: 0, limit: 50 } })
+    : Promise.resolve({ data: { ...plan, blocker_count: 0 } }));
+  post.mockResolvedValue({ data: { id: 30, plan_id: 12, status: 'completed', protected: true, series_count: 1, book_count: 2 } });
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  const confirm = await screen.findByText('relocation.commit');
+  expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText('relocation.protection.acceptAnomalies'));
+  fireEvent.change(screen.getByPlaceholderText('directoryPicker.placeholder'), { target: { value: '/other' } });
+  fireEvent.change(screen.getByPlaceholderText('directoryPicker.placeholder'), { target: { value: '/new' } });
+  expect((confirm as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText('relocation.protection.acceptAnomalies'));
+  fireEvent.click(confirm);
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/relocation-plans/12/commit', { accept_anomalies: true }));
+  await screen.findByText('relocation.protection.active');
+});
+
+it('reopens durable protection with original automatic settings', async () => {
+  get.mockImplementation((url: string) => url.includes('details')
+    ? Promise.resolve({ data: { items: [], total: 0, offset: 0, limit: 50 } })
+    : Promise.resolve({ data: { ...plan, status: 'consumed', protection: { scan_mode: 'watch', scan_interval: 17, scan_formats: 'cbz' } } }));
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  await screen.findByText('relocation.protection.active');
+  expect(screen.getByText('relocation.protection.originalSettings')).toBeTruthy();
+  expect(screen.queryByText('relocation.protection.acceptAnomalies')).toBeNull();
+});
+
 it('chooses a server directory and starts a read-only preview', async () => {
   render(<RelocationModal library={library} onClose={vi.fn()} />);
   fireEvent.click(screen.getByText('directoryPicker.browse'));

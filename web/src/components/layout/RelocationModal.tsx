@@ -46,6 +46,8 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   const [target, setTarget] = useState(initialTarget || '');
   const [plan, setPlan] = useState<RelocationPlan | null>(null);
   const [needsRecheck, setNeedsRecheck] = useState(false);
+  const [acceptedPlan, setAcceptedPlan] = useState<number | null>(null);
+  const changeTarget = (value: string) => { setTarget(value); setAcceptedPlan(null); };
   const completedCallback = useRef(onCompleted);
   useEffect(() => { completedCallback.current = onCompleted; }, [onCompleted]);
   const [operation, setOperation] = useState<RelocationOperation | null>(null);
@@ -65,7 +67,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   const runID = plan?.run_id;
   const status = plan?.status;
   const committing = operation?.status === 'pending' || operation?.status === 'paths_committed';
-  const canCommit = plan?.status === 'checked' && !plan.blocker_count && !plan.anomaly_count && !plan.policy_count && !operation && !plan?.operation_id && !needsRecheck;
+  const canCommit = plan?.status === 'checked' && !plan.blocker_count && !plan.policy_count && !operation && !plan?.operation_id && !needsRecheck;
   const busy = plan?.status === 'pending' || plan?.status === 'checking';
 
   useEffect(() => {
@@ -141,7 +143,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     if (!plan || target !== plan.target_root) return;
     setSubmitting(true); setError('');
     try {
-      const { data } = await apiClient.post<RelocationOperation>(`/api/relocation-plans/${plan.id}/commit`, {});
+      const { data } = await apiClient.post<RelocationOperation>(`/api/relocation-plans/${plan.id}/commit`, plan.anomaly_count ? { accept_anomalies: acceptedPlan === plan.id } : {});
       setOperation(data);
       if (data.status === 'completed') onCompleted?.();
     } catch (err: unknown) {
@@ -152,7 +154,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   };
 
   const check = async () => {
-    setSubmitting(true); setError(''); setCancelling(false);
+    setSubmitting(true); setError(''); setCancelling(false); setAcceptedPlan(null);
     try {
       const { data } = await apiClient.post<RelocationPlan>(`/api/libraries/${library.id}/relocation-plans`, { target_root: target });
       setPlan(data); setOperation(null); setNeedsRecheck(false); setOffset(0); setPage(null); setRun(null);
@@ -192,25 +194,34 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     footer={<><button type="button" className={modalGhostButtonClass} onClick={onClose}>{t('relocation.close')}</button>
       {committing && commitRun?.can_cancel && <button type="button" className={modalGhostButtonClass} disabled={cancelling} onClick={cancelCommit}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCommit')}</button>}
       {busy ? <button type="button" className={modalGhostButtonClass} disabled={cancelling || run?.can_cancel === false} onClick={cancel}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCheck')}</button>
-        : <>{!committing && <button type="button" className={modalGhostButtonClass} disabled={!target || submitting || loading} onClick={check}>{t('relocation.check')}</button>}{canCommit && <button type="button" className={modalPrimaryButtonClass} disabled={target !== plan.target_root || submitting || loading} onClick={commit}>{t('relocation.commit')}</button>}</>}</>}>
+        : <>{!committing && <button type="button" className={modalGhostButtonClass} disabled={!target || submitting || loading} onClick={check}>{t('relocation.check')}</button>}{canCommit && <button type="button" className={modalPrimaryButtonClass} disabled={target !== plan.target_root || submitting || loading || Boolean(plan.anomaly_count && acceptedPlan !== plan.id)} onClick={commit}>{t('relocation.commit')}</button>}</>}</>}>
     <div className="space-y-5 text-gray-300">
       {loading && <p role="status">{t('common.loading')}</p>}
       <div className={modalSectionClass}><p className="font-medium text-white">{library.name}</p>
         <p className="mt-3 text-xs text-gray-400">{t('relocation.source')}</p><p className="break-all text-sm">{plan?.source_root || library.path}</p>
         <p className="mt-3 text-xs text-gray-400">{t('relocation.target')}</p>
-        <fieldset disabled={busy || committing || submitting || loading} className="mt-2"><DirectoryPicker value={target} onChange={setTarget} recentPaths={[]}
+        <fieldset disabled={busy || committing || submitting || loading} className="mt-2"><DirectoryPicker value={target} onChange={changeTarget} recentPaths={[]}
           browsing={browser.browsing} browseCurrent={browser.browseCurrent} browseParent={browser.browseParent} browseDirs={browser.browseDirs} browseDrives={browser.browseDrives}
           onOpen={browser.openDirectoryBrowser} onClose={() => browser.setBrowsing(false)} onNavigate={browser.navigateDirectoryBrowser}
-          onChooseCurrent={() => { setTarget(browser.browseCurrent); browser.setBrowsing(false); }} /></fieldset>
+          onChooseCurrent={() => { changeTarget(browser.browseCurrent); browser.setBrowsing(false); }} /></fieldset>
         <p className="mt-3 text-xs text-gray-400">{t('relocation.scopeHint')}</p>
       </div>
       {error && <p role="alert" className="text-red-300">{t(error, undefined, t('relocation.commitError.generic'))}</p>}
       {plan && <>
+        {(plan.protection || operation?.protected) && <section className={modalSectionClass} role="status">
+          <p className="font-medium text-amber-200">{t('relocation.protection.active')}</p>
+          <p className="mt-2 text-sm">{t('relocation.protection.explanation')}</p>
+          {plan.protection && <p className="mt-2 text-sm">{t('relocation.protection.originalSettings', { mode: t(`libraryForm.scanMode${plan.protection.scan_mode === 'watch' ? 'Watch' : plan.protection.scan_mode === 'interval' ? 'Interval' : 'None'}`), interval: plan.protection.scan_interval, formats: plan.protection.scan_formats })}</p>}
+        </section>}
         <section className={modalSectionClass} aria-live="polite">
           <p className="font-medium text-white">{t(`relocation.status.${plan.status}`)}</p>
           <p className="mt-2 text-sm">{t('relocation.counts', { series: plan.series_count, books: plan.book_count, policies: plan.policy_count })}</p>
           {run && <p className="mt-2 text-sm">{t(`settings.maintenance.taskPhase.${run.phase || 'roots'}`)} · {run.current}/{run.total}</p>}
           {plan.status === 'checked' && !operation && <p className="mt-2 text-sm text-amber-200">{t('relocation.checkedHint')}</p>}
+          {canCommit && plan.anomaly_count > 0 && <div className="mt-3 space-y-3 rounded-lg border border-amber-700 p-3">
+            <p className="text-sm text-amber-200">{t('relocation.protection.consequences')}</p>
+            <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={acceptedPlan === plan.id} onChange={(event) => setAcceptedPlan(event.target.checked ? plan.id : null)} />{t('relocation.protection.acceptAnomalies')}</label>
+          </div>}
           <a className="mt-3 inline-block text-sm text-komgaPrimary hover:underline" href="/ops?tab=tasks">{t('relocation.taskCenter')}</a>
         </section>
         {operation && <section className={modalSectionClass} aria-live="polite">
@@ -219,14 +230,14 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
           {commitRun && committing && <p className="mt-2 text-sm">{t(`settings.maintenance.taskPhase.${commitRun.phase || 'revalidate'}`)} · {commitRun.current}/{commitRun.total}</p>}
           {operation.code && <p className="mt-2 text-amber-200">{t(`relocation.commitError.${operation.code}`, undefined, t('relocation.commitError.generic'))}</p>}
           {committing && !commitRun?.can_cancel && <p className="mt-2 text-sm">{t('relocation.noCancelCommit')}</p>}
-          {operation.status === 'completed' && <p className="mt-2 text-sm">{t('relocation.completedHint')}</p>}
+          {operation.status === 'completed' && <p className="mt-2 text-sm">{t(operation.protected ? 'relocation.protection.completedHint' : 'relocation.completedHint')}</p>}
         </section>}
         {plan.samples.length > 0 && <section className={modalSectionClass}><h3>{t('relocation.examples')}</h3><ul>{plan.samples.map(detailRow)}</ul></section>}
         <section className={modalSectionClass}>
           <div className="flex flex-wrap gap-2" role="tablist">{[['blocker', 'blockers', plan.blocker_count], ['anomaly', 'anomalies', plan.anomaly_count], ['policy', 'policies', plan.policy_count], ['mapping', 'mappings', plan.series_count + plan.book_count]].map(([value, label, count]) =>
             <button type="button" role="tab" aria-selected={kind === value} key={value} className={`rounded-lg border px-3 py-2 text-sm ${kind === value ? 'border-komgaPrimary text-white' : 'border-gray-700 text-gray-400'}`}
               onClick={() => { if (kind !== value) { setKind(String(value)); setOffset(0); setPage(null); } }}><span>{t(`relocation.${label}`)}</span> <span>({count})</span></button>)}</div>
-          {kind === 'anomaly' && <p className="mt-3 text-xs text-gray-400">{t('relocation.sizeHint')}</p>}
+          {kind === 'anomaly' && <><p className="mt-3 text-xs text-gray-400">{t('relocation.sizeHint')}</p><ul className="mt-2 flex flex-wrap gap-3 text-sm">{Object.entries(plan.anomaly_counts).map(([reason, count]) => <li key={reason}>{t(`relocation.reason.${reason}`)}: {count}</li>)}</ul></>}
           {pageLoading ? <p className="py-4">{t('common.loading')}</p> : pageError ? <div className="py-4"><p role="alert" className="text-red-300">{t('relocation.detailsError')}</p><button type="button" className={modalGhostButtonClass} onClick={() => setDetailsRetry((value) => value + 1)}>{t('relocation.retryDetails')}</button></div>
             : <ul className="max-h-72 overflow-y-auto">{page?.items.map(detailRow)}</ul>}
           {!pageLoading && !pageError && page?.total === 0 && <p className="py-4 text-sm text-gray-500">{t('relocation.empty')}</p>}

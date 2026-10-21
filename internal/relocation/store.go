@@ -215,6 +215,11 @@ func (s *Service) readPlan(row *sql.Row) (RelocationPlan, error) {
 	}
 	plan.ID, plan.RunID, plan.Status, plan.FactsDigest, plan.PoliciesJSON = id, runID, status, digest, policies
 	if !s.transient {
+		var protectionErr error
+		plan.Protection, protectionErr = s.Store.LibraryRelocationProtection(context.Background(), plan.LibraryID)
+		if protectionErr != nil {
+			return plan, protectionErr
+		}
 		err := s.Store.DB().QueryRow(`SELECT id,run_id FROM relocation_operations WHERE plan_id=?`, id).Scan(&plan.OperationID, &plan.CommitRunID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return plan, err

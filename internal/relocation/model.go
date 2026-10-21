@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"manga-manager/internal/config"
+	"manga-manager/internal/database"
 )
 
 type RelocationPolicy struct {
@@ -34,27 +35,28 @@ type RelocationDetail struct {
 }
 
 type RelocationPlan struct {
-	ID            int64              `json:"id"`
-	LibraryID     int64              `json:"library_id"`
-	LibraryName   string             `json:"library_name"`
-	LibraryRoot   string             `json:"library_root"`
-	SourceRoot    string             `json:"source_root"`
-	TargetRoot    string             `json:"target_root"`
-	RunID         int64              `json:"run_id"`
-	OperationID   int64              `json:"operation_id,omitempty"`
-	CommitRunID   int64              `json:"commit_run_id,omitempty"`
-	Status        string             `json:"status"`
-	SeriesCount   int                `json:"series_count"`
-	BookCount     int                `json:"book_count"`
-	BlockerCount  int                `json:"blocker_count"`
-	AnomalyCount  int                `json:"anomaly_count"`
-	PolicyCount   int                `json:"policy_count"`
-	AnomalyCounts map[string]int     `json:"anomaly_counts"`
-	Samples       []RelocationDetail `json:"samples"`
-	CreatedAt     time.Time          `json:"created_at"`
-	UpdatedAt     time.Time          `json:"updated_at"`
-	FactsDigest   string             `json:"-"`
-	PoliciesJSON  string             `json:"-"`
+	ID            int64                                 `json:"id"`
+	LibraryID     int64                                 `json:"library_id"`
+	LibraryName   string                                `json:"library_name"`
+	LibraryRoot   string                                `json:"library_root"`
+	SourceRoot    string                                `json:"source_root"`
+	TargetRoot    string                                `json:"target_root"`
+	RunID         int64                                 `json:"run_id"`
+	OperationID   int64                                 `json:"operation_id,omitempty"`
+	CommitRunID   int64                                 `json:"commit_run_id,omitempty"`
+	Status        string                                `json:"status"`
+	SeriesCount   int                                   `json:"series_count"`
+	BookCount     int                                   `json:"book_count"`
+	BlockerCount  int                                   `json:"blocker_count"`
+	AnomalyCount  int                                   `json:"anomaly_count"`
+	PolicyCount   int                                   `json:"policy_count"`
+	AnomalyCounts map[string]int                        `json:"anomaly_counts"`
+	Samples       []RelocationDetail                    `json:"samples"`
+	CreatedAt     time.Time                             `json:"created_at"`
+	UpdatedAt     time.Time                             `json:"updated_at"`
+	FactsDigest   string                                `json:"-"`
+	PoliciesJSON  string                                `json:"-"`
+	Protection    *database.LibraryRelocationProtection `json:"protection,omitempty"`
 }
 
 type RelocationDetails struct {

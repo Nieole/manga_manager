@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"manga-manager/internal/database"
 	"net/http"
 	"strconv"
 
@@ -26,7 +27,14 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid plan ID")
 		return
 	}
-	op, created, err := c.relocation.Prepare(r.Context(), id)
+	var request struct {
+		AcceptAnomalies bool `json:"accept_anomalies"`
+	}
+	if err = json.NewDecoder(r.Body).Decode(&request); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	op, created, err := c.relocation.Prepare(r.Context(), id, request.AcceptAnomalies)
 	if err != nil {
 		writeRelocationError(w, err)
 		return
@@ -94,6 +102,11 @@ func (c *Controller) relocationEffects(ctx context.Context, op RelocationOperati
 		c.watcher.UnwatchLibrary(op.SourceRoot)
 	}
 	if lib.ScanMode == "watch" {
+		if err := c.requireAutomaticProcessing(ctx, lib.ID); errors.Is(err, database.ErrLibraryProtected) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 		if c.watcherInitErr != nil {
 			return c.watcherInitErr
 		}
@@ -155,6 +168,10 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 }
 
 func writeRelocationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, relocation.ErrAnomaliesRequireConfirmation) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_anomalies_require_confirmation", "error": "Explicitly accept the anomalies in this plan"})
+		return
+	}
 	if errors.Is(err, relocation.ErrPlanNotReady) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_plan_not_ready", "error": "Recheck this relocation plan before confirming"})
 		return
