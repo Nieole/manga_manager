@@ -891,7 +891,7 @@ function RunCard({
         <div className="flex flex-wrap items-center justify-end gap-2">
           <RunControlButtons run={run} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
           {(run.type === 'relocation_check' || run.type === 'relocation_commit') && run.scope_id && /^[1-9]\d*$/.test(run.labels?.plan_id || '') && (
-            <a href={`/library/${run.scope_id}?relocation_plan=${run.labels!.plan_id}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
+            <a href={`/library/${run.scope_id}?${run.labels?.purpose === 'restoration' ? 'restoration_plan' : 'relocation_plan'}=${run.labels!.plan_id}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
               {t('relocation.viewResult')}
             </a>
           )}
@@ -1135,7 +1135,7 @@ function TaskRow({
           <span className={`rounded-full border px-2.5 py-1 text-xs ${lastRun ? runBadgeClass(lastRun.status) : runBadgeClass('')}`}>
             {lastRun ? t(`logs.runStatus.${lastRun.status}`) : t('logs.taskCenter.neverRun')}
           </span>
-          <span className="text-sm font-semibold text-white">{getTaskTypeLabel({ type: task.type, params: lastRun?.params }, t)}</span>
+          <span className="text-sm font-semibold text-white">{getTaskTypeLabel({ type: task.type, params: lastRun?.params, labels: lastRun?.labels }, t)}</span>
           <span className="text-xs text-white/40">{scopeLabel(task, t)}</span>
           {timestamp && <span className="text-xs text-white/35" title={formatDateTime(timestamp)}>{formatRelativeTime(timestamp)}</span>}
           {/* 连败与停发在无数据时整格不显示：画一个「连败 0」只是替一个还没有写入方的字段占位。 */}

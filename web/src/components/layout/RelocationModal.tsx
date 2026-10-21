@@ -72,7 +72,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   const runID = plan?.run_id;
   const status = plan?.status;
   const committing = operation?.status === 'pending' || operation?.status === 'prepared' || operation?.status === 'paths_committed';
-  const canCommit = plan?.status === 'checked' && !plan.blocker_count && !operation && !plan?.operation_id && !needsRecheck;
+  const canCommit = plan?.purpose !== 'restoration' && plan?.status === 'checked' && !plan.blocker_count && !operation && !plan?.operation_id && !needsRecheck;
   const busy = plan?.status === 'pending' || plan?.status === 'checking';
 
   useEffect(() => {
@@ -94,6 +94,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     apiClient.get<RelocationPlan>(url).then(({ data }) => {
       if (!active) return;
       if (data.library_id !== library.id) { setError('relocation.loadError'); return; }
+      if (data.purpose === 'restoration') { setError('restoration.useRestoration'); return; }
       setPlan(data);
       const previousRoot = !planID && data.library_root !== library.path && data.target_root !== library.path;
       setSourceChoice(previousRoot ? '' : data.source_root);
@@ -237,6 +238,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
         <p className="mt-3 text-xs text-gray-400">{t('relocation.scopeHint')}</p>
       </div>
       {error && <p role="alert" className="text-red-300">{t(error, undefined, t('relocation.commitError.generic'))}</p>}
+      {error === 'restoration.useRestoration' && <a className="text-komgaPrimary" href={`/library/${library.id}?restoration_plan=${planID}`}>{t('restoration.open')}</a>}
       {plan && <>
         {(plan.protection || operation?.protected) && <section className={modalSectionClass} role="status">
           <p className="font-medium text-amber-200">{t('relocation.protection.active')}</p>

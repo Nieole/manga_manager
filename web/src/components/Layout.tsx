@@ -774,6 +774,10 @@ export default function Layout() {
                                                         {t('layout.libraryActions.title')}
                                                     </div>
                                                     {lib.relocation_protected && <p className="px-3 py-2 text-xs text-amber-200">{t('relocation.protection.active')}</p>}
+                                                    {lib.relocation_protected && <button
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenMenuId(null); navigate(`/library/${lib.id}?restoration=1`); }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-amber-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                    >{t('restoration.open')}</button>}
                                                     <button
                                                         onClick={(e) => {
                                                             setOpenMenuId(null);
