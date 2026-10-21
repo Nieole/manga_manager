@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
@@ -177,6 +179,107 @@ func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T)
 			if _, err = os.Stat(lib.Path); !os.IsNotExist(err) {
 				t.Fatalf("old source unexpectedly recreated: %v", err)
 			}
+
+			_ = mkTestUser(t, freshStore, "admin", database.RoleAdmin)
+			router := chi.NewRouter()
+			fresh.SetupRoutes(router)
+			server := httptest.NewServer(router)
+			t.Cleanup(server.Close)
+			client := newAuthClient(t)
+			response, body := authDo(t, client, http.MethodPost, server.URL+"/api/auth/login", "", map[string]string{"username": "admin", "password": "password1"})
+			var session authSessionResponse
+			if err = json.Unmarshal(body, &session); err != nil || response.StatusCode != http.StatusOK {
+				t.Fatalf("admin login: %d %s %v", response.StatusCode, body, err)
+			}
+			base := server.URL + "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-restoration"
+			response, body = authDo(t, client, http.MethodPost, base+"/checks", session.CSRFToken, map[string]any{})
+			var check RelocationPlan
+			if err = json.Unmarshal(body, &check); err != nil || response.StatusCode != http.StatusAccepted {
+				t.Fatalf("combined restoration check: %d %s %v", response.StatusCode, body, err)
+			}
+			check = awaitRelocationPlan(t, fresh, check.ID)
+			if check.AnomalyCount != 1 || check.BlockerCount != 0 {
+				t.Fatalf("remaining combined risk: %+v", check)
+			}
+			if err = fresh.scanner.CleanupLibrary(ctx, lib.ID); !errors.Is(err, database.ErrLibraryProtected) {
+				t.Fatalf("recheck released protection: %v", err)
+			}
+			request := map[string]any{"plan_id": check.ID, "confirm_release": true, "scan_mode": "interval", "scan_interval": 29, "scan_formats": "cbz"}
+			response, body = authDo(t, client, http.MethodPost, base+"/release", session.CSRFToken, request)
+			if response.StatusCode != http.StatusConflict {
+				t.Fatalf("combined loss risk consent omitted: %d %s", response.StatusCode, body)
+			}
+			request["accept_loss_risk"] = true
+			response, body = authDo(t, client, http.MethodPost, base+"/release", session.CSRFToken, request)
+			var release RelocationOperation
+			if err = json.Unmarshal(body, &release); err != nil || response.StatusCode != http.StatusAccepted {
+				t.Fatalf("combined explicit release: %d %s %v", response.StatusCode, body, err)
+			}
+			release = awaitRelocationOperation(t, fresh, release.ID)
+			if release.Status != "completed" {
+				t.Fatalf("combined release: %+v", release)
+			}
+			for _, taskType := range []string{"scan_library", "scan_series", "cleanup_library"} {
+				response, body = authDo(t, client, http.MethodGet, server.URL+"/api/system/tasks?type="+taskType, "", nil)
+				var runs []RunSnapshot
+				if err = json.Unmarshal(body, &runs); err != nil || response.StatusCode != http.StatusOK || len(runs) != 0 {
+					t.Fatalf("release started %s: %d %s %v", taskType, response.StatusCode, body, err)
+				}
+			}
+			server.Close()
+			fresh.Close()
+			if err = freshStore.Close(); err != nil {
+				t.Fatal(err)
+			}
+			releasedStore, err := database.NewStore(filepath.Join(root, "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = releasedStore.Close() })
+			releasedDisk, err := config.LoadConfigFile(c.configPath)
+			if err != nil || !reflect.DeepEqual(*disk, *releasedDisk) {
+				t.Fatalf("release changed migrated configuration: %v", err)
+			}
+			releasedManager := config.NewManager(releasedDisk)
+			released := newControllerCore(releasedStore, scanner.NewScanner(releasedStore, releasedManager), releasedManager, c.configPath, defaultControllerCacheSizes())
+			t.Cleanup(released.Close)
+			protection, err = releasedStore.LibraryRelocationProtection(ctx, lib.ID)
+			if err != nil || protection != nil {
+				t.Fatalf("released protection returned after restart: %+v %v", protection, err)
+			}
+			releasedLibrary, err := releasedStore.GetLibrary(ctx, lib.ID)
+			if err != nil || releasedLibrary.Path != target || releasedLibrary.ScanMode != "interval" || releasedLibrary.ScanInterval != 29 || releasedLibrary.ScanFormats != "cbz" {
+				t.Fatalf("selected automatic settings: %+v %v", releasedLibrary, err)
+			}
+			releasedBook, err := releasedStore.GetBook(ctx, missing.ID)
+			if err != nil || !reflect.DeepEqual(gotBook, releasedBook) {
+				t.Fatalf("release changed missing book: %+v %v", releasedBook, err)
+			}
+			releasedSeries, err := releasedStore.GetSeries(ctx, missingSeries.ID)
+			if err != nil || !reflect.DeepEqual(gotSeries, releasedSeries) {
+				t.Fatalf("release changed missing series: %+v %v", releasedSeries, err)
+			}
+			for _, id := range []int64{101, 202} {
+				progress, found, err := releasedStore.GetUserBookProgress(ctx, id, missing.ID)
+				if err != nil || !found || progress.LastReadPage.Int64 != id {
+					t.Fatalf("release changed independent progress: %+v %v", progress, err)
+				}
+			}
+			members, err = releasedStore.ListCollectionSeriesIDs(ctx, 100)
+			if err != nil || len(members) != 1 || members[0] != missingSeries.ID || !reflect.DeepEqual(released.currentConfig(), *releasedDisk) {
+				t.Fatalf("release changed associations or effective config: %v %v", members, err)
+			}
+			readPage(released, http.StatusOK)
+			if err = released.scanner.CleanupLibrary(ctx, lib.ID); err != nil {
+				t.Fatalf("explicit cleanup remained protected: %v", err)
+			}
+			if _, err = releasedStore.GetBook(ctx, missing.ID); err == nil {
+				t.Fatal("ordinary cleanup retained missing book after explicit release")
+			}
+			if _, err = releasedStore.GetSeries(ctx, missingSeries.ID); err == nil {
+				t.Fatal("ordinary cleanup retained missing series after explicit release")
+			}
+			readPage(released, http.StatusOK)
 		})
 	}
 }
