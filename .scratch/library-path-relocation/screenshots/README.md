@@ -11,3 +11,5 @@
 `anomaly-details.png` 与 `anomaly-protected.png` 对应 `cfc49a7` 的真实 HTTP 后端及 Vite 前端联调。独立假资料库 ID 2 有原系列 ID 2 和两本书，目标缺少第二卷；前一张展示异常明细与尚未勾选的明确接受项，未接受时提交按钮禁用。明确接受后完成迁移并建立保护，后一张展示保留的原扫描设置 interval / 60 / cbz；实际自动模式变为 none，原记录均保留，源文件未被迁移操作移动。截图中的通用检查提示已由后续提交改为与异常可接受的行为一致；后续不可变操作 ID 的并发修复也不属于该实拍版本。截图只使用临时目录、假账户与生成的 CBZ。
 
 `policy-confirm.png` 和 `policy-completed.png` 对应 `0962f35` 源码的真实 HTTP 后端与 Vite 前端联调。临时演示资料库 3、系列 3 使用假账户和生成的 CBZ，从 `policy-source` 映射至 `policy-target`；预览展示一条外接机械盘显式策略的全部 IO 值，提交结果为完成。集成负责人另核对临时配置文件中的策略路径已为 `policy-target`。截图不涉及用户实际资料库；最终零策略磁盘事实修复的回归证据归 `validation-08.md`，这两张截图不作为该修复的运行证据。
+
+`restoration-rechecked.png`、`restoration-risk.png` 与 `restoration-completed.png` 使用 `ebd3f38` 的 Vite 前端和 `a1abc58` 编译的真实 HTTP 后端联调；这两个提交之间的 Go 源码相同。独立假资料库 2 的目标缺少第二卷，原自动设置为 interval / 60 / cbz。重查得到一个异常、零阻止项且保护继续保留；管理员选择 none / 60 / cbz，分别确认剩余异常可能造成后续记录和关联数据删除的风险以及主动解除保护，再得到持久完成结果。界面明确说明恢复不会立即扫描或清理。截图使用临时配置、假账户和生成的 CBZ，不涉及用户资料库；后续任务准入冲突与故障信息隐私修复的验证归 `validation-07.md`，不以这些截图证明其运行结果。

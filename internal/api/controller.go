@@ -406,6 +406,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.relocation.Acquire = c.acquireLibraryExclusive
 	c.relocation.AcquireOperation = c.acquireRelocationAccess
 	c.relocation.Effects = c.relocationEffects
+	c.relocation.RestoreEffects = c.restorationEffects
 	c.relocation.ConfigPath = c.configPath
 	c.relocation.ApplyConfig = runtimecfg.Apply
 	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
@@ -791,6 +792,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/libraries", c.createLibrary)
 		r.Put("/libraries/{libraryId}", c.updateLibrary)
 		r.Post("/libraries/{libraryId}/relocation-plans", c.createRelocationPlan)
+		r.Get("/libraries/{libraryId}/relocation-restoration", c.getRelocationRestoration)
+		r.Post("/libraries/{libraryId}/relocation-restoration/checks", c.createRestorationCheck)
+		r.Post("/libraries/{libraryId}/relocation-restoration/release", c.releaseRelocationProtection)
 		r.Get("/libraries/{libraryId}/relocation-source-roots", c.relocationSourceRoots)
 		r.Get("/libraries/{libraryId}/relocation-plans/latest", c.latestRelocationPlan)
 		r.Get("/relocation-plans/{planId}", c.getRelocationPlan)

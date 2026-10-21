@@ -203,6 +203,8 @@ export interface StorageIOPolicy {
 }
 
 export interface RelocationPlan {
+  purpose?: string;
+  protection_id?: number;
   id: number;
   library_id: number;
   library_name: string;
@@ -239,6 +241,11 @@ export interface RelocationDetails {
 }
 
 export interface RelocationOperation {
+  purpose?: string;
+  protection_id?: number;
+  scan_mode?: string;
+  scan_interval?: number;
+  scan_formats?: string;
   id: number;
   plan_id: number;
   library_id: number;
@@ -263,5 +270,11 @@ export interface LibraryRelocationProtection {
   scan_mode: string;
   scan_interval: number;
   scan_formats: string;
+}
+
+export interface RelocationRestoration {
+  protection?: LibraryRelocationProtection;
+  accepted?: RelocationPlan;
+  check?: RelocationPlan;
 }
 
