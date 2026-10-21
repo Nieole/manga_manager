@@ -35,6 +35,8 @@ type RelocationDetail struct {
 }
 
 type RelocationPlan struct {
+	Purpose       string                                `json:"purpose,omitempty"`
+	ProtectionID  int64                                 `json:"protection_id,omitempty"`
 	ID            int64                                 `json:"id"`
 	LibraryID     int64                                 `json:"library_id"`
 	LibraryName   string                                `json:"library_name"`

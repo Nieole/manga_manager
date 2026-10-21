@@ -15,6 +15,11 @@ import (
 
 // RelocationOperation survives run history pruning and records the committed boundary.
 type RelocationOperation struct {
+	Purpose         string    `json:"purpose,omitempty"`
+	ProtectionID    int64     `json:"protection_id,omitempty"`
+	ScanMode        string    `json:"scan_mode,omitempty"`
+	ScanInterval    int64     `json:"scan_interval,omitempty"`
+	ScanFormats     string    `json:"scan_formats,omitempty"`
 	ID              int64     `json:"id"`
 	PlanID          int64     `json:"plan_id"`
 	LibraryID       int64     `json:"library_id"`
@@ -56,9 +61,16 @@ func (s *Service) Operation(ctx context.Context, id int64) (RelocationOperation,
 
 // Prepare returns the same durable operation for every confirmation of a plan.
 func (s *Service) Prepare(ctx context.Context, planID int64, accept ...bool) (RelocationOperation, bool, error) {
+	return s.prepare(ctx, planID, nil, len(accept) > 0 && accept[0])
+}
+
+func (s *Service) prepare(ctx context.Context, planID int64, restore *RestorationRequest, accepted bool) (RelocationOperation, bool, error) {
 	plan, err := s.Get(ctx, planID)
 	if err != nil {
 		return RelocationOperation{}, false, err
+	}
+	if (plan.Purpose == "restoration") != (restore != nil) {
+		return RelocationOperation{}, false, ErrPlanNotReady
 	}
 	var existing int64
 	err = s.Store.DB().QueryRowContext(ctx, `SELECT id FROM relocation_operations WHERE plan_id=?`, planID).Scan(&existing)
@@ -69,7 +81,6 @@ func (s *Service) Prepare(ctx context.Context, planID int64, accept ...bool) (Re
 	if !errors.Is(err, sql.ErrNoRows) {
 		return RelocationOperation{}, false, err
 	}
-	accepted := len(accept) > 0 && accept[0]
 	if plan.AnomalyCount != 0 && !accepted {
 		return RelocationOperation{}, false, ErrAnomaliesRequireConfirmation
 	}
@@ -84,6 +95,13 @@ func (s *Service) Prepare(ctx context.Context, planID int64, accept ...bool) (Re
 		return op, false, err
 	}
 	op.Protected = op.Protected || protection != nil
+	if restore != nil {
+		if protection == nil || protection.OperationID != plan.ProtectionID || !restore.ConfirmRelease {
+			return op, false, ErrStalePlan
+		}
+		op.Purpose, op.ProtectionID = "restoration", plan.ProtectionID
+		op.ScanMode, op.ScanInterval, op.ScanFormats = restore.ScanMode, restore.ScanInterval, restore.ScanFormats
+	}
 	data, err := json.Marshal(op)
 	if err != nil {
 		return op, false, err
@@ -148,6 +166,9 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 	}
 	if op.Status != "pending" {
 		return nil
+	}
+	if op.Purpose == "restoration" {
+		return s.commitRestoration(ctx, op, handle)
 	}
 	release, err := s.acquireOperation(ctx, op)
 	if err != nil {
@@ -311,6 +332,9 @@ func (s *Service) acquireOperation(ctx context.Context, op RelocationOperation) 
 }
 
 func (s *Service) finish(ctx context.Context, op RelocationOperation, verify ...func() error) error {
+	if op.Purpose == "restoration" {
+		return s.finishRestoration(ctx, op, verify...)
+	}
 	if err := s.Effects(ctx, op); err != nil {
 		op.Code = "relocation_recovering"
 		_ = s.saveOperation(ctx, op)

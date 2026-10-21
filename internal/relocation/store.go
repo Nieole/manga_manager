@@ -19,6 +19,7 @@ type Service struct {
 	Acquire          func(context.Context, int64) (func(), error)
 	AcquireOperation func(context.Context, RelocationOperation) (func(), error)
 	Effects          func(context.Context, RelocationOperation) error
+	RestoreEffects   func(context.Context, RelocationOperation) error
 	ConfigPath       string
 	ApplyConfig      func(*config.Config) error
 	access           commitAccess
@@ -202,10 +203,14 @@ func (s *Service) Get(ctx context.Context, id int64) (RelocationPlan, error) {
 }
 
 func (s *Service) Latest(ctx context.Context, libraryID int64) (RelocationPlan, error) {
+	return s.LatestPurpose(ctx, libraryID, "")
+}
+
+func (s *Service) LatestPurpose(ctx context.Context, libraryID int64, purpose string) (RelocationPlan, error) {
 	if err := s.Initialize(ctx); err != nil {
 		return RelocationPlan{}, err
 	}
-	return s.readPlan(s.Store.DB().QueryRowContext(ctx, `SELECT id,run_id,status,summary,facts_digest,policies_json FROM relocation_plans WHERE library_id=? ORDER BY id DESC LIMIT 1`, libraryID))
+	return s.readPlan(s.Store.DB().QueryRowContext(ctx, `SELECT id,run_id,status,summary,facts_digest,policies_json FROM relocation_plans WHERE library_id=? AND COALESCE(json_extract(summary,'$.purpose'),'')=? ORDER BY id DESC LIMIT 1`, libraryID, purpose))
 }
 
 func (s *Service) readPlan(row *sql.Row) (RelocationPlan, error) {

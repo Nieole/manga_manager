@@ -42,6 +42,7 @@ var targets = []reflect.Type{
 	reflect.TypeOf(api.RelocationDetails{}),
 	reflect.TypeOf(api.RelocationOperation{}),
 	reflect.TypeOf(api.LibraryRelocationProtection{}),
+	reflect.TypeOf(api.RelocationRestoration{}),
 }
 
 // nullTypes 记录 sql.Null* 到 contracts.ts 导出名的映射；用到哪些就 import 哪些。
