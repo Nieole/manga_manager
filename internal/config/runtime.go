@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -17,7 +18,11 @@ type Manager struct {
 	versionKey  string
 	mu          sync.RWMutex
 	cfg         Config
+	writeFile   FileWriter
 }
+
+// FileWriter is the atomic configuration-file persistence boundary.
+type FileWriter func(string, []byte, os.FileMode) error
 
 // SetAfterUpdate registers the application notification run after a successful
 // Save or Reload, while the update boundary is still held. It must not update Manager.
@@ -27,8 +32,11 @@ func (m *Manager) SetAfterUpdate(after func()) {
 	m.afterUpdate = after
 }
 
-func NewManager(cfg *Config) *Manager {
-	m := &Manager{versionKey: rand.Text()}
+func NewManager(cfg *Config, writers ...FileWriter) *Manager {
+	m := &Manager{versionKey: rand.Text(), writeFile: AtomicWriteFile}
+	if len(writers) > 0 && writers[0] != nil {
+		m.writeFile = writers[0]
+	}
 	if cfg != nil {
 		m.cfg = CloneConfig(*cfg)
 	}

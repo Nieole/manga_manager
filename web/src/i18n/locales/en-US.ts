@@ -2109,7 +2109,7 @@ export const messages: MessageCatalog = {
     "relocation.detailsError": "Could not load this page of details.",
     "relocation.retryDetails": "Retry this page",
     "relocation.counts": "Series: {{series}} · Books: {{books}} · Policies: {{policies}}",
-    "relocation.checkedHint": "Check complete. Review the roots and mappings before confirming. Plans with blockers, book anomalies or directory policy changes cannot be submitted yet.",
+    "relocation.checkedHint": "Check complete. Review the roots and mappings before confirming. Plans with blockers or unaccepted book anomalies cannot be submitted. Directory policies shown in this plan move with the paths.",
     "relocation.taskCenter": "View checks and relocation runs in the task center",
     "relocation.viewResult": "View relocation result",
     "relocation.examples": "Path mapping examples",
@@ -2184,6 +2184,8 @@ export const messages: MessageCatalog = {
     "settings.maintenance.taskPhase.revalidate": "Revalidate confirmed facts",
     "settings.maintenance.taskPhase.commit": "Commit paths",
     "settings.maintenance.taskPhase.refresh": "Refresh caches and watching",
+    'relocation.operation.prepared': 'Policies are prepared; paths are not yet committed',
+    'relocation.commitError.relocation_policy_recovery_conflict': 'Recovery could not reconcile the configuration. The library remains blocked. Resolve the reported disk/configuration problem and restart to retry recovery.',
     "relocation.operation.paths_committed": "Paths committed; finishing dependent updates",
     "relocation.operation.completed": "Relocation complete",
     "relocation.operation.failed": "Relocation failed before path changes",
@@ -2197,7 +2199,7 @@ export const messages: MessageCatalog = {
     "relocation.commitError.relocation_plan_not_ready": "This plan is not ready for confirmation. Resolve the reported issues and check again.",
     "relocation.commitError.relocation_conflict": "Related reads or work prevent exclusive access. Wait for them to exit and check again.",
     "relocation.commitError.relocation_commit_failed": "Path updates failed and were rolled back. Resolve the problem and check again.",
-    "relocation.commitError.relocation_recovering": "Paths are already committed. The library remains blocked until dependent updates recover.",
+    "relocation.commitError.relocation_recovering": "The operation requires recovery. The library remains blocked until paths, policies and dependent updates agree.",
     "relocation.commitError.relocation_not_committed": "The interrupted operation did not commit paths. Start a new check.",
     "relocation.commitError.relocation_completed": "The migration is complete.",
     "relocation.commitError.relocation_persistence_failed": "Could not persist the operation. Reopen the result before trying again.",
@@ -2210,3 +2212,4 @@ export const messages: MessageCatalog = {
     "task.msg.relocation.commit_failed": "Relocation incomplete; inspect the persisted result",
     "task.msg.relocation.commit_cancelled": "Relocation cancelled; paths were not changed",
 };
+

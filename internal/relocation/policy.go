@@ -58,7 +58,7 @@ func MappedPolicies(cfg config.Config, source, target string) []config.LibrarySt
 
 func (s *Service) checkPolicies(ctx context.Context, plan *RelocationPlan, cfg config.Config) error {
 	config.NormalizeLibraryStorageConfig(&cfg)
-	for _, policy := range cfg.Library.StoragePolicies {
+	for index, policy := range cfg.Library.StoragePolicies {
 		mapped, err := MapPath(plan.SourceRoot, plan.TargetRoot, policy.Path)
 		if err != nil {
 			continue
@@ -66,6 +66,16 @@ func (s *Service) checkPolicies(ctx context.Context, plan *RelocationPlan, cfg c
 		detail := RelocationDetail{Kind: "policy", RecordType: "policy", SourcePath: policy.Path, TargetPath: mapped, Reason: policy.StorageProfile}
 		detail.PolicyBefore = previewPolicy(policy.StorageProfile, policy.IOPolicy)
 		detail.PolicyAfter = previewPolicy(policy.StorageProfile, policy.IOPolicy)
+		for _, previous := range cfg.Library.StoragePolicies[:index] {
+			if pathKey(previous.Path) == pathKey(policy.Path) && !samePolicy(previous, policy) {
+				conflict := detail
+				conflict.Kind, conflict.Reason = "blocker", "policy_conflict"
+				conflict.PolicyBefore = previewPolicy(previous.StorageProfile, previous.IOPolicy)
+				if err = s.add(ctx, plan, conflict); err != nil {
+					return err
+				}
+			}
+		}
 		if err = s.add(ctx, plan, detail); err != nil {
 			return err
 		}

@@ -406,6 +406,8 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.relocation.Acquire = c.acquireLibraryExclusive
 	c.relocation.AcquireOperation = c.acquireRelocationAccess
 	c.relocation.Effects = c.relocationEffects
+	c.relocation.ConfigPath = c.configPath
+	c.relocation.ApplyConfig = runtimecfg.Apply
 	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
 		panic(fmt.Errorf("initialize relocation plans: %w", err))
 	}
