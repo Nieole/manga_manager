@@ -25,4 +25,4 @@
 - Frontend lint, 841 tests in 78 files and the production build passed.
 - `scripts/check-doc-style.sh` passed; existing historical-word notices remain advisory.
 
-Actual UI screenshots are collected by the integration owner against a dedicated temporary demonstration library; test fixture setup must not touch a user's library database.
+The integration owner verified the actual Vite UI at `5222f3d` against the HTTP backend compiled from `719b609`; Go source is identical between those commits. In a dedicated temporary demonstration library, the current library root already equalled `repair-target` while series and book paths remained under `target`. The UI left the source empty, required an explicit source choice, displayed the three roots and completed the shared commit. Library, series and book IDs remained 1, and `/reader/1` loaded the generated 400 x 600 page from the repaired target. Four screenshots and their source details are recorded in `screenshots/README.md`. No user library or configuration was used.
