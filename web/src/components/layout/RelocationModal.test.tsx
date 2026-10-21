@@ -51,6 +51,42 @@ it('reopens durable protection with original automatic settings', async () => {
   expect(screen.queryByText('relocation.protection.acceptAnomalies')).toBeNull();
 });
 
+it('requires explicit historical source selection and invalidates a preview when source changes', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('source-roots') ? {
+    library_root: '/new', records_outside_current_root: true, candidates: ['/old/deep', '/old'],
+  } : url.includes('details') ? { items: [], total: 0 } : { ...plan, library_root: '/new', source_root: '/old', blocker_count: 0, anomaly_count: 0 } }));
+  render(<RelocationModal library={{ ...library, path: '/new' }} onClose={vi.fn()} />);
+  await screen.findByText('relocation.repair.candidateHint');
+  const source = screen.getByRole('textbox', { name: 'relocation.repair.sourceInput' }) as HTMLInputElement;
+  expect(source.value).toBe('/old');
+  fireEvent.change(source, { target: { value: '/old/deep' } });
+  expect((screen.getByText('relocation.commit') as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: '/old' }));
+  expect(source.value).toBe('/old');
+  fireEvent.click(screen.getByText('relocation.check'));
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/libraries/1/relocation-plans', { source_root: '/old', target_root: '/new' }));
+});
+
+it('never silently chooses a candidate when repairing a single series', async () => {
+  get.mockImplementation((url: string) => url.includes('latest') ? Promise.reject({ response: { status: 404 } }) : Promise.resolve({ data: {
+    library_root: '/new', records_outside_current_root: true, candidates: ['/old/deep/series', '/old/deep', '/old'],
+  } }));
+  render(<RelocationModal library={{ ...library, path: '/new' }} initialTarget="/new" onClose={vi.fn()} />);
+  await screen.findByText('relocation.repair.candidateHint');
+  expect((screen.getByRole('textbox', { name: 'relocation.repair.sourceInput' }) as HTMLInputElement).value).toBe('');
+  expect((screen.getByText('relocation.check') as HTMLButtonElement).disabled).toBe(true);
+});
+
+it('does not reuse an old operation source as a new repair choice after the library root changes', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('source-roots') ? {
+    library_root: '/third', records_outside_current_root: true, candidates: ['/new/deep', '/new'],
+  } : url.includes('details') ? { items: [], total: 0 } : { ...plan, status: 'consumed' } }));
+  render(<RelocationModal library={{ ...library, path: '/third' }} onClose={vi.fn()} />);
+  await screen.findByText('relocation.repair.candidateHint');
+  expect((screen.getByRole('textbox', { name: 'relocation.repair.sourceInput' }) as HTMLInputElement).value).toBe('');
+  expect((screen.getByText('relocation.check') as HTMLButtonElement).disabled).toBe(true);
+});
+
 it('chooses a server directory and starts a read-only preview', async () => {
   render(<RelocationModal library={library} onClose={vi.fn()} />);
   fireEvent.click(screen.getByText('directoryPicker.browse'));

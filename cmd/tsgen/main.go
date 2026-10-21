@@ -38,6 +38,7 @@ var targets = []reflect.Type{
 	reflect.TypeOf(api.RelocationPolicy{}),
 	reflect.TypeOf(config.StorageIOPolicy{}),
 	reflect.TypeOf(api.RelocationPlan{}),
+	reflect.TypeOf(api.RelocationSourceRoots{}),
 	reflect.TypeOf(api.RelocationDetails{}),
 	reflect.TypeOf(api.RelocationOperation{}),
 	reflect.TypeOf(api.LibraryRelocationProtection{}),

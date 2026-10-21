@@ -789,6 +789,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/libraries", c.createLibrary)
 		r.Put("/libraries/{libraryId}", c.updateLibrary)
 		r.Post("/libraries/{libraryId}/relocation-plans", c.createRelocationPlan)
+		r.Get("/libraries/{libraryId}/relocation-source-roots", c.relocationSourceRoots)
 		r.Get("/libraries/{libraryId}/relocation-plans/latest", c.latestRelocationPlan)
 		r.Get("/relocation-plans/{planId}", c.getRelocationPlan)
 		r.Get("/relocation-plans/{planId}/details", c.relocationDetails)
