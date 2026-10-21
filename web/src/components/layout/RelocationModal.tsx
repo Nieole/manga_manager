@@ -69,8 +69,8 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   const id = plan?.id;
   const runID = plan?.run_id;
   const status = plan?.status;
-  const committing = operation?.status === 'pending' || operation?.status === 'paths_committed';
-  const canCommit = plan?.status === 'checked' && !plan.blocker_count && !plan.anomaly_count && !plan.policy_count && !operation && !plan?.operation_id && !needsRecheck;
+  const committing = operation?.status === 'pending' || operation?.status === 'prepared' || operation?.status === 'paths_committed';
+  const canCommit = plan?.status === 'checked' && !plan.blocker_count && !plan.anomaly_count && !operation && !plan?.operation_id && !needsRecheck;
   const busy = plan?.status === 'pending' || plan?.status === 'checking';
 
   useEffect(() => {
@@ -136,7 +136,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   const operationID = operation?.id || plan?.operation_id;
   const operationStatus = operation?.status;
   useEffect(() => {
-    if (!operationID || (operationStatus && operationStatus !== 'pending' && operationStatus !== 'paths_committed')) return;
+    if (!operationID || (operationStatus && operationStatus !== 'pending' && operationStatus !== 'prepared' && operationStatus !== 'paths_committed')) return;
     let active = true;
     let timer: number | undefined;
     const refresh = async () => {
@@ -144,7 +144,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
         const { data } = await apiClient.get<RelocationOperation>(`/api/relocation-operations/${operationID}`);
         if (!active) return;
         setOperation(data);
-        if (data.status === 'pending' || data.status === 'paths_committed') {
+        if (data.status === 'pending' || data.status === 'prepared' || data.status === 'paths_committed') {
           try {
             const live = await apiClient.get<RunLive>('/api/system/tasks/live');
             if (active) setCommitRun(live.data.runs?.find((item) => item.run_id === data.run_id) || null);
@@ -271,3 +271,4 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     </div>
   </ModalShell>;
 }
+

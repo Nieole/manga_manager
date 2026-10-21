@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -60,14 +61,16 @@ func (m *Manager) Save(path string, expected *Config, mutate func(*Config) error
 	if err != nil {
 		return err
 	}
-	if err := AtomicWriteFile(path, data, ConfigFilePerm); err != nil {
+	if err := m.writeFile(path, data, ConfigFilePerm); err != nil {
 		return err
 	}
 	if !configsEqual(&next, &current) && apply != nil {
 		if err := apply(&next); err != nil {
 			var restoreErr error
-			if existed {
-				restoreErr = AtomicWriteFile(path, previous, ConfigFilePerm)
+			if verifyErr := verifyConfigFile(path, data); verifyErr != nil {
+				restoreErr = verifyErr
+			} else if existed {
+				restoreErr = m.writeFile(path, previous, ConfigFilePerm)
 			} else {
 				restoreErr = os.Remove(path)
 			}
@@ -90,6 +93,10 @@ func (m *Manager) Save(path string, expected *Config, mutate func(*Config) error
 func (m *Manager) Reload(path string, apply func(*Config) error, after func()) error {
 	m.updateMu.Lock()
 	defer m.updateMu.Unlock()
+	observed, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
 	next, err := LoadConfigFile(path)
 	if err != nil {
 		return err
@@ -105,8 +112,10 @@ func (m *Manager) Reload(path string, apply func(*Config) error, after func()) e
 		if err := apply(next); err != nil {
 			data, marshalErr := yaml.Marshal(current)
 			var restoreErr error
-			if marshalErr == nil {
-				restoreErr = AtomicWriteFile(path, data, ConfigFilePerm)
+			if verifyErr := verifyConfigFile(path, observed); verifyErr != nil {
+				restoreErr = verifyErr
+			} else if marshalErr == nil {
+				restoreErr = m.writeFile(path, data, ConfigFilePerm)
 			}
 			return errors.Join(err, marshalErr, restoreErr, apply(&current))
 		}
@@ -117,6 +126,18 @@ func (m *Manager) Reload(path string, apply func(*Config) error, after func()) e
 	}
 	if m.afterUpdate != nil {
 		m.afterUpdate()
+	}
+	return nil
+}
+
+// verifyConfigFile protects compensation from overwriting an external editor.
+func verifyConfigFile(path string, observed []byte) error {
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, observed) {
+		return ErrConflict
 	}
 	return nil
 }
