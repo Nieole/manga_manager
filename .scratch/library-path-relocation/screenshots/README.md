@@ -7,3 +7,5 @@
 `commit-confirm.png`、`commit-completed.png` 和 `commit-reader.png` 对应 `4e49752` 源码的真实 HTTP 后端与 Vite 前端联调，分别展示正常计划确认、持久完成结果和沿原书 ID 在新路径阅读。演示库使用临时配置、假账户及生成的 CBZ；新嵌入式演示程序被智能应用控制阻止，没有作为成功启动的证据。
 
 `repair-source-required.png`、`repair-confirm.png`、`repair-completed.png` 和 `repair-reader.png` 使用 `5222f3d` 的 Vite 前端与 `719b609` 编译的 HTTP 后端联调；这两个提交之间的 Go 源码相同。临时演示库的当前根已是 `repair-target`，系列与书仍在 `target`：界面要求明确选择原根，然后展示三根预览、完成结果及沿原书 ID 打开的实际页图。资料库、系列、书的 ID 均保持为 1，阅读页图加载尺寸为 400 × 600；截图使用假账户和生成的 CBZ，不涉及用户资料库。
+
+`anomaly-details.png` 与 `anomaly-protected.png` 对应 `cfc49a7` 的真实 HTTP 后端及 Vite 前端联调。独立假资料库 ID 2 有原系列 ID 2 和两本书，目标缺少第二卷；前一张展示异常明细与尚未勾选的明确接受项，未接受时提交按钮禁用。明确接受后完成迁移并建立保护，后一张展示保留的原扫描设置 interval / 60 / cbz；实际自动模式变为 none，原记录均保留，源文件未被迁移操作移动。截图中的通用检查提示已由后续提交改为与异常可接受的行为一致；后续不可变操作 ID 的并发修复也不属于该实拍版本。截图只使用临时目录、假账户与生成的 CBZ。
