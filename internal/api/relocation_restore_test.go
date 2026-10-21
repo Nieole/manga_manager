@@ -487,3 +487,125 @@ func TestRestorationCancelledCheckRemainsProtectedAfterHistoryPruning(t *testing
 		t.Fatalf("cancel lost protection: %+v %v", p, err)
 	}
 }
+
+func TestRestorationRequiresAdminCSRFAndKeepsTaskDataPrivate(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "private source", "private series", "missing.cbz", 1)
+	target := filepath.Join(root, "private target")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
+	_ = mkTestUser(t, store, "admin", database.RoleAdmin)
+	_ = mkTestUser(t, store, "reader", database.RoleRegular)
+	router := chi.NewRouter()
+	c.SetupRoutes(router)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	admin, reader, anonymous := newAuthClient(t), newAuthClient(t), newAuthClient(t)
+	login := func(client *http.Client, name string) authSessionResponse {
+		t.Helper()
+		_, body := authDo(t, client, http.MethodPost, server.URL+"/api/auth/login", "", map[string]string{"username": name, "password": "password1"})
+		var session authSessionResponse
+		if err := json.Unmarshal(body, &session); err != nil {
+			t.Fatal(err)
+		}
+		return session
+	}
+	adminSession, readerSession := login(admin, "admin"), login(reader, "reader")
+	base := server.URL + "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-restoration"
+	for _, client := range []*http.Client{anonymous, reader} {
+		resp, body := authDo(t, client, http.MethodGet, base, "", nil)
+		if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("non-admin state: %d %s", resp.StatusCode, body)
+		}
+		if strings.Contains(string(body), target) || strings.Contains(string(body), lib.Path) {
+			t.Fatal("host paths leaked")
+		}
+	}
+	if resp, _ := authDo(t, admin, http.MethodPost, base+"/checks", "", map[string]any{}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing check CSRF: %d", resp.StatusCode)
+	}
+	if resp, _ := authDo(t, reader, http.MethodPost, base+"/checks", readerSession.CSRFToken, map[string]any{}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("reader recheck: %d", resp.StatusCode)
+	}
+	resp, body := authDo(t, admin, http.MethodPost, base+"/checks", adminSession.CSRFToken, map[string]any{})
+	var plan RelocationPlan
+	if err := json.Unmarshal(body, &plan); err != nil || resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("admin check: %d %s %v", resp.StatusCode, body, err)
+	}
+	plan = awaitRelocationPlan(t, c, plan.ID)
+	resp, body = authDo(t, admin, http.MethodGet, base, "", nil)
+	var state RelocationRestoration
+	if err := json.Unmarshal(body, &state); err != nil || state.Protection == nil || state.Accepted == nil || state.Check == nil || state.Check.ID != plan.ID || state.Accepted.ID == plan.ID {
+		t.Fatalf("historical/current separation: %d %s %v", resp.StatusCode, body, err)
+	}
+	for _, path := range []string{"/api/relocation-plans/" + strconv.FormatInt(plan.ID, 10), "/api/relocation-plans/" + strconv.FormatInt(plan.ID, 10) + "/details?kind=anomaly", "/api/libraries/" + strconv.FormatInt(lib.ID, 10) + "/relocation-restoration"} {
+		response, data := authDo(t, reader, http.MethodGet, server.URL+path, "", nil)
+		if response.StatusCode != http.StatusForbidden || strings.Contains(string(data), target) {
+			t.Fatalf("reader check data: %d %s", response.StatusCode, data)
+		}
+	}
+	decision := map[string]any{"plan_id": plan.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"}
+	if resp, _ := authDo(t, admin, http.MethodPost, base+"/release", "", decision); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing release CSRF: %d", resp.StatusCode)
+	}
+	if resp, _ := authDo(t, reader, http.MethodPost, base+"/release", readerSession.CSRFToken, decision); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("reader release: %d", resp.StatusCode)
+	}
+	response, data := authDo(t, reader, http.MethodGet, server.URL+"/api/libraries", "", nil)
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(data), `"relocation_protected":true`) || strings.Contains(string(data), target) || strings.Contains(string(data), "facts_digest") {
+		t.Fatalf("public protection status: %d %s", response.StatusCode, data)
+	}
+	response, data = authDo(t, admin, http.MethodGet, server.URL+"/api/system/tasks?limit=50", "", nil)
+	if response.StatusCode != http.StatusOK || strings.Contains(string(data), target) || strings.Contains(string(data), lib.Path) || !strings.Contains(string(data), `"purpose":"restoration"`) {
+		t.Fatalf("task path/label privacy: %d %s", response.StatusCode, data)
+	}
+}
+
+func TestRestorationExclusiveAccessRejectsRelatedReadsAndKeepsUnrelatedLibraryReadable(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "missing.cbz", 1)
+	other, _, otherBook := seedBookFixture(t, store, root, "other", "series", "readable.cbz", 1)
+	seedBookArchivePages(t, c, otherBook, png1x1)
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
+	check := startRestorationCheck(t, c, lib.ID)
+	release, err := c.taskEngine.engine.AcquireLibraryRead(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := submitRestoration(t, c, lib.ID, check.ID, "none", true)
+	release()
+	if op.Status != "failed" || op.Code != "relocation_conflict" {
+		t.Fatalf("active read crossed release: %+v", op)
+	}
+	check = startRestorationCheck(t, c, lib.ID)
+	entered, resume := make(chan struct{}), make(chan struct{})
+	effects := c.relocation.RestoreEffects
+	c.relocation.RestoreEffects = func(ctx context.Context, op RelocationOperation) error {
+		close(entered)
+		<-resume
+		return effects(ctx, op)
+	}
+	payload, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
+	rec := httptest.NewRecorder()
+	c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var pending RelocationOperation
+	if err = json.Unmarshal(rec.Body.Bytes(), &pending); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("release: %d %s %v", rec.Code, rec.Body.String(), err)
+	}
+	<-entered
+	page := httptest.NewRecorder()
+	c.servePageImage(page, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(otherBook.ID, 10), "pageNumber": "1"}))
+	close(resume)
+	if page.Code != http.StatusOK {
+		t.Fatalf("unrelated library %d blocked: %d", other.ID, page.Code)
+	}
+	if result := awaitRelocationOperation(t, c, pending.ID); result.Status != "completed" {
+		t.Fatalf("release did not complete: %+v", result)
+	}
+}
