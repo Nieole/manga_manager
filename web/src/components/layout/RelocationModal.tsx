@@ -92,12 +92,15 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     apiClient.get<RelocationPlan>(url).then(({ data }) => {
       if (!active) return;
       if (data.library_id !== library.id) { setError('relocation.loadError'); return; }
-      setPlan(data); setSourceChoice(data.source_root); if (!initialTarget) setTarget(data.target_root);
+      setPlan(data);
+      const previousRoot = !planID && data.library_root !== library.path && data.target_root !== library.path;
+      setSourceChoice(previousRoot ? '' : data.source_root);
+      if (!initialTarget) setTarget(previousRoot ? library.path : data.target_root);
     }).catch((err: unknown) => {
       if (active && (planID || !(isAxiosError(err) && err.response?.status === 404))) setError('relocation.loadError');
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [library.id, planID, initialTarget]);
+  }, [library.id, library.path, planID, initialTarget]);
 
   useEffect(() => {
     if (!busy || !id) return;
