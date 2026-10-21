@@ -17,8 +17,8 @@ afterEach(cleanup);
 
 it.each(['zh-CN', 'en-US'] as const)('renders original settings and independent historical/current counts in %s without literal placeholders', async (locale) => {
   const { baseElement } = render(<LocaleProvider initialLocale={locale} initialMessages={locale === 'zh-CN' ? chinese : english} fallbackMessages={chinese}><RestorationModal library={{ id: 1, name: 'Books', path: '/books' }} onClose={vi.fn()} /></LocaleProvider>);
-  await screen.findByText(locale === 'zh-CN' ? '原自动处理设置：定时刷新；间隔 17 分钟；格式 cbz' : 'Original automatic settings: Scheduled (Timer-based); interval 17 minutes; formats cbz');
-  expect(screen.getByText(locale === 'zh-CN' ? '迁移时接受的历史文件异常：7 项' : 'Historical file anomalies accepted during relocation: 7')).toBeTruthy();
+  await screen.findByText(locale === 'zh-CN' ? '原自动处理设置：定时刷新；间隔 17 分钟；格式 cbz' : 'Original automatic settings: Scheduled (Timer-based); interval 17 min; formats cbz');
+  expect(screen.getByText(locale === 'zh-CN' ? '迁移时接受的历史文件异常：7 项' : '7 historical file anomalies accepted during relocation')).toBeTruthy();
   expect(screen.getByText(locale === 'zh-CN' ? '当前文件异常 5 项，阻断项 2 项' : 'Current file anomalies: 5; blockers: 2')).toBeTruthy();
   expect(baseElement.textContent).not.toMatch(/\{(?:mode|interval|formats|count|anomalies|blockers)\}/);
 });
