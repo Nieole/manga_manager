@@ -246,3 +246,17 @@ it('requires a new check after a stale confirmation instead of retrying an old p
   expect(screen.queryByText('relocation.commit')).toBeNull();
   expect(screen.getByText('relocation.check')).toBeTruthy();
 });
+
+it('allows confirmed policy changes and keeps a prepared recovery locked', async () => {
+  const policyPlan = { ...plan, blocker_count: 0, anomaly_count: 0, policy_count: 2 };
+  const operation = { id: 18, plan_id: 12, status: 'prepared', series_count: 1, book_count: 2, code: 'relocation_policy_recovery_conflict' };
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : url.includes('relocation-operations') ? operation : url.includes('tasks/live') ? { runs: [] } : policyPlan }));
+  post.mockResolvedValue({ data: operation });
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByText('relocation.commit'));
+  await screen.findByText('relocation.operation.prepared');
+  expect(screen.getByText('relocation.commitError.relocation_policy_recovery_conflict')).toBeTruthy();
+  expect(screen.queryByText('relocation.check')).toBeNull();
+  expect(screen.queryByText('relocation.commit')).toBeNull();
+  expect((screen.getByRole('textbox') as HTMLInputElement).closest('fieldset')?.disabled).toBe(true);
+});

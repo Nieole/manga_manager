@@ -73,7 +73,7 @@ func (s *Service) Prepare(ctx context.Context, planID int64, accept ...bool) (Re
 	if plan.AnomalyCount != 0 && !accepted {
 		return RelocationOperation{}, false, ErrAnomaliesRequireConfirmation
 	}
-	if plan.Status != "checked" || plan.BlockerCount != 0 || plan.PolicyCount != 0 {
+	if plan.Status != "checked" || plan.BlockerCount != 0 {
 		return RelocationOperation{}, false, ErrPlanNotReady
 	}
 	op := RelocationOperation{PlanID: plan.ID, LibraryID: plan.LibraryID, Status: "pending", SourceRoot: plan.SourceRoot, TargetRoot: plan.TargetRoot, SeriesCount: plan.SeriesCount, BookCount: plan.BookCount, UpdatedAt: time.Now().UTC()}
@@ -163,7 +163,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		}
 	}()
 	handle.Phase("revalidate", "task.msg.relocation.committing", nil)
-	err = s.Config.WithSnapshot(func(cfg config.Config) error {
+	err = s.withCommitConfig(func(cfg config.Config, session *config.UpdateSession) error {
 		plan, e := s.Get(ctx, op.PlanID)
 		if e != nil {
 			return e
@@ -185,6 +185,10 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 			return e
 		}
 		handle.Phase("commit", "task.msg.relocation.committing", nil)
+		nextConfig, e := s.preparePolicies(ctx, &op, cfg, session)
+		if e != nil {
+			return e
+		}
 		tx, e := s.Store.DB().BeginTx(ctx, nil)
 		if e != nil {
 			return e
@@ -198,7 +202,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 			return e
 		}
 		checked := inspection.evaluated
-		if checked.FactsDigest != plan.FactsDigest || checked.BlockerCount != 0 || (checked.AnomalyCount != 0 && !op.AcceptAnomalies) || checked.PolicyCount != 0 {
+		if checked.FactsDigest != plan.FactsDigest || checked.BlockerCount != 0 || (checked.AnomalyCount != 0 && !op.AcceptAnomalies) {
 			return ErrStalePlan
 		}
 		for _, kind := range []string{"series", "book"} {
@@ -237,9 +241,53 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		if _, e = tx.ExecContext(ctx, `UPDATE relocation_operations SET status=?,result=? WHERE id=?`, op.Status, data, op.ID); e != nil {
 			return e
 		}
-		return tx.Commit()
+		if session != nil {
+			if e = session.Verify(); e != nil {
+				return e
+			}
+		}
+		if e = tx.Commit(); e != nil {
+			return e
+		}
+		keep = true
+		s.access.mu.Lock()
+		s.access.releases[op.ID] = release
+		s.access.mu.Unlock()
+		if nextConfig != nil {
+			if e = session.Publish(*nextConfig); e != nil {
+				return e
+			}
+		}
+		handle.Phase("refresh", "task.msg.relocation.committing", nil)
+		if session != nil {
+			return s.finish(context.WithoutCancel(ctx), op, session.Verify)
+		}
+		return s.finish(context.WithoutCancel(ctx), op)
 	})
 	if err != nil {
+		persisted, loadErr := s.Operation(context.WithoutCancel(ctx), op.ID)
+		if loadErr == nil {
+			op = persisted
+		}
+		if op.Status == "paths_committed" || op.Status == "prepared" {
+			keep = true
+			s.access.mu.Lock()
+			s.access.releases[op.ID] = release
+			s.access.mu.Unlock()
+			if op.Status == "prepared" && loadErr == nil {
+				if recoveryErr := s.reconcilePolicies(context.WithoutCancel(ctx), op, nil); recoveryErr == nil {
+					op.Status = "failed"
+					op.Code = "relocation_not_committed"
+					if saveErr := s.saveOperation(context.WithoutCancel(ctx), op); saveErr == nil {
+						s.releaseOperation(op.ID)
+						return err
+					}
+				}
+			}
+			op.Code = "relocation_recovering"
+			_ = s.saveOperation(context.WithoutCancel(ctx), op)
+			return err
+		}
 		op.Status = "failed"
 		op.Code = "relocation_commit_failed"
 		if errors.Is(err, context.Canceled) {
@@ -252,12 +300,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		_ = s.saveOperation(context.WithoutCancel(ctx), op)
 		return err
 	}
-	keep = true
-	s.access.mu.Lock()
-	s.access.releases[op.ID] = release
-	s.access.mu.Unlock()
-	handle.Phase("refresh", "task.msg.relocation.committing", nil)
-	return s.finish(context.WithoutCancel(ctx), op)
+	return nil
 }
 
 func (s *Service) acquireOperation(ctx context.Context, op RelocationOperation) (func(), error) {
@@ -267,25 +310,34 @@ func (s *Service) acquireOperation(ctx context.Context, op RelocationOperation) 
 	return s.Acquire(ctx, op.LibraryID)
 }
 
-func (s *Service) finish(ctx context.Context, op RelocationOperation) error {
+func (s *Service) finish(ctx context.Context, op RelocationOperation, verify ...func() error) error {
 	if err := s.Effects(ctx, op); err != nil {
 		op.Code = "relocation_recovering"
 		_ = s.saveOperation(ctx, op)
 		return err
+	}
+	if len(verify) != 0 {
+		if err := verify[0](); err != nil {
+			return err
+		}
 	}
 	op.Status = "completed"
 	op.Code = "relocation_completed"
 	if err := s.saveOperation(ctx, op); err != nil {
 		return err
 	}
+	s.releaseOperation(op.ID)
+	return nil
+}
+
+func (s *Service) releaseOperation(id int64) {
 	s.access.mu.Lock()
-	release := s.access.releases[op.ID]
-	delete(s.access.releases, op.ID)
+	release := s.access.releases[id]
+	delete(s.access.releases, id)
 	s.access.mu.Unlock()
 	if release != nil {
 		release()
 	}
-	return nil
 }
 
 // Recover reserves every unfinished committed library before replaying effects.
@@ -294,7 +346,7 @@ func (s *Service) Recover(ctx context.Context) error {
 	if err := s.Initialize(ctx); err != nil {
 		return err
 	}
-	rows, err := s.Store.DB().QueryContext(ctx, `SELECT id FROM relocation_operations WHERE status IN ('pending','paths_committed') ORDER BY id`)
+	rows, err := s.Store.DB().QueryContext(ctx, `SELECT id FROM relocation_operations WHERE status IN ('pending','prepared','paths_committed') ORDER BY id`)
 	if err != nil {
 		return err
 	}
@@ -341,9 +393,26 @@ func (s *Service) Recover(ctx context.Context) error {
 		committed = append(committed, op)
 	}
 	for _, op := range committed {
-		// finish persists an actionable recovery code and keeps the reservation
-		// on an external effect failure; unrelated libraries remain available.
-		_ = s.finish(ctx, op)
+		if e := s.reconcilePolicies(ctx, op, func(verify func() error) error {
+			if op.Status == "prepared" {
+				return nil
+			}
+			return s.finish(ctx, op, verify)
+		}); e != nil {
+			op.Code = "relocation_recovering"
+			if errors.Is(e, errPolicyRecoveryConflict) {
+				op.Code = "relocation_policy_recovery_conflict"
+			}
+			_ = s.saveOperation(ctx, op)
+			continue
+		}
+		if op.Status == "prepared" {
+			op.Status, op.Code = "interrupted", "relocation_not_committed"
+			if e := s.saveOperation(ctx, op); e == nil {
+				s.releaseOperation(op.ID)
+			}
+			continue
+		}
 	}
 	return nil
 }

@@ -550,7 +550,7 @@ func awaitRelocationOperation(t *testing.T, c *Controller, id int64) RelocationO
 		if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("result: %d %s %v", rec.Code, rec.Body.String(), err)
 		}
-		if op.Status != "pending" && (op.Status != "paths_committed" || op.Code == "relocation_recovering") {
+		if op.Status != "pending" && op.Status != "prepared" && (op.Status != "paths_committed" || op.Code == "relocation_recovering") {
 			return op
 		}
 		select {

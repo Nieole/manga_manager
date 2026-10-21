@@ -2125,7 +2125,7 @@ export const messages: MessageCatalog = {
     "relocation.detailsError": "无法读取本页明细。",
     "relocation.retryDetails": "重试本页",
     "relocation.counts": "系列 {{series}} · 书 {{books}} · 策略 {{policies}}",
-    "relocation.checkedHint": "检查完成，请核对当前根、原记录根、目标根、路径映射及目录策略。阻断项必须先解决；书文件异常需明确接受后才能提交。",
+    "relocation.checkedHint": "检查完成，请核对当前根、原记录根、目标根、路径映射及目录策略。阻断项必须先解决；书文件异常需明确接受后才能提交。计划中展示的目录策略会随路径一起迁移。",
     "relocation.taskCenter": "在任务中心查看检查与迁移运行",
     "relocation.viewResult": "查看路径迁移结果",
     "relocation.examples": "路径映射示例",
@@ -2200,6 +2200,8 @@ export const messages: MessageCatalog = {
     "settings.maintenance.taskPhase.revalidate": "重新验证确认事实",
     "settings.maintenance.taskPhase.commit": "提交路径",
     "settings.maintenance.taskPhase.refresh": "刷新缓存与监听",
+    'relocation.operation.prepared': '策略已准备，路径尚未提交',
+    'relocation.commitError.relocation_policy_recovery_conflict': '无法协调配置以完成恢复，资料库保持受阻。请处理磁盘或配置问题，重启后重试恢复。',
     "relocation.operation.paths_committed": "路径已提交，正在完成附属更新",
     "relocation.operation.completed": "迁移完成",
     "relocation.operation.failed": "迁移失败，路径尚未修改",
@@ -2213,7 +2215,7 @@ export const messages: MessageCatalog = {
     "relocation.commitError.relocation_plan_not_ready": "此计划尚不能确认。请处理报告的问题后重新检查。",
     "relocation.commitError.relocation_conflict": "相关读取或工作尚未退出，无法独占资料库。请等待结束后重新检查。",
     "relocation.commitError.relocation_commit_failed": "路径更新失败并已回滚。请处理问题后重新检查。",
-    "relocation.commitError.relocation_recovering": "路径已经提交，资料库会保持受阻，直到附属更新恢复完成。",
+    "relocation.commitError.relocation_recovering": "操作需要恢复，资料库会保持受阻，直到路径、策略与附属更新恢复一致。",
     "relocation.commitError.relocation_not_committed": "中断的操作未提交路径，请重新检查。",
     "relocation.commitError.relocation_completed": "迁移已完成。",
     "relocation.commitError.relocation_persistence_failed": "无法持久化操作。请重新打开结果后再决定是否重试。",
@@ -2226,3 +2228,5 @@ export const messages: MessageCatalog = {
     "task.msg.relocation.commit_failed": "路径迁移未完成，请查看持久化结果",
     "task.msg.relocation.commit_cancelled": "路径迁移已取消，路径尚未修改",
 };
+
+

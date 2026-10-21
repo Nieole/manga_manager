@@ -19,6 +19,8 @@ type Service struct {
 	Acquire          func(context.Context, int64) (func(), error)
 	AcquireOperation func(context.Context, RelocationOperation) (func(), error)
 	Effects          func(context.Context, RelocationOperation) error
+	ConfigPath       string
+	ApplyConfig      func(*config.Config) error
 	access           commitAccess
 	transient        bool
 	evaluated        RelocationPlan
@@ -89,6 +91,9 @@ CREATE TABLE IF NOT EXISTS relocation_operations (
  id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL UNIQUE,
  library_id INTEGER NOT NULL, run_id INTEGER NOT NULL DEFAULT 0,
  status TEXT NOT NULL, result TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS relocation_policy_journal (
+ operation_id INTEGER PRIMARY KEY, patch TEXT NOT NULL
 );
 CREATE TRIGGER IF NOT EXISTS relocation_commit_terminal
 AFTER UPDATE OF status ON runs
