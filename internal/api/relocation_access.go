@@ -9,9 +9,30 @@ import (
 	"manga-manager/internal/relocation"
 )
 
+type relocationTopology struct {
+	mu    sync.Mutex
+	roots map[int64][2]string
+}
+
+// relocationRootConflicts is called while topology.mu protects a root change.
+func (c *Controller) relocationRootConflicts(path string) bool {
+	for _, roots := range c.relocationTopology.roots {
+		for _, root := range roots {
+			_, inside := relocation.MapPath(root, root, path)
+			_, contains := relocation.MapPath(path, path, root)
+			if inside == nil || contains == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // acquireRelocationAccess includes other library work whose directory coverage
 // intersects mapped records. Disjoint nested libraries retain their access.
 func (c *Controller) acquireRelocationAccess(ctx context.Context, op RelocationOperation) (func(), error) {
+	c.relocationTopology.mu.Lock()
+	defer c.relocationTopology.mu.Unlock()
 	release, err := c.acquireLibraryExclusive(ctx, op.LibraryID)
 	if err != nil {
 		return nil, err
@@ -82,5 +103,14 @@ func (c *Controller) acquireRelocationAccess(ctx context.Context, op RelocationO
 		releases = append(releases, release)
 	}
 	ok = true
-	return releaseAll, nil
+	if c.relocationTopology.roots == nil {
+		c.relocationTopology.roots = map[int64][2]string{}
+	}
+	c.relocationTopology.roots[op.ID] = [2]string{op.SourceRoot, op.TargetRoot}
+	return func() {
+		c.relocationTopology.mu.Lock()
+		defer c.relocationTopology.mu.Unlock()
+		delete(c.relocationTopology.roots, op.ID)
+		releaseAll()
+	}, nil
 }

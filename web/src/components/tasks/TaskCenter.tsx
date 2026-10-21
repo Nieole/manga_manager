@@ -890,7 +890,7 @@ function RunCard({
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <RunControlButtons run={run} taskActionKey={taskActionKey} onTaskAction={onTaskAction} />
-          {run.type === 'relocation_check' && run.scope_id && /^[1-9]\d*$/.test(run.labels?.plan_id || '') && (
+          {(run.type === 'relocation_check' || run.type === 'relocation_commit') && run.scope_id && /^[1-9]\d*$/.test(run.labels?.plan_id || '') && (
             <a href={`/library/${run.scope_id}?relocation_plan=${run.labels!.plan_id}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white">
               {t('relocation.viewResult')}
             </a>

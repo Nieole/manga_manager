@@ -54,14 +54,15 @@ type Controller struct {
 	config  *config.Manager
 	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
 	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**运行句柄**。
-	diskWork       *diskwork.Runner
-	koreader       *koreader.Service
-	external       *external.Manager
-	proposals      *proposal.Service
-	relocation     *relocation.Service
-	configPath     string
-	watcher        *scanner.FileWatcher
-	watcherInitErr error
+	diskWork           *diskwork.Runner
+	koreader           *koreader.Service
+	external           *external.Manager
+	proposals          *proposal.Service
+	relocation         *relocation.Service
+	configPath         string
+	watcher            *scanner.FileWatcher
+	watcherInitErr     error
+	relocationTopology relocationTopology
 
 	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
 	sse *sseBroker

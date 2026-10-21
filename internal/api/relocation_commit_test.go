@@ -363,6 +363,66 @@ func TestRelocationWatchRecoveryKeepsLibraryBlockedWhenTargetCannotBeWatched(t *
 	}
 }
 
+func TestRelocationBlocksNewConflictingLibraryRootsUntilEffectsFinish(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	seedBookArchivePages(t, c, book, png1x1)
+	target := filepath.Join(root, "target")
+	if err := os.Rename(lib.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	otherRoot := filepath.Join(root, "other")
+	if err := os.MkdirAll(otherRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "empty", Path: otherRoot, ScanMode: "none", ScanInterval: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	started, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(resume) }) }
+	defer release()
+	effects := c.relocation.Effects
+	c.relocation.Effects = func(ctx context.Context, op RelocationOperation) error {
+		close(started)
+		<-resume
+		return effects(ctx, op)
+	}
+	op := submitRelocation(t, c, plan.ID)
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("effects did not start")
+	}
+	for _, create := range []bool{false, true} {
+		path := filepath.Join(target, "series", "new-child")
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(map[string]any{"name": "new root", "path": path, "scan_mode": "none", "scan_interval": 60})
+		rec := httptest.NewRecorder()
+		if create {
+			c.createLibrary(rec, httptest.NewRequest(http.MethodPost, "/api/libraries", bytes.NewReader(body)))
+		} else {
+			c.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/api/libraries/2", body, "libraryId", strconv.FormatInt(other.ID, 10)))
+		}
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("conflicting root allowed create=%v: %d %s", create, rec.Code, rec.Body.String())
+		}
+	}
+	rec := httptest.NewRecorder()
+	c.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("commit advertised cancellation after write: %d", rec.Code)
+	}
+	release()
+	if got := awaitRelocationOperation(t, c, op.ID); got.Status != "completed" {
+		t.Fatalf("completion: %+v", got)
+	}
+}
+
 func submitRelocation(t *testing.T, c *Controller, planID int64) RelocationOperation {
 	t.Helper()
 	rec := httptest.NewRecorder()
