@@ -40,7 +40,7 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 		}
 		launched, startErr := c.taskEngine.start(libraryTask("relocation_commit", op.LibraryID, variantSole), task.TriggerManual, RunSpec{
 			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: lib.Name, CanCancel: true,
-			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.failed",
+			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.commit_failed", CancelCode: "task.msg.relocation.commit_cancelled",
 			Labels: map[string]string{"plan_id": strconv.FormatInt(id, 10), "operation_id": strconv.FormatInt(op.ID, 10)},
 		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 			return RunResult{}, c.relocation.Commit(ctx, op.ID, handle)
@@ -130,7 +130,7 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 		CancelCode: "task.msg.relocation.cancelled", FailCode: "task.msg.relocation.failed",
 		Labels: map[string]string{"plan_id": strconv.FormatInt(plan.ID, 10)},
 	}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
-		conflicts, conflictErr := c.libraryAccessConflicts(ctx, id)
+		conflicts, conflictErr := c.relocationCheckConflicts(ctx, plan)
 		if conflictErr != nil {
 			return RunResult{}, conflictErr
 		}

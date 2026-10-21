@@ -2207,4 +2207,6 @@ export const messages: MessageCatalog = {
     "task.type.relocation_commit": "资料库路径迁移",
     "task.msg.relocation.committing": "重验并提交资料库路径",
     "task.msg.relocation.completed": "资料库路径迁移完成",
+    "task.msg.relocation.commit_failed": "路径迁移未完成，请查看持久化结果",
+    "task.msg.relocation.commit_cancelled": "路径迁移已取消，路径尚未修改",
 };

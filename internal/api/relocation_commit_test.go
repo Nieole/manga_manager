@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/external"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
@@ -34,6 +35,17 @@ func TestRelocationCommitPreservesIdentityAndReadsNewLocation(t *testing.T) {
 	}
 	read()
 	parser.EvictArchiveFromPool(book.Path)
+	session, err := c.external.CreateSession(context.Background(), lib.ID, t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.external.ScanSession(context.Background(), session.SessionID, discardScanHandle{}); err != nil {
+		t.Fatal(err)
+	}
+	transfer, err := c.external.PrepareTransfer(context.Background(), lib.ID, session.SessionID, []int64{series.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
 	target := filepath.Join(root, "目标盘")
 	if err := os.Rename(lib.Path, target); err != nil {
 		t.Fatal(err)
@@ -75,6 +87,9 @@ func TestRelocationCommitPreservesIdentityAndReadsNewLocation(t *testing.T) {
 		t.Fatalf("preserved identity/result: %+v %+v", gotBook, result)
 	}
 	read()
+	if err = c.launchExternalLibraryTransferTask(lib.ID, session.SessionID, transfer); !errors.Is(err, external.ErrSessionNotFound) {
+		t.Fatalf("migration retained old transfer plan: %v", err)
+	}
 }
 
 func TestRelocationCommittedEffectsFailureBlocksUntilRealStartupRecovery(t *testing.T) {
@@ -311,6 +326,36 @@ func TestRelocationCommitRejectsWorkWhoseOtherLibraryCoversMappedFiles(t *testin
 	got, _ := store.GetBook(context.Background(), book.ID)
 	if got.Path != book.Path {
 		t.Fatal("conflict changed paths")
+	}
+}
+
+func TestRelocationPreviewListsOtherLibraryWorkCoveringMappedFiles(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	seedBookArchivePages(t, c, book, png1x1)
+	target := filepath.Join(root, "target")
+	if err := os.Rename(lib.Path, target); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "parent", Path: root, ScanMode: "none", ScanInterval: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, resume := make(chan struct{}), make(chan struct{})
+	defer close(resume)
+	launched, err := c.taskEngine.start(libraryTask("test_transfer", other.ID, variantSole), task.TriggerManual, RunSpec{Key: "test_transfer", CanCancel: false}, func(context.Context, *runhandle.Handle) (RunResult, error) {
+		close(started)
+		<-resume
+		return RunResult{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	page := previewDetails(t, c, plan.ID, "kind=blocker")
+	if plan.BlockerCount != 1 || len(page.Items) != 1 || page.Items[0].RunID != launched.Run.ID || page.Items[0].Reason != "wait_for_completion" {
+		t.Fatalf("related work not listed: %+v %+v", plan, page)
 	}
 }
 

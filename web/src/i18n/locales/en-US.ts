@@ -2207,4 +2207,6 @@ export const messages: MessageCatalog = {
     "task.type.relocation_commit": "Library path relocation",
     "task.msg.relocation.committing": "Revalidating and committing library paths",
     "task.msg.relocation.completed": "Library path relocation complete",
+    "task.msg.relocation.commit_failed": "Relocation incomplete; inspect the persisted result",
+    "task.msg.relocation.commit_cancelled": "Relocation cancelled; paths were not changed",
 };

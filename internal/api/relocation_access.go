@@ -7,11 +7,78 @@ import (
 	"sync"
 
 	"manga-manager/internal/relocation"
+	"manga-manager/internal/task"
 )
 
 type relocationTopology struct {
 	mu    sync.Mutex
 	roots map[int64][2]string
+}
+
+func (c *Controller) relocationCheckConflicts(ctx context.Context, plan RelocationPlan) ([]task.LibraryConflict, error) {
+	conflicts, err := c.libraryAccessConflicts(ctx, plan.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	libs, err := c.store.ListLibraries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := c.store.DB().QueryContext(ctx, `SELECT path FROM series WHERE library_id=? UNION ALL SELECT path FROM books WHERE library_id=?`, plan.LibraryID, plan.LibraryID)
+	if err != nil {
+		return nil, err
+	}
+	affected := map[int64]bool{}
+	for rows.Next() {
+		var path string
+		if err = rows.Scan(&path); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		mapped, mapErr := relocation.MapPath(plan.SourceRoot, plan.TargetRoot, path)
+		if mapErr != nil {
+			continue
+		}
+		for _, lib := range libs {
+			if lib.ID == plan.LibraryID {
+				continue
+			}
+			for _, candidate := range []string{path, mapped} {
+				_, inside := relocation.MapPath(lib.Path, lib.Path, candidate)
+				_, contains := relocation.MapPath(candidate, candidate, lib.Path)
+				if inside == nil || contains == nil {
+					affected[lib.ID] = true
+				}
+			}
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int64]bool{}
+	for _, conflict := range conflicts {
+		if conflict.RunID != 0 {
+			seen[conflict.RunID] = true
+		}
+	}
+	for _, lib := range libs {
+		if !affected[lib.ID] {
+			continue
+		}
+		other, loadErr := c.libraryAccessConflicts(ctx, lib.ID)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		for _, conflict := range other {
+			if conflict.RunID == 0 || !seen[conflict.RunID] {
+				conflicts = append(conflicts, conflict)
+				seen[conflict.RunID] = true
+			}
+		}
+	}
+	return conflicts, nil
 }
 
 // relocationRootConflicts is called while topology.mu protects a root change.
