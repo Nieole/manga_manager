@@ -378,7 +378,10 @@ func (s *Service) Recover(ctx context.Context) error {
 			}
 			return s.finish(ctx, op, verify)
 		}); e != nil {
-			op.Code = "relocation_policy_recovery_conflict"
+			op.Code = "relocation_recovering"
+			if errors.Is(e, errPolicyRecoveryConflict) {
+				op.Code = "relocation_policy_recovery_conflict"
+			}
 			_ = s.saveOperation(ctx, op)
 			continue
 		}
