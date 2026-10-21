@@ -50,6 +50,10 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	if err = s.dbtx().QueryRowContext(ctx, `SELECT path FROM libraries WHERE id=?`, plan.LibraryID).Scan(&plan.LibraryRoot); err != nil {
 		return err
 	}
+	checkingCode, checkedCode := "task.msg.relocation.checking", "task.msg.relocation.checked"
+	if plan.Purpose == "restoration" {
+		checkingCode, checkedCode = "task.msg.restoration.checking", "task.msg.restoration.checked"
+	}
 	plan.SeriesCount, plan.BookCount, plan.BlockerCount, plan.AnomalyCount, plan.PolicyCount = 0, 0, 0, 0, 0
 	plan.AnomalyCounts = map[string]int{}
 	plan.Samples = []RelocationDetail{}
@@ -75,7 +79,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 		}
 	}
 	if !s.transient {
-		handle.Phase("roots", "task.msg.relocation.checking", nil)
+		handle.Phase("roots", checkingCode, nil)
 	}
 	validTarget := true
 	if !filepath.IsAbs(plan.SourceRoot) || !filepath.IsAbs(plan.TargetRoot) {
@@ -157,7 +161,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 		return err
 	}
 	if !s.transient {
-		handle.Phase("files", "task.msg.relocation.checking", nil)
+		handle.Phase("files", checkingCode, nil)
 	}
 	processed := 0
 	err = s.walkRecords(ctx, plan.LibraryID, "book", func(item storedRecord) error {
@@ -206,7 +210,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 		}
 		processed++
 		if !s.transient {
-			handle.Advance(processed, plan.BookCount, "task.msg.relocation.checking", nil)
+			handle.Advance(processed, plan.BookCount, checkingCode, nil)
 		}
 		if processed%100 == 0 {
 			return s.save(ctx, plan)
@@ -217,7 +221,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 		return err
 	}
 	if !s.transient {
-		handle.Phase("policies", "task.msg.relocation.checking", nil)
+		handle.Phase("policies", checkingCode, nil)
 	}
 	cfg := s.Config.Snapshot()
 	if err = s.checkPolicies(ctx, &plan, cfg); err != nil {
@@ -232,7 +236,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	plan.FactsDigest = hex.EncodeToString(facts.Sum(nil))
 	plan.Status = "checked"
 	if !s.transient {
-		handle.Phase("checked", "task.msg.relocation.checked", nil)
+		handle.Phase("checked", checkedCode, nil)
 	}
 	slog.InfoContext(ctx, "Library relocation preview checked", "plan_id", plan.ID, "books", plan.BookCount, "blockers", plan.BlockerCount, "anomalies", plan.AnomalyCount)
 	return nil

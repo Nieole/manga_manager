@@ -185,6 +185,10 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 }
 
 func writeRelocationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, relocation.ErrStalePlan) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_stale_plan", "error": "Facts changed. Recheck before confirming."})
+		return
+	}
 	if errors.Is(err, relocation.ErrAnomaliesRequireConfirmation) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_anomalies_require_confirmation", "error": "Explicitly accept the anomalies in this plan"})
 		return

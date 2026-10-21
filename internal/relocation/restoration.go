@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/runhandle"
@@ -66,7 +67,7 @@ func (s *Service) commitRestoration(ctx context.Context, op RelocationOperation,
 			release()
 		}
 	}()
-	err = s.Config.WithSnapshot(func(cfg config.Config) error {
+	err = s.withRestorationConfig(func(cfg config.Config, verify func() error) error {
 		initial := &Service{Store: s.Store, Config: config.NewManager(&cfg), Files: s.Files, transient: true}
 		plan, e := initial.Get(ctx, op.PlanID)
 		if e != nil {
@@ -122,12 +123,15 @@ func (s *Service) commitRestoration(ctx context.Context, op RelocationOperation,
 		if _, e = tx.ExecContext(ctx, `UPDATE relocation_plans SET status='consumed' WHERE id=? AND status='checked'`, plan.ID); e != nil {
 			return e
 		}
-		op.Status, op.Code = "paths_committed", "restoration_recovering"
+		op.Status, op.Code = "paths_committed", ""
 		data, e := json.Marshal(op)
 		if e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, `UPDATE relocation_operations SET status=?,result=? WHERE id=?`, op.Status, data, op.ID); e != nil {
+			return e
+		}
+		if e = verify(); e != nil {
 			return e
 		}
 		if e = tx.Commit(); e != nil {
@@ -137,11 +141,13 @@ func (s *Service) commitRestoration(ctx context.Context, op RelocationOperation,
 		s.access.mu.Lock()
 		s.access.releases[op.ID] = release
 		s.access.mu.Unlock()
-		return s.finishRestoration(context.WithoutCancel(ctx), op)
+		return s.finishRestoration(context.WithoutCancel(ctx), op, verify)
 	})
 	if err != nil {
 		persisted, e := s.Operation(context.WithoutCancel(ctx), op.ID)
 		if e == nil && persisted.Status == "paths_committed" {
+			persisted.Code = "restoration_recovering"
+			_ = s.saveOperation(context.WithoutCancel(ctx), persisted)
 			return err
 		}
 		op.Status, op.Code = "failed", "restoration_failed"
@@ -154,6 +160,23 @@ func (s *Service) commitRestoration(ctx context.Context, op RelocationOperation,
 		_ = s.saveOperation(context.WithoutCancel(ctx), op)
 	}
 	return err
+}
+
+func (s *Service) withRestorationConfig(fn func(config.Config, func() error) error) error {
+	return s.withCommitConfig(func(cfg config.Config, session *config.UpdateSession) error {
+		verify := func() error { return nil }
+		if session != nil {
+			disk, err := session.Read()
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(policyFacts(disk), policyFacts(cfg)) {
+				return ErrStalePlan
+			}
+			verify = session.Verify
+		}
+		return fn(cfg, verify)
+	})
 }
 
 func (s *Service) finishRestoration(ctx context.Context, op RelocationOperation, verify ...func() error) error {

@@ -417,6 +417,15 @@ func (s *Service) Recover(ctx context.Context) error {
 		committed = append(committed, op)
 	}
 	for _, op := range committed {
+		if op.Purpose == "restoration" {
+			if e := s.withRestorationConfig(func(_ config.Config, verify func() error) error {
+				return s.finishRestoration(ctx, op, verify)
+			}); e != nil {
+				op.Code = "restoration_recovering"
+				_ = s.saveOperation(ctx, op)
+			}
+			continue
+		}
 		if e := s.reconcilePolicies(ctx, op, func(verify func() error) error {
 			if op.Status == "prepared" {
 				return nil
