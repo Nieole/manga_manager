@@ -204,7 +204,7 @@ func writeRelocationError(w http.ResponseWriter, err error) {
 	jsonResponse(w, http.StatusInternalServerError, map[string]string{"code": "relocation_persistence_failed", "error": "Unable to read or persist relocation plan"})
 }
 
-func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan RelocationPlan) RelocationPlan {
+func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan RelocationPlan) (RelocationPlan, error) {
 	if (plan.Status == "pending" || plan.Status == "checking") && plan.RunID != 0 {
 		run, loadErr := c.taskEngine.runStore.LoadRun(ctx, plan.RunID)
 		if errors.Is(loadErr, sql.ErrNoRows) || (loadErr == nil && run.Status.IsTerminal()) {
@@ -218,14 +218,13 @@ func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan Relocatio
 			if errors.Is(loadErr, sql.ErrNoRows) {
 				status = "interrupted"
 			}
-			if err := c.relocation.SetStatus(ctx, plan.ID, status); err == nil {
-				if current, loadErr := c.relocation.Get(ctx, plan.ID); loadErr == nil {
-					return current
-				}
+			if err := c.relocation.SetStatus(ctx, plan.ID, status); err != nil {
+				return plan, err
 			}
+			return c.relocation.Get(ctx, plan.ID)
 		}
 	}
-	return plan
+	return plan, nil
 }
 
 func (c *Controller) getRelocationPlan(w http.ResponseWriter, r *http.Request) {
@@ -239,7 +238,12 @@ func (c *Controller) getRelocationPlan(w http.ResponseWriter, r *http.Request) {
 		writeRelocationError(w, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, c.reconcileRelocationPlan(r.Context(), plan))
+	plan, err = c.reconcileRelocationPlan(r.Context(), plan)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, plan)
 }
 
 func (c *Controller) latestRelocationPlan(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +257,12 @@ func (c *Controller) latestRelocationPlan(w http.ResponseWriter, r *http.Request
 		writeRelocationError(w, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, c.reconcileRelocationPlan(r.Context(), plan))
+	plan, err = c.reconcileRelocationPlan(r.Context(), plan)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, plan)
 }
 
 func (c *Controller) relocationDetails(w http.ResponseWriter, r *http.Request) {
