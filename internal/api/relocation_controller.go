@@ -62,12 +62,13 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 			writeRelocationError(w, loadErr)
 			return
 		}
+		operationID := op.ID
 		launched, startErr := c.taskEngine.start(libraryTask("relocation_commit", op.LibraryID, variantSole), task.TriggerManual, RunSpec{
 			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: lib.Name, CanCancel: true,
 			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.commit_failed", CancelCode: "task.msg.relocation.commit_cancelled",
 			Labels: map[string]string{"plan_id": strconv.FormatInt(id, 10), "operation_id": strconv.FormatInt(op.ID, 10)},
 		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
-			return RunResult{}, c.relocation.Commit(ctx, op.ID, handle)
+			return RunResult{}, c.relocation.Commit(ctx, operationID, handle)
 		})
 		if startErr != nil {
 			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
