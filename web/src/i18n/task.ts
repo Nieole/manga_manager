@@ -3,6 +3,7 @@ type Translator = (key: string, params?: Record<string, string | number | boolea
 export interface TaskWithParams {
   type: string;
   params?: Record<string, string>;
+  labels?: Record<string, string>;
 }
 
 export interface TaskMessageSource {
@@ -33,6 +34,9 @@ export function formatKOReaderIndexLabel(params: Record<string, string> | undefi
 }
 
 export function getTaskTypeLabel(task: TaskWithParams, t: Translator) {
+  if (task.labels?.purpose === 'restoration' && (task.type === 'relocation_check' || task.type === 'relocation_commit')) {
+    return t(task.type === 'relocation_check' ? 'restoration.taskCheck' : 'restoration.taskRelease');
+  }
   switch (task.type) {
     case 'rebuild_book_hashes':
       return t('task.type.rebuild_book_hashes', { label: formatKOReaderIndexLabel(task.params, t) });

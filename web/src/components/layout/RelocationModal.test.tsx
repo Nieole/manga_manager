@@ -11,6 +11,14 @@ const plan = { id: 12, library_id: 1, library_name: 'My Library', library_root: 
   run_id: 7, status: 'checked', series_count: 1, book_count: 2, blocker_count: 1, anomaly_count: 2, policy_count: 0,
   anomaly_counts: { missing: 2 }, samples: [], created_at: '', updated_at: '' };
 
+it('never presents a restoration check as a migration confirmation', async () => {
+  get.mockResolvedValue({ data: { ...plan, purpose: 'restoration', blocker_count: 0 } });
+  render(<RelocationModal library={library} planID={12} onClose={vi.fn()} />);
+  await screen.findByText('restoration.useRestoration');
+  expect(screen.queryByText('relocation.commit')).toBeNull();
+  expect(screen.getByRole('link', { name: 'restoration.open' }).getAttribute('href')).toBe('/library/1?restoration_plan=12');
+});
+
 beforeEach(() => {
   get.mockReset(); post.mockReset();
   get.mockImplementation((url: string) => {

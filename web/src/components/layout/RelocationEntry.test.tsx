@@ -40,3 +40,19 @@ it('opens an edit redirect with only the proposed root and leaves the checked pl
   expect((screen.getByText('relocation.commit') as HTMLButtonElement).disabled).toBe(true);
   expect(post).not.toHaveBeenCalled();
 });
+
+it('routes an administrator restoration deep link to the exact restoration check', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : url.endsWith('/40') ? { id: 40, purpose: 'restoration', protection_id: 30, library_id: 4, status: 'checked', samples: [], anomaly_count: 0, blocker_count: 0 } : { protection: { operation_id: 30, scan_mode: 'watch', scan_interval: 20, scan_formats: 'cbz' } } }));
+  render(<MemoryRouter initialEntries={['/library/4?restoration_plan=40']}><RelocationEntry isAdmin libraries={[{ id: '4', name: 'Books', path: '/current', relocation_protected: true }]} selectedID={null} onClose={vi.fn()} /></MemoryRouter>);
+  await screen.findByRole('button', { name: 'restoration.release' });
+  expect(get).toHaveBeenCalledWith('/api/relocation-plans/40');
+  expect(screen.queryByText('relocation.commit')).toBeNull();
+  fireEvent.click(screen.getByText('relocation.close'));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+});
+
+it('never loads restoration facts for regular users', () => {
+  render(<MemoryRouter initialEntries={['/library/4?restoration=1']}><RelocationEntry isAdmin={false} libraries={[{ id: '4', name: 'Books', path: '/current', relocation_protected: true }]} selectedID={null} onClose={vi.fn()} /></MemoryRouter>);
+  expect(get).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
