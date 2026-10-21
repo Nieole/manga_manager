@@ -169,7 +169,7 @@ export function RestorationModal({ library, planID, onClose, onCompleted }: Prop
   return <ModalShell open onClose={onClose} title={t('restoration.title')} description={t('restoration.description')}
     footer={<><button type="button" className={modalGhostButtonClass} onClick={onClose}>{t('relocation.close')}</button>
       {busy ? <button type="button" className={modalGhostButtonClass} disabled={cancelling || run?.can_cancel === false} onClick={cancel}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCheck')}</button>
-        : <button type="button" className={modalGhostButtonClass} disabled={loading || submitting || recovering || !facts?.protection} onClick={recheck}>{t('restoration.recheck')}</button>}
+        : <button type="button" className={modalGhostButtonClass} disabled={loading || submitting || recovering || !facts?.protection || operation?.status === 'completed'} onClick={recheck}>{t('restoration.recheck')}</button>}
       <button type="button" className={modalPrimaryButtonClass} disabled={!available || !settingsValid || !consent || Boolean(plan?.anomaly_count && !lossRisk) || submitting || loading} onClick={release}>{t('restoration.release')}</button></>}>
     <div className="space-y-5 text-gray-300">
       <p className="font-medium text-white">{library.name}</p>
