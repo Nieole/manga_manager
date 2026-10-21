@@ -184,6 +184,25 @@ func TestRestorationWatcherFailureKeepsProtectionThroughFreshStartup(t *testing.
 	if op.Status != "paths_committed" || op.Code != "restoration_recovering" || !op.Protected {
 		t.Fatalf("watch failure exposed half release: %+v", op)
 	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		run, err := c.taskEngine.runStore.LoadRun(context.Background(), op.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run.Status.IsTerminal() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("watch failure run did not settle")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	for _, run := range taskCenterFirstPage(t, c) {
+		if run.RunID == op.RunID && strings.Contains(run.Error, target) {
+			t.Fatalf("watch failure leaked host path in task: %q", run.Error)
+		}
+	}
 	if p, err := store.LibraryRelocationProtection(context.Background(), lib.ID); err != nil || p == nil {
 		t.Fatalf("watch failure lost protection: %+v %v", p, err)
 	}

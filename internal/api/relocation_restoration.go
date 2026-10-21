@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -76,9 +77,9 @@ func (c *Controller) createRestorationCheck(w http.ResponseWriter, r *http.Reque
 	}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 		conflicts, e := c.relocationCheckConflicts(ctx, checkPlan)
 		if e != nil {
-			return RunResult{}, e
+			return RunResult{}, restorationTaskError(ctx, e)
 		}
-		return RunResult{}, c.relocation.Check(ctx, checkPlan.ID, handle, conflicts)
+		return RunResult{}, restorationTaskError(ctx, c.relocation.Check(ctx, checkPlan.ID, handle, conflicts))
 	})
 	if err != nil || launched.Coalesced {
 		_ = c.relocation.SetStatus(context.WithoutCancel(r.Context()), plan.ID, "failed")
@@ -139,7 +140,7 @@ func (c *Controller) releaseRelocationProtection(w http.ResponseWriter, r *http.
 			StartCode: "task.msg.restoration.releasing", CompleteCode: "task.msg.restoration.completed", FailCode: "task.msg.restoration.failed", CancelCode: "task.msg.relocation.commit_cancelled",
 			Labels: map[string]string{"plan_id": strconv.FormatInt(plan.ID, 10), "operation_id": strconv.FormatInt(op.ID, 10), "purpose": "restoration"},
 		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
-			return RunResult{}, c.relocation.Commit(ctx, operationID, handle)
+			return RunResult{}, restorationTaskError(ctx, c.relocation.Commit(ctx, operationID, handle))
 		})
 		if e != nil || launched.Coalesced {
 			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
@@ -161,6 +162,14 @@ func (c *Controller) releaseRelocationProtection(w http.ResponseWriter, r *http.
 		return
 	}
 	jsonResponse(w, http.StatusAccepted, op)
+}
+
+func restorationTaskError(ctx context.Context, err error) error {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return err
+	}
+	slog.ErrorContext(ctx, "Protected library restoration failed", "error", err)
+	return errors.New("restoration_failed")
 }
 
 // Register the chosen watcher while protection and exclusive access still stop
