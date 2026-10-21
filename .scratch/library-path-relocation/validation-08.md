@@ -24,3 +24,9 @@ UI tests preserve the single result view for prepared and paths-committed states
 - The final full Go command had Smart App Control execution refusals for API, scanner and taskstore. A normal retry passed the full API suite (70.219s); a further normal retry passed scanner (17.554s) and taskstore (3.598s). Every other package passed in the full run. This establishes aggregate package coverage; the full command itself returned failure. No security settings changed.
 - Final go test -race ./internal/api ./internal/config ./internal/relocation -run 'TestRelocation|TestConfigFailedUpdate|TestManager' -count=1 passed: API 93.244s, config 2.708s.
 - scripts/check-doc-style.sh passed; existing historical-word notices remain advisory.
+
+## Review follow-up
+
+The zero-policy plan path also reads and validates actual disk policy facts before preparing its durable decision. It retains the policy-only journal without rewriting configuration, verifies disk bytes before SQL commit and after derived effects, and participates in the same restart recovery. `TestRelocationZeroPolicyPreviewRejectsUnpublishedDiskPolicy` was observed RED (completed with a disk-only source-child policy edit) and then GREEN, preserving both database paths and the un-reloaded external policy.
+
+After this fix, the focused policy HTTP suite passed (6.729s), the complete relocation/config-compensation race selection passed (91.843s), lint returned `0 issues.` and gofmt output remained empty. No frontend source changed.
