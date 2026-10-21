@@ -447,6 +447,9 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 			}
 			for _, lib := range libs {
 				if lib.ScanMode == "watch" {
+					if c.requireAutomaticProcessing(context.Background(), lib.ID) != nil {
+						continue
+					}
 					release, accessErr := c.taskEngine.engine.AcquireLibraryRead(lib.ID)
 					if accessErr != nil {
 						continue
@@ -1051,10 +1054,20 @@ func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if libs == nil {
-		libs = []database.Library{} // 保证 JSON 数组非 null
+	type libraryStatus struct {
+		database.Library
+		RelocationProtected bool `json:"relocation_protected"`
 	}
-	jsonResponse(w, http.StatusOK, libs)
+	result := make([]libraryStatus, 0, len(libs))
+	for _, lib := range libs {
+		protection, protectionErr := c.store.LibraryRelocationProtection(ctx, lib.ID)
+		if protectionErr != nil {
+			jsonError(w, http.StatusInternalServerError, "Unable to read relocation protection")
+			return
+		}
+		result = append(result, libraryStatus{Library: lib, RelocationProtected: protection != nil})
+	}
+	jsonResponse(w, http.StatusOK, result)
 }
 
 func parseID(r *http.Request, param string) (int64, error) {

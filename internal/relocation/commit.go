@@ -15,17 +15,19 @@ import (
 
 // RelocationOperation survives run history pruning and records the committed boundary.
 type RelocationOperation struct {
-	ID          int64     `json:"id"`
-	PlanID      int64     `json:"plan_id"`
-	LibraryID   int64     `json:"library_id"`
-	RunID       int64     `json:"run_id"`
-	Status      string    `json:"status"`
-	SourceRoot  string    `json:"source_root"`
-	TargetRoot  string    `json:"target_root"`
-	SeriesCount int       `json:"series_count"`
-	BookCount   int       `json:"book_count"`
-	Code        string    `json:"code"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID              int64     `json:"id"`
+	PlanID          int64     `json:"plan_id"`
+	LibraryID       int64     `json:"library_id"`
+	RunID           int64     `json:"run_id"`
+	Status          string    `json:"status"`
+	SourceRoot      string    `json:"source_root"`
+	TargetRoot      string    `json:"target_root"`
+	SeriesCount     int       `json:"series_count"`
+	BookCount       int       `json:"book_count"`
+	Code            string    `json:"code"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	AcceptAnomalies bool      `json:"accept_anomalies"`
+	Protected       bool      `json:"protected"`
 }
 
 var ErrPlanNotReady = errors.New("relocation_plan_not_ready")
@@ -53,7 +55,7 @@ func (s *Service) Operation(ctx context.Context, id int64) (RelocationOperation,
 }
 
 // Prepare returns the same durable operation for every confirmation of a plan.
-func (s *Service) Prepare(ctx context.Context, planID int64) (RelocationOperation, bool, error) {
+func (s *Service) Prepare(ctx context.Context, planID int64, accept ...bool) (RelocationOperation, bool, error) {
 	plan, err := s.Get(ctx, planID)
 	if err != nil {
 		return RelocationOperation{}, false, err
@@ -67,10 +69,21 @@ func (s *Service) Prepare(ctx context.Context, planID int64) (RelocationOperatio
 	if !errors.Is(err, sql.ErrNoRows) {
 		return RelocationOperation{}, false, err
 	}
-	if plan.Status != "checked" || plan.BlockerCount != 0 || plan.AnomalyCount != 0 {
+	accepted := len(accept) > 0 && accept[0]
+	if plan.AnomalyCount != 0 && !accepted {
+		return RelocationOperation{}, false, ErrAnomaliesRequireConfirmation
+	}
+	if plan.Status != "checked" || plan.BlockerCount != 0 {
 		return RelocationOperation{}, false, ErrPlanNotReady
 	}
 	op := RelocationOperation{PlanID: plan.ID, LibraryID: plan.LibraryID, Status: "pending", SourceRoot: plan.SourceRoot, TargetRoot: plan.TargetRoot, SeriesCount: plan.SeriesCount, BookCount: plan.BookCount, UpdatedAt: time.Now().UTC()}
+	op.AcceptAnomalies = accepted
+	op.Protected = plan.AnomalyCount != 0
+	protection, err := s.Store.LibraryRelocationProtection(ctx, plan.LibraryID)
+	if err != nil {
+		return op, false, err
+	}
+	op.Protected = op.Protected || protection != nil
 	data, err := json.Marshal(op)
 	if err != nil {
 		return op, false, err
@@ -189,7 +202,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 			return e
 		}
 		checked := inspection.evaluated
-		if checked.FactsDigest != plan.FactsDigest || checked.BlockerCount != 0 || checked.AnomalyCount != 0 {
+		if checked.FactsDigest != plan.FactsDigest || checked.BlockerCount != 0 || (checked.AnomalyCount != 0 && !op.AcceptAnomalies) {
 			return ErrStalePlan
 		}
 		for _, kind := range []string{"series", "book"} {
@@ -206,6 +219,14 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 				return mapErr
 			})
 			if e != nil {
+				return e
+			}
+		}
+		if op.Protected {
+			if _, e = tx.ExecContext(ctx, `INSERT INTO library_relocation_protection(library_id,operation_id,plan_id,facts_digest,anomaly_count,scan_mode,scan_interval,scan_formats) SELECT id,?,?,?,?,scan_mode,scan_interval,scan_formats FROM libraries WHERE id=? ON CONFLICT(library_id) DO UPDATE SET operation_id=excluded.operation_id,plan_id=excluded.plan_id,facts_digest=excluded.facts_digest,anomaly_count=excluded.anomaly_count`, op.ID, plan.ID, plan.FactsDigest, plan.AnomalyCount, op.LibraryID); e != nil {
+				return e
+			}
+			if _, e = tx.ExecContext(ctx, `UPDATE libraries SET scan_mode='none' WHERE id=?`, op.LibraryID); e != nil {
 				return e
 			}
 		}

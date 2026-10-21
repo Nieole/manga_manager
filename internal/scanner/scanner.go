@@ -811,6 +811,13 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 const cleanupDeleteRatioGuard = 0.5
 
 func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
+	protection, protectionErr := s.store.LibraryRelocationProtection(ctx, libraryID)
+	if protectionErr != nil {
+		return protectionErr
+	}
+	if protection != nil {
+		return database.ErrLibraryProtected
+	}
 	// 先探测资料库根目录：存储离线时库内所有系列路径都会“看起来不存在”，
 	// 若继续清理会把整库系列连同书籍、阅读进度一并级联删除。任何 Stat 错误
 	// （不存在 / 权限 / 超时 / 网络）或非目录都视为不可达，直接中止。
@@ -872,7 +879,7 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 			return err
 		}
 		slog.InfoContext(ctx, "Removing missing series", "series_id", series.ID, "path", series.Path)
-		if err := s.store.DeleteSeries(ctx, series.ID); err != nil {
+		if err := s.store.DeleteMissingSeries(ctx, series.ID); err != nil {
 			slog.ErrorContext(ctx, "Failed to delete series", "series_id", series.ID, "error", err)
 			continue
 		}
@@ -896,7 +903,7 @@ func (s *Scanner) CleanupLibrary(ctx context.Context, libraryID int64) error {
 			if _, statErr := os.Stat(book.Path); statErr != nil {
 				if os.IsNotExist(statErr) {
 					slog.InfoContext(ctx, "Removing missing book", "book_id", book.ID, "path", book.Path)
-					if err := s.store.DeleteBook(ctx, book.ID); err != nil {
+					if err := s.store.DeleteMissingBook(ctx, book.ID); err != nil {
 						slog.ErrorContext(ctx, "Failed to delete book", "book_id", book.ID, "error", err)
 					}
 					booksChanged = true

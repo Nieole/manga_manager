@@ -222,6 +222,7 @@ export interface RelocationPlan {
   samples: RelocationDetail[];
   created_at: string;
   updated_at: string;
+  protection?: LibraryRelocationProtection;
 }
 
 export interface RelocationSourceRoots {
@@ -249,5 +250,18 @@ export interface RelocationOperation {
   book_count: number;
   code: string;
   updated_at: string;
+  accept_anomalies: boolean;
+  protected: boolean;
+}
+
+export interface LibraryRelocationProtection {
+  library_id: number;
+  operation_id: number;
+  plan_id: number;
+  facts_digest: string;
+  anomaly_count: number;
+  scan_mode: string;
+  scan_interval: number;
+  scan_formats: string;
 }
 

@@ -357,7 +357,7 @@ export default function Layout() {
                 return;
             }
             console.error(error);
-            showToast(extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
+            showToast(isAxiosError(error) && error.response?.data?.code === 'relocation_protected' ? t('relocation.protection.explanation') : extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
         } finally {
             editForm.setSubmitting(false);
         }
@@ -369,7 +369,7 @@ export default function Layout() {
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
             // 后端带回一句话时以它为准：这个库已经排着一次扫描的话，本次强制重扫会被并进那一次，
             // 而那一次不是强制的——此时说「已提交」就是骗人。其余情况后端不带话，用本地这两句。
-            showToast(res.data.message || (force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued')), 'success');
+            showToast(libraries.find((item) => String(item.id) === id)?.relocation_protected ? t('relocation.protection.manualScan') : res.data.message || (force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued')), 'success');
         } catch (error) {
             console.error("Trigger scan failed", error);
             showToast(t('layout.toast.scanFailed'), 'error');
@@ -392,7 +392,7 @@ export default function Layout() {
             showToast(t('layout.toast.cleanupQueued'), 'success');
         } catch (error) {
             console.error("Trigger cleanup failed", error);
-            showToast(t('layout.toast.cleanupFailed'), 'error');
+            showToast(t(isAxiosError(error) && error.response?.data?.code === 'relocation_protected' ? 'relocation.protection.explanation' : 'layout.toast.cleanupFailed'), 'error');
         }
     };
 
@@ -773,6 +773,7 @@ export default function Layout() {
                                                     <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
                                                         {t('layout.libraryActions.title')}
                                                     </div>
+                                                    {lib.relocation_protected && <p className="px-3 py-2 text-xs text-amber-200">{t('relocation.protection.active')}</p>}
                                                     <button
                                                         onClick={(e) => {
                                                             setOpenMenuId(null);

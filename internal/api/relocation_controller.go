@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"manga-manager/internal/database"
 	"net/http"
 	"strconv"
 
@@ -42,7 +43,14 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid plan ID")
 		return
 	}
-	op, created, err := c.relocation.Prepare(r.Context(), id)
+	var request struct {
+		AcceptAnomalies bool `json:"accept_anomalies"`
+	}
+	if err = json.NewDecoder(r.Body).Decode(&request); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	op, created, err := c.relocation.Prepare(r.Context(), id, request.AcceptAnomalies)
 	if err != nil {
 		writeRelocationError(w, err)
 		return
@@ -54,12 +62,13 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 			writeRelocationError(w, loadErr)
 			return
 		}
+		operationID := op.ID
 		launched, startErr := c.taskEngine.start(libraryTask("relocation_commit", op.LibraryID, variantSole), task.TriggerManual, RunSpec{
 			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: lib.Name, CanCancel: true,
 			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.commit_failed", CancelCode: "task.msg.relocation.commit_cancelled",
 			Labels: map[string]string{"plan_id": strconv.FormatInt(id, 10), "operation_id": strconv.FormatInt(op.ID, 10)},
 		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
-			return RunResult{}, c.relocation.Commit(ctx, op.ID, handle)
+			return RunResult{}, c.relocation.Commit(ctx, operationID, handle)
 		})
 		if startErr != nil {
 			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
@@ -110,6 +119,11 @@ func (c *Controller) relocationEffects(ctx context.Context, op RelocationOperati
 		c.watcher.UnwatchLibrary(op.SourceRoot)
 	}
 	if lib.ScanMode == "watch" {
+		if err := c.requireAutomaticProcessing(ctx, lib.ID); errors.Is(err, database.ErrLibraryProtected) {
+			return nil
+		} else if err != nil {
+			return err
+		}
 		if c.watcherInitErr != nil {
 			return c.watcherInitErr
 		}
@@ -171,6 +185,10 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 }
 
 func writeRelocationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, relocation.ErrAnomaliesRequireConfirmation) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_anomalies_require_confirmation", "error": "Explicitly accept the anomalies in this plan"})
+		return
+	}
 	if errors.Is(err, relocation.ErrPlanNotReady) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_plan_not_ready", "error": "Recheck this relocation plan before confirming"})
 		return
@@ -186,7 +204,7 @@ func writeRelocationError(w http.ResponseWriter, err error) {
 	jsonResponse(w, http.StatusInternalServerError, map[string]string{"code": "relocation_persistence_failed", "error": "Unable to read or persist relocation plan"})
 }
 
-func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan RelocationPlan) RelocationPlan {
+func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan RelocationPlan) (RelocationPlan, error) {
 	if (plan.Status == "pending" || plan.Status == "checking") && plan.RunID != 0 {
 		run, loadErr := c.taskEngine.runStore.LoadRun(ctx, plan.RunID)
 		if errors.Is(loadErr, sql.ErrNoRows) || (loadErr == nil && run.Status.IsTerminal()) {
@@ -200,12 +218,13 @@ func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan Relocatio
 			if errors.Is(loadErr, sql.ErrNoRows) {
 				status = "interrupted"
 			}
-			if err := c.relocation.SetStatus(ctx, plan.ID, status); err == nil {
-				plan.Status = status
+			if err := c.relocation.SetStatus(ctx, plan.ID, status); err != nil {
+				return plan, err
 			}
+			return c.relocation.Get(ctx, plan.ID)
 		}
 	}
-	return plan
+	return plan, nil
 }
 
 func (c *Controller) getRelocationPlan(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +238,12 @@ func (c *Controller) getRelocationPlan(w http.ResponseWriter, r *http.Request) {
 		writeRelocationError(w, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, c.reconcileRelocationPlan(r.Context(), plan))
+	plan, err = c.reconcileRelocationPlan(r.Context(), plan)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, plan)
 }
 
 func (c *Controller) latestRelocationPlan(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +257,12 @@ func (c *Controller) latestRelocationPlan(w http.ResponseWriter, r *http.Request
 		writeRelocationError(w, err)
 		return
 	}
-	jsonResponse(w, http.StatusOK, c.reconcileRelocationPlan(r.Context(), plan))
+	plan, err = c.reconcileRelocationPlan(r.Context(), plan)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, plan)
 }
 
 func (c *Controller) relocationDetails(w http.ResponseWriter, r *http.Request) {
