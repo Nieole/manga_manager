@@ -34,3 +34,9 @@ Actual browser evidence and final documentation gate are recorded separately whe
 Final documentation gate: `scripts/check-doc-style.sh` exited 0. The separate ordinary scanner race retry passed (7.887s). Relevant API and scanner race coverage therefore passed across runs after the commit-handler fix; the combined invocation itself remained nonzero due to the scanner SAC block.
 
 The root agent captured real HTTP/Vite acceptance at `cfc49a7`: `screenshots/anomaly-details.png` and `screenshots/anomaly-protected.png`. An independent fake library retained its original series and both books while one target book was absent; consent was required, and completion displayed retained interval/60/cbz settings with effective automatic mode disabled. The screenshots predate the immutable-ID race fix and the final preview hint correction; see the screenshot README for exact provenance.
+
+## Series automatic-admission review fix
+
+The review found a second check/admission window in non-manual series scans. A deterministic Controller test wraps the existing store boundary: it pauses the second `GetSeries` call after the initial protection check, completes a real anomalous relocation, then resumes admission. Before the fix, the previously checked resumed scan was admitted with a nil error; the test failed. The series RunSpec now re-reads the current series ownership and persistent protection through `ValidateAccess`, inside the engine admission mutex. A changed library owner is rejected, and manual scans retain their existing behavior.
+
+The final barrier regression passed in 5.134s after one normal Smart App Control retry, including the public task-list assertion that no series run was created. The initial green version without that additional run-list assertion passed in 5.243s. Formatting was clean and lint returned exit 0 / `0 issues.` after the production fix. Full API and relevant race reruns are recorded below when complete.

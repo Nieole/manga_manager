@@ -457,11 +457,13 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 // 存储画像与并发上限来自系列所属的**资料库**，因此任务声明要先查两跳（系列 → 资料库）才能拼齐；
 // 查不到就按「没有上限可报」落地，见下。
 func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger task.Trigger) error {
+	var automaticLibraryID int64
 	if trigger != task.TriggerManual {
 		series, err := c.store.GetSeries(context.Background(), seriesID)
 		if err != nil {
 			return err
 		}
+		automaticLibraryID = series.LibraryID
 		if err = c.requireAutomaticProcessing(context.Background(), series.LibraryID); err != nil {
 			return err
 		}
@@ -484,6 +486,19 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger ta
 	}
 
 	spec := RunSpec{
+		ValidateAccess: func() error {
+			if trigger == task.TriggerManual {
+				return nil
+			}
+			current, err := c.store.GetSeries(context.Background(), seriesID)
+			if err != nil {
+				return err
+			}
+			if current.LibraryID != automaticLibraryID {
+				return errLibraryUnavailable
+			}
+			return c.requireAutomaticProcessing(context.Background(), current.LibraryID)
+		},
 		Key:         fmt.Sprintf("scan_series_%d", seriesID),
 		StartCode:   "task.msg.scan_series.start",
 		StartParams: idParams,

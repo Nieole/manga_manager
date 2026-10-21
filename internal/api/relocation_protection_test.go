@@ -18,6 +18,48 @@ import (
 	"time"
 )
 
+type delayedSeriesAdmissionStore struct {
+	database.Store
+	calls   int
+	entered chan struct{}
+	resume  chan struct{}
+}
+
+func (s *delayedSeriesAdmissionStore) GetSeries(ctx context.Context, id int64) (database.Series, error) {
+	s.calls++
+	if s.calls == 2 {
+		close(s.entered)
+		<-s.resume
+	}
+	return s.Store.GetSeries(ctx, id)
+}
+
+func TestProtectedRelocationRejectsPreviouslyCheckedSeriesResume(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, series, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	plan := startRelocationPreview(t, c, lib.ID, target)
+	delayed := &delayedSeriesAdmissionStore{Store: store, entered: make(chan struct{}), resume: make(chan struct{})}
+	c.store = delayed
+	result := make(chan error, 1)
+	go func() { result <- c.launchSeriesScanTask(series.ID, false, task.TriggerResumed) }()
+	<-delayed.entered
+	op := acceptRelocationAnomalies(t, c, plan.ID)
+	close(delayed.resume)
+	if err := <-result; !errors.Is(err, database.ErrLibraryProtected) {
+		t.Fatalf("series resume crossed protected commit: operation=%+v error=%v", op, err)
+	}
+	runs := httptest.NewRecorder()
+	c.listTasks(runs, httptest.NewRequest(http.MethodGet, "/api/system/tasks?type=scan_series", nil))
+	var snapshots []RunSnapshot
+	if err := json.Unmarshal(runs.Body.Bytes(), &snapshots); err != nil || runs.Code != http.StatusOK || len(snapshots) != 0 {
+		t.Fatalf("protected series resume created a run: %d %s %v", runs.Code, runs.Body.String(), err)
+	}
+}
+
 func TestRelocationAcceptsMissingBookAndProtectsEveryRecord(t *testing.T) {
 	c, store, _, root := newTestController(t)
 	lib, series, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
