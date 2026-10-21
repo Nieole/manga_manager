@@ -123,6 +123,16 @@ func (c *Controller) releaseRelocationProtection(w http.ResponseWriter, r *http.
 		return
 	}
 	if created {
+		conflicts, conflictErr := c.relocationCheckConflicts(r.Context(), plan)
+		if conflictErr != nil || len(conflicts) != 0 {
+			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
+			if conflictErr != nil {
+				writeRelocationError(w, conflictErr)
+			} else {
+				jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_conflict", "error": "Related library work or access must finish before release"})
+			}
+			return
+		}
 		operationID := op.ID
 		launched, e := c.taskEngine.start(libraryTask("relocation_commit", id, variantSole), task.TriggerManual, RunSpec{
 			Key: fmt.Sprintf("relocation_commit_%d", id), ScopeName: plan.LibraryName, CanCancel: true,

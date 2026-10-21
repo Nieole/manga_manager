@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/task"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -578,10 +580,12 @@ func TestRestorationExclusiveAccessRejectsRelatedReadsAndKeepsUnrelatedLibraryRe
 	if err != nil {
 		t.Fatal(err)
 	}
-	op := submitRestoration(t, c, lib.ID, check.ID, "none", true)
+	body, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
+	blocked := httptest.NewRecorder()
+	c.releaseRelocationProtection(blocked, requestWithRouteParam(http.MethodPost, "/release", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	release()
-	if op.Status != "failed" || op.Code != "relocation_conflict" {
-		t.Fatalf("active read crossed release: %+v", op)
+	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "relocation_conflict") {
+		t.Fatalf("active read crossed release: %d %s", blocked.Code, blocked.Body.String())
 	}
 	check = startRestorationCheck(t, c, lib.ID)
 	entered, resume := make(chan struct{}), make(chan struct{})
@@ -607,5 +611,77 @@ func TestRestorationExclusiveAccessRejectsRelatedReadsAndKeepsUnrelatedLibraryRe
 	}
 	if result := awaitRelocationOperation(t, c, pending.ID); result.Status != "completed" {
 		t.Fatalf("release did not complete: %+v", result)
+	}
+}
+
+func TestRestorationCurrentDetailsAreBoundedAndSurvivePrunedHistory(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, series, _ := seedBookFixture(t, store, root, "source", "series", "missing.cbz", 1)
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	migration := startRelocationPreview(t, c, lib.ID, target)
+	acceptRelocationAnomalies(t, c, migration.ID)
+	for i := range 104 {
+		name := strconv.Itoa(i) + ".cbz"
+		if _, err := store.CreateBook(context.Background(), database.CreateBookParams{LibraryID: lib.ID, SeriesID: series.ID, Name: name, Path: filepath.Join(target, "series", name), Size: 1024, FileModifiedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := startRestorationCheck(t, c, lib.ID)
+	if check.AnomalyCount != 105 || len(check.Samples) != 6 {
+		t.Fatalf("current bounded summary: %+v", check)
+	}
+	page, last := previewDetails(t, c, check.ID, "kind=anomaly&limit=99999"), previewDetails(t, c, check.ID, "kind=anomaly&offset=100&limit=100")
+	if page.Total != 105 || len(page.Items) != 100 || page.Limit != 100 || last.Total != 105 || len(last.Items) != 5 {
+		t.Fatalf("bounded current pages: %+v %+v", page, last)
+	}
+	if err := c.config.Save(c.configPath, nil, func(*config.Config) error { return nil }, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := freshRestorationController(t, c, store, root)
+	rec := httptest.NewRecorder()
+	fresh.getRelocationRestoration(rec, requestWithRouteParam(http.MethodGet, "/restore", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	var state RelocationRestoration
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil || state.Check == nil || state.Check.ID != check.ID || state.Check.Status != "checked" || state.Check.AnomalyCount != 105 || state.Accepted == nil || state.Accepted.ID != migration.ID || state.Accepted.AnomalyCount != 1 {
+		t.Fatalf("history/current lost after reopen: %d %s %v", rec.Code, rec.Body.String(), err)
+	}
+	if page := previewDetails(t, fresh, check.ID, "kind=anomaly&offset=100&limit=50"); page.Total != 105 || len(page.Items) != 5 {
+		t.Fatalf("reopened current details: %+v", page)
+	}
+}
+
+func TestRestorationRejectsQueuedOrActiveRelatedWorkBeforeAdmission(t *testing.T) {
+	for _, queued := range []bool{false, true} {
+		t.Run(strconv.FormatBool(queued), func(t *testing.T) {
+			c, store, _, root := newTestController(t)
+			lib, _, _ := seedBookFixture(t, store, root, "source", "series", "missing.cbz", 1)
+			other, _, _ := seedBookFixture(t, store, root, "other", "series", "other.cbz", 1)
+			target := filepath.Join(root, "target")
+			if err := os.MkdirAll(target, 0755); err != nil {
+				t.Fatal(err)
+			}
+			acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
+			check := startRestorationCheck(t, c, lib.ID)
+			c.taskEngine.runBackground = func(func()) {}
+			c.taskEngine.slots = func() int { return 1 }
+			hold := func(id int64, key string) {
+				t.Helper()
+				if err := c.taskEngine.Run(libraryTask(key, id, variantSole), task.TriggerManual, RunSpec{Key: key, CanCancel: true}, func(context.Context, *runhandle.Handle) (RunResult, error) { return RunResult{}, nil }); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if queued {
+				hold(other.ID, "unrelated_hold")
+			}
+			hold(lib.ID, "related_hold")
+			payload, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
+			rec := httptest.NewRecorder()
+			c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "relocation_conflict") {
+				t.Fatalf("related work admitted release: %d %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
