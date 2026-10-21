@@ -117,9 +117,6 @@ func (s *Service) commitRestoration(ctx context.Context, op RelocationOperation,
 		if e = ctx.Err(); e != nil {
 			return e
 		}
-		if _, e = tx.ExecContext(ctx, `UPDATE libraries SET scan_mode=?,scan_interval=?,scan_formats=? WHERE id=?`, op.ScanMode, op.ScanInterval, op.ScanFormats, op.LibraryID); e != nil {
-			return e
-		}
 		if _, e = tx.ExecContext(ctx, `UPDATE relocation_plans SET status='consumed' WHERE id=? AND status='checked'`, plan.ID); e != nil {
 			return e
 		}
@@ -196,6 +193,17 @@ func (s *Service) finishRestoration(ctx context.Context, op RelocationOperation,
 		return err
 	}
 	defer tx.Rollback()
+	settings, err := tx.ExecContext(ctx, `UPDATE libraries SET scan_mode=?,scan_interval=?,scan_formats=? WHERE id=? AND path=? AND scan_mode='none' AND EXISTS (SELECT 1 FROM library_relocation_protection WHERE library_id=? AND operation_id=?)`, op.ScanMode, op.ScanInterval, op.ScanFormats, op.LibraryID, op.TargetRoot, op.LibraryID, op.ProtectionID)
+	if err != nil {
+		return err
+	}
+	changed, err := settings.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return ErrStalePlan
+	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM library_relocation_protection WHERE library_id=? AND operation_id=? AND EXISTS (SELECT 1 FROM libraries WHERE id=? AND path=? AND scan_mode=? AND scan_interval=? AND scan_formats=?)`, op.LibraryID, op.ProtectionID, op.LibraryID, op.TargetRoot, op.ScanMode, op.ScanInterval, op.ScanFormats)
 	if err != nil {
 		return err

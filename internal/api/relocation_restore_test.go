@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,6 +185,10 @@ func TestRestorationWatcherFailureKeepsProtectionThroughFreshStartup(t *testing.
 	if op.Status != "paths_committed" || op.Code != "restoration_recovering" || !op.Protected {
 		t.Fatalf("watch failure exposed half release: %+v", op)
 	}
+	pendingLibrary, err := store.GetLibrary(context.Background(), lib.ID)
+	if err != nil || pendingLibrary.ScanMode != "none" {
+		t.Fatalf("pending effects published automatic settings before release: %+v %v", pendingLibrary, err)
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		run, err := c.taskEngine.runStore.LoadRun(context.Background(), op.RunID)
@@ -235,6 +240,10 @@ func TestRestorationWatcherFailureKeepsProtectionThroughFreshStartup(t *testing.
 	}
 	if p, err := finalStore.LibraryRelocationProtection(context.Background(), lib.ID); err != nil || p != nil {
 		t.Fatalf("completed recovery still protected: %+v %v", p, err)
+	}
+	selected, err := finalStore.GetLibrary(context.Background(), lib.ID)
+	if err != nil || selected.ScanMode != "watch" || selected.ScanInterval != 23 || selected.ScanFormats != "cbz" {
+		t.Fatalf("fresh recovery did not atomically publish selected settings: %+v %v", selected, err)
 	}
 	if _, err := finalStore.GetBook(context.Background(), book.ID); err != nil {
 		t.Fatalf("release deleted missing book: %v", err)
@@ -402,7 +411,7 @@ func TestRestorationCleanCheckStillNeedsConfirmationAndDuplicateCannotOverwriteL
 }
 
 func TestRestorationPersistenceFailuresCannotExposeHalfReleasedLibrary(t *testing.T) {
-	for _, boundary := range []string{"settings", "protection", "result"} {
+	for _, boundary := range []string{"decision", "settings", "protection", "result"} {
 		t.Run(boundary, func(t *testing.T) {
 			c, store, _, root := newTestController(t)
 			lib, _, book := seedBookFixture(t, store, root, "source", "series", "missing.cbz", 1)
@@ -413,6 +422,9 @@ func TestRestorationPersistenceFailuresCannotExposeHalfReleasedLibrary(t *testin
 			acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
 			check := startRestorationCheck(t, c, lib.ID)
 			trigger := `CREATE TRIGGER restore_fault BEFORE UPDATE OF scan_mode ON libraries WHEN NEW.scan_mode='interval' BEGIN SELECT RAISE(ABORT,'settings unavailable'); END;`
+			if boundary == "decision" {
+				trigger = `CREATE TRIGGER restore_fault BEFORE UPDATE OF status ON relocation_operations WHEN NEW.status='paths_committed' AND json_extract(NEW.result,'$.purpose')='restoration' BEGIN SELECT RAISE(ABORT,'decision unavailable'); END;`
+			}
 			if boundary == "protection" {
 				trigger = `CREATE TRIGGER restore_fault BEFORE DELETE ON library_relocation_protection BEGIN SELECT RAISE(ABORT,'protection unavailable'); END;`
 			}
@@ -424,7 +436,7 @@ func TestRestorationPersistenceFailuresCannotExposeHalfReleasedLibrary(t *testin
 			}
 			op := submitRestoration(t, c, lib.ID, check.ID, "interval", true)
 			want := "paths_committed"
-			if boundary == "settings" {
+			if boundary == "decision" {
 				want = "failed"
 			}
 			if op.Status != want {
@@ -434,10 +446,7 @@ func TestRestorationPersistenceFailuresCannotExposeHalfReleasedLibrary(t *testin
 				t.Fatalf("SQL fault removed protection: %+v %v", p, err)
 			}
 			got, _ := store.GetLibrary(context.Background(), lib.ID)
-			mode := "interval"
-			if boundary == "settings" {
-				mode = "none"
-			}
+			mode := "none"
 			if got.ScanMode != mode {
 				t.Fatalf("settings boundary: %+v", got)
 			}
@@ -450,7 +459,7 @@ func TestRestorationPersistenceFailuresCannotExposeHalfReleasedLibrary(t *testin
 			if _, err := store.DB().Exec(`DROP TRIGGER restore_fault`); err != nil {
 				t.Fatal(err)
 			}
-			if boundary != "settings" {
+			if boundary != "decision" {
 				if err := c.config.Save(c.configPath, nil, func(*config.Config) error { return nil }, nil, nil); err != nil {
 					t.Fatal(err)
 				}
@@ -702,5 +711,68 @@ func TestRestorationRejectsQueuedOrActiveRelatedWorkBeforeAdmission(t *testing.T
 				t.Fatalf("related work admitted release: %d %s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestRestorationConcurrentConfirmationsShareOneDurableDecision(t *testing.T) {
+	c, store, _, root := newTestController(t)
+	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "missing.cbz", 1)
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
+	check := startRestorationCheck(t, c, lib.ID)
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(resume) }) }
+	defer unblock()
+	effects := c.relocation.RestoreEffects
+	c.relocation.RestoreEffects = func(ctx context.Context, op RelocationOperation) error {
+		close(entered)
+		<-resume
+		return effects(ctx, op)
+	}
+	payload, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
+	start := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			<-start
+			rec := httptest.NewRecorder()
+			c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+			responses <- rec
+		}()
+	}
+	close(start)
+	var operationID int64
+	for range 2 {
+		select {
+		case rec := <-responses:
+			var op RelocationOperation
+			if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusAccepted || op.ID == 0 {
+				t.Fatalf("concurrent decision: %d %s %v", rec.Code, rec.Body.String(), err)
+			}
+			if operationID != 0 && operationID != op.ID {
+				t.Fatalf("two restoration decisions: %d and %d", operationID, op.ID)
+			}
+			operationID = op.ID
+		case <-time.After(10 * time.Second):
+			t.Fatal("concurrent confirmations did not return")
+		}
+	}
+	<-entered
+	unblock()
+	if op := awaitRelocationOperation(t, c, operationID); op.Status != "completed" {
+		t.Fatalf("concurrent release: %+v", op)
+	}
+	count := 0
+	for _, run := range taskCenterFirstPage(t, c) {
+		if run.Type == "relocation_commit" && run.Labels["purpose"] == "restoration" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("concurrent confirmation created %d release runs", count)
 	}
 }

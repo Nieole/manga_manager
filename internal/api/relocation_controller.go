@@ -154,17 +154,18 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 		writeRelocationError(w, err)
 		return
 	}
+	checkPlan := plan
 	launched, err := c.taskEngine.start(libraryTask("relocation_check", id, variantSole), task.TriggerManual, RunSpec{
 		Key: fmt.Sprintf("relocation_check_%d", id), ScopeName: plan.LibraryName, CanCancel: true,
 		StartCode: "task.msg.relocation.checking", CompleteCode: "task.msg.relocation.checked",
 		CancelCode: "task.msg.relocation.cancelled", FailCode: "task.msg.relocation.failed",
 		Labels: map[string]string{"plan_id": strconv.FormatInt(plan.ID, 10)},
 	}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
-		conflicts, conflictErr := c.relocationCheckConflicts(ctx, plan)
+		conflicts, conflictErr := c.relocationCheckConflicts(ctx, checkPlan)
 		if conflictErr != nil {
 			return RunResult{}, conflictErr
 		}
-		return RunResult{}, c.relocation.Check(ctx, plan.ID, handle, conflicts)
+		return RunResult{}, c.relocation.Check(ctx, checkPlan.ID, handle, conflicts)
 	})
 	if err != nil {
 		_ = c.relocation.SetStatus(context.WithoutCancel(r.Context()), plan.ID, "failed")
