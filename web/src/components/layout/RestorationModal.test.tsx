@@ -27,6 +27,9 @@ it('keeps a clean recheck protected until the administrator explicitly releases 
   fireEvent.click(release);
   await waitFor(() => expect(post).toHaveBeenCalledWith('/api/libraries/1/relocation-restoration/release', { plan_id: 40, confirm_release: true, accept_loss_risk: false, scan_mode: 'watch', scan_interval: 17, scan_formats: 'cbz' }));
   await screen.findByText('restoration.completed');
+  expect((screen.getByRole('button', { name: 'restoration.recheck' }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'restoration.recheck' }));
+  expect(post).toHaveBeenCalledTimes(1);
 });
 
 it('requires separate loss-risk consent for remaining anomalies and clears both consents when settings change', async () => {
