@@ -54,6 +54,7 @@ export default function Layout() {
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
+    const [relocationTarget, setRelocationTarget] = useState<string | undefined>();
     const [relocationLibraryID, setRelocationLibraryID] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     // 侧栏资料库列表加载失败标记，用于渲染一个「加载失败 · 重试」入口。
@@ -348,6 +349,13 @@ export default function Layout() {
             saveRecentLibraryPath(editForm.values.path);
             fetchLibraries();
         } catch (error) {
+            if (isAxiosError(error) && error.response?.data?.code === 'relocation_required') {
+                setShowEditModal(false);
+                setRelocationTarget(editForm.values.path);
+                setRelocationLibraryID(editLibId);
+                showToast(t('relocation.editRedirect'));
+                return;
+            }
             console.error(error);
             showToast(extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
         } finally {
@@ -782,6 +790,7 @@ export default function Layout() {
                                                             e.preventDefault();
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
+                                                            setRelocationTarget(undefined);
                                                             setRelocationLibraryID(String(lib.id));
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
@@ -918,7 +927,7 @@ export default function Layout() {
                 />
             </main>
 
-            <RelocationEntry libraries={libraries} isAdmin={isAdmin} selectedID={relocationLibraryID} onClose={() => setRelocationLibraryID(null)} />
+            <RelocationEntry libraries={libraries} isAdmin={isAdmin} selectedID={relocationLibraryID} initialTarget={relocationTarget} onCompleted={fetchLibraries} onClose={() => { setRelocationLibraryID(null); setRelocationTarget(undefined); }} />
 
             <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 

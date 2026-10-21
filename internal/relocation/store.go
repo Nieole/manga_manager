@@ -13,21 +13,64 @@ import (
 )
 
 type Service struct {
-	Store  database.Store
-	Config *config.Manager
-	Files  FileSystem
-	once   sync.Once
-	err    error
+	Store            database.Store
+	Config           *config.Manager
+	Files            FileSystem
+	Acquire          func(context.Context, int64) (func(), error)
+	AcquireOperation func(context.Context, RelocationOperation) (func(), error)
+	Effects          func(context.Context, RelocationOperation) error
+	access           commitAccess
+	transient        bool
+	evaluated        RelocationPlan
+	db               database.DBTX
+	once             sync.Once
+	err              error
+}
+
+func (s *Service) dbtx() database.DBTX {
+	if s.db != nil {
+		return s.db
+	}
+	return s.Store.DB()
+}
+
+func (s *Service) libraryPaths(ctx context.Context) ([]struct {
+	ID   int64
+	Path string
+}, error) {
+	rows, err := s.dbtx().QueryContext(ctx, `SELECT id,path FROM libraries`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []struct {
+		ID   int64
+		Path string
+	}
+	for rows.Next() {
+		var item struct {
+			ID   int64
+			Path string
+		}
+		if err = rows.Scan(&item.ID, &item.Path); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }
 
 func NewService(store database.Store, cfg *config.Manager) *Service {
-	return &Service{Store: store, Config: cfg, Files: HostFiles{}}
+	return &Service{Store: store, Config: cfg, Files: HostFiles{}, access: commitAccess{releases: map[int64]func(){}}}
 }
 
 // Initialize is idempotent for existing databases. Plans deliberately have no
 // cascading dependency on run history: pruning runs must preserve their facts.
 // database.Migrate must have initialized taskstore before this domain schema.
 func (s *Service) Initialize(ctx context.Context) error {
+	if s.transient {
+		return nil
+	}
 	s.once.Do(func() {
 		_, s.err = s.Store.DB().ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS relocation_plans (
@@ -42,6 +85,22 @@ CREATE TABLE IF NOT EXISTS relocation_details (
  FOREIGN KEY(plan_id) REFERENCES relocation_plans(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_relocation_details_kind ON relocation_details(plan_id,kind,ordinal);
+CREATE TABLE IF NOT EXISTS relocation_operations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id INTEGER NOT NULL UNIQUE,
+ library_id INTEGER NOT NULL, run_id INTEGER NOT NULL DEFAULT 0,
+ status TEXT NOT NULL, result TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS relocation_commit_terminal
+AFTER UPDATE OF status ON runs
+WHEN NEW.status IN ('cancelled','failed','interrupted')
+ AND EXISTS (SELECT 1 FROM tasks WHERE id=NEW.task_id AND type='relocation_commit' AND scope='library')
+BEGIN
+ UPDATE relocation_operations SET run_id=NEW.id
+ WHERE run_id=0 AND library_id=(SELECT scope_id FROM tasks WHERE id=NEW.task_id)
+  AND EXISTS (SELECT 1 FROM run_labels WHERE run_id=NEW.id AND key='operation_id' AND value=CAST(relocation_operations.id AS TEXT));
+ UPDATE relocation_operations SET status=NEW.status
+ WHERE status='pending' AND run_id=NEW.id;
+END;
 CREATE TRIGGER IF NOT EXISTS relocation_check_terminal
 AFTER UPDATE OF status ON runs
 WHEN NEW.status IN ('completed','cancelled','failed','interrupted')
@@ -134,7 +193,7 @@ func (s *Service) Get(ctx context.Context, id int64) (RelocationPlan, error) {
 	if err := s.Initialize(ctx); err != nil {
 		return RelocationPlan{}, err
 	}
-	return s.readPlan(s.Store.DB().QueryRowContext(ctx, `SELECT id,run_id,status,summary,facts_digest,policies_json FROM relocation_plans WHERE id=?`, id))
+	return s.readPlan(s.dbtx().QueryRowContext(ctx, `SELECT id,run_id,status,summary,facts_digest,policies_json FROM relocation_plans WHERE id=?`, id))
 }
 
 func (s *Service) Latest(ctx context.Context, libraryID int64) (RelocationPlan, error) {
@@ -155,10 +214,20 @@ func (s *Service) readPlan(row *sql.Row) (RelocationPlan, error) {
 		return plan, err
 	}
 	plan.ID, plan.RunID, plan.Status, plan.FactsDigest, plan.PoliciesJSON = id, runID, status, digest, policies
+	if !s.transient {
+		err := s.Store.DB().QueryRow(`SELECT id,run_id FROM relocation_operations WHERE plan_id=?`, id).Scan(&plan.OperationID, &plan.CommitRunID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return plan, err
+		}
+	}
 	return plan, nil
 }
 
 func (s *Service) save(ctx context.Context, plan RelocationPlan) error {
+	if s.transient {
+		s.evaluated = plan
+		return nil
+	}
 	plan.UpdatedAt = time.Now().UTC()
 	body, err := json.Marshal(plan)
 	if err != nil {
@@ -169,6 +238,10 @@ func (s *Service) save(ctx context.Context, plan RelocationPlan) error {
 }
 
 func (s *Service) add(ctx context.Context, plan *RelocationPlan, detail RelocationDetail) error {
+	if s.transient {
+		countDetail(plan, detail)
+		return nil
+	}
 	var ordinal int64
 	if err := s.Store.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0)+1 FROM relocation_details WHERE plan_id=?`, plan.ID).Scan(&ordinal); err != nil {
 		return err
@@ -181,6 +254,11 @@ func (s *Service) add(ctx context.Context, plan *RelocationPlan, detail Relocati
 	if _, err = s.Store.DB().ExecContext(ctx, `INSERT INTO relocation_details(plan_id,ordinal,kind,detail) VALUES(?,?,?,?)`, plan.ID, ordinal, detail.Kind, body); err != nil {
 		return err
 	}
+	countDetail(plan, detail)
+	return nil
+}
+
+func countDetail(plan *RelocationPlan, detail RelocationDetail) {
 	switch detail.Kind {
 	case "blocker":
 		plan.BlockerCount++
@@ -194,7 +272,6 @@ func (s *Service) add(ctx context.Context, plan *RelocationPlan, detail Relocati
 			plan.Samples = append(plan.Samples, detail)
 		}
 	}
-	return nil
 }
 
 func (s *Service) Details(ctx context.Context, id int64, kind string, offset, limit int) (RelocationDetails, error) {

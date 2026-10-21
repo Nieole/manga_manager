@@ -154,6 +154,12 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
 
 	ctx := r.Context()
+	c.relocationTopology.mu.Lock()
+	defer c.relocationTopology.mu.Unlock()
+	if c.relocationRootConflicts(req.Path) {
+		writeLibraryUnavailable(w)
+		return
+	}
 	if issues := c.validateLibraryRequest(ctx, requestLocale(r), nil, req); len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
 			"error":      "Library validation failed",
@@ -217,6 +223,12 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Name and Path are required")
 		return
 	}
+	c.relocationTopology.mu.Lock()
+	defer c.relocationTopology.mu.Unlock()
+	if c.relocationRootConflicts(req.Path) {
+		writeLibraryUnavailable(w)
+		return
+	}
 	release, ok := c.guardLibraryRead(w, libraryID)
 	if !ok {
 		return
@@ -227,6 +239,17 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Library not found")
 		return
+	}
+	if !sameNativePath(existingLib.Path, req.Path) {
+		var populated bool
+		if err = c.store.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM series WHERE library_id=?) OR EXISTS(SELECT 1 FROM books WHERE library_id=?)`, libraryID, libraryID).Scan(&populated); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Unable to inspect library")
+			return
+		}
+		if populated {
+			jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_required", "error": "Use library path relocation to preserve existing records"})
+			return
+		}
 	}
 
 	if req.ScanInterval <= 0 {

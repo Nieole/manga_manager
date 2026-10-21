@@ -210,6 +210,8 @@ export interface RelocationPlan {
   source_root: string;
   target_root: string;
   run_id: number;
+  operation_id?: number;
+  commit_run_id?: number;
   status: string;
   series_count: number;
   book_count: number;
@@ -227,5 +229,19 @@ export interface RelocationDetails {
   total: number;
   offset: number;
   limit: number;
+}
+
+export interface RelocationOperation {
+  id: number;
+  plan_id: number;
+  library_id: number;
+  run_id: number;
+  status: string;
+  source_root: string;
+  target_root: string;
+  series_count: number;
+  book_count: number;
+  code: string;
+  updated_at: string;
 }
 

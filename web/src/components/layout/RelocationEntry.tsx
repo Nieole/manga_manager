@@ -9,10 +9,12 @@ interface Props {
   libraries: Library[];
   isAdmin: boolean;
   selectedID: string | null;
+  initialTarget?: string;
+  onCompleted?: () => void;
   onClose: () => void;
 }
 
-export function RelocationEntry({ libraries, isAdmin, selectedID, onClose }: Props) {
+export function RelocationEntry({ libraries, isAdmin, selectedID, initialTarget, onCompleted, onClose }: Props) {
   const location = useLocation();
   const match = useMatch('/library/:libId');
   const navigate = useNavigate();
@@ -33,6 +35,6 @@ export function RelocationEntry({ libraries, isAdmin, selectedID, onClose }: Pro
     }
   };
   return <Suspense fallback={<p role="status">{t('common.loading')}</p>}>
-    <RelocationModal key={`${library.id}:${planID || 'latest'}`} library={{ ...library, id: Number(library.id) }} planID={planID} onClose={close} />
+    <RelocationModal key={`${library.id}:${planID || 'latest'}`} library={{ ...library, id: Number(library.id) }} planID={planID} initialTarget={planID ? undefined : initialTarget} onCompleted={onCompleted} onClose={close} />
   </Suspense>;
 }

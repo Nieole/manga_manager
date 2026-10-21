@@ -83,7 +83,7 @@ func (s *Service) checkPolicies(ctx context.Context, plan *RelocationPlan, cfg c
 	after.Library.StoragePolicies = MappedPolicies(cfg, plan.SourceRoot, plan.TargetRoot)
 	// The roots catch inheritance changes even in empty nested libraries. Stored
 	// record paths also catch descendants with more specific policy overrides.
-	rows, err := s.Store.DB().QueryContext(ctx, `SELECT id,path FROM libraries WHERE id<>?
+	rows, err := s.dbtx().QueryContext(ctx, `SELECT id,path FROM libraries WHERE id<>?
 UNION SELECT library_id,path FROM series WHERE library_id<>?
 UNION SELECT library_id,path FROM books WHERE library_id<>?`, plan.LibraryID, plan.LibraryID, plan.LibraryID)
 	if err != nil {
@@ -124,7 +124,7 @@ UNION SELECT library_id,path FROM books WHERE library_id<>?`, plan.LibraryID, pl
 	if err != nil {
 		return err
 	}
-	libraries, err := s.Store.ListLibraries(ctx)
+	libraries, err := s.libraryPaths(ctx)
 	if err != nil {
 		return err
 	}

@@ -18,6 +18,92 @@ type RelocationPlan = relocation.RelocationPlan
 type RelocationDetail = relocation.RelocationDetail
 type RelocationDetails = relocation.RelocationDetails
 type RelocationPolicy = relocation.RelocationPolicy
+type RelocationOperation = relocation.RelocationOperation
+
+func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "planId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid plan ID")
+		return
+	}
+	op, created, err := c.relocation.Prepare(r.Context(), id)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	if created {
+		lib, loadErr := c.store.GetLibrary(r.Context(), op.LibraryID)
+		if loadErr != nil {
+			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_commit_failed")
+			writeRelocationError(w, loadErr)
+			return
+		}
+		launched, startErr := c.taskEngine.start(libraryTask("relocation_commit", op.LibraryID, variantSole), task.TriggerManual, RunSpec{
+			Key: fmt.Sprintf("relocation_commit_%d", op.LibraryID), ScopeName: lib.Name, CanCancel: true,
+			StartCode: "task.msg.relocation.committing", CompleteCode: "task.msg.relocation.completed", FailCode: "task.msg.relocation.commit_failed", CancelCode: "task.msg.relocation.commit_cancelled",
+			Labels: map[string]string{"plan_id": strconv.FormatInt(id, 10), "operation_id": strconv.FormatInt(op.ID, 10)},
+		}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
+			return RunResult{}, c.relocation.Commit(ctx, op.ID, handle)
+		})
+		if startErr != nil {
+			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
+			writeRelocationError(w, startErr)
+			return
+		}
+		if launched.Coalesced {
+			_ = c.relocation.FailUnstarted(context.WithoutCancel(r.Context()), op.ID, "relocation_conflict")
+			jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_conflict", "error": "A relocation is already queued"})
+			return
+		}
+		if err = c.relocation.BindOperationRun(context.WithoutCancel(r.Context()), op.ID, launched.Run.ID); err != nil {
+			writeRelocationError(w, err)
+			return
+		}
+	}
+	op, err = c.relocation.Operation(r.Context(), op.ID)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusAccepted, op)
+}
+
+func (c *Controller) getRelocationOperation(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "operationId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid operation ID")
+		return
+	}
+	op, err := c.relocation.Operation(r.Context(), id)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, op)
+}
+
+func (c *Controller) relocationEffects(ctx context.Context, op RelocationOperation) error {
+	c.purgeReadingPathCaches()
+	c.invalidateDashboardStatsCache("library_relocated")
+	c.external.InvalidateLibrary(op.LibraryID)
+	lib, err := c.store.GetLibrary(ctx, op.LibraryID)
+	if err != nil {
+		return err
+	}
+	if c.watcher != nil {
+		c.watcher.UnwatchLibrary(op.SourceRoot)
+	}
+	if lib.ScanMode == "watch" {
+		if c.watcherInitErr != nil {
+			return c.watcherInitErr
+		}
+		if c.watcher == nil {
+			return errors.New("file watcher unavailable")
+		}
+		return c.watcher.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
+	}
+	return nil
+}
 
 func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
@@ -44,7 +130,7 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 		CancelCode: "task.msg.relocation.cancelled", FailCode: "task.msg.relocation.failed",
 		Labels: map[string]string{"plan_id": strconv.FormatInt(plan.ID, 10)},
 	}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
-		conflicts, conflictErr := c.libraryAccessConflicts(ctx, id)
+		conflicts, conflictErr := c.relocationCheckConflicts(ctx, plan)
 		if conflictErr != nil {
 			return RunResult{}, conflictErr
 		}
@@ -69,6 +155,10 @@ func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request
 }
 
 func writeRelocationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, relocation.ErrPlanNotReady) {
+		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_plan_not_ready", "error": "Recheck this relocation plan before confirming"})
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		jsonError(w, http.StatusNotFound, "Relocation plan or library not found")
 		return

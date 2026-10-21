@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RelocationModal } from './RelocationModal';
 
 const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock('../../api/client', () => ({ apiClient: { get, post }, isAxiosError: () => false }));
+vi.mock('../../api/client', () => ({ apiClient: { get, post }, isAxiosError: (error: unknown) => Boolean(error && typeof error === "object" && "response" in error) }));
 vi.mock('../../i18n/LocaleProvider', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 const library = { id: 1, name: 'My Library', path: '/old' };
 const plan = { id: 12, library_id: 1, library_name: 'My Library', library_root: '/old', source_root: '/old', target_root: '/new',
@@ -133,4 +133,52 @@ it('compares the actual IO limits when custom policies conflict', async () => {
     expect(booleanValues).toEqual(flags);
   }
   expect(post).not.toHaveBeenCalled();
+});
+
+it('confirms only the checked server plan and disables committing an edited destination', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : { ...plan, blocker_count: 0, anomaly_count: 0 } }));
+  post.mockResolvedValue({ data: { id: 5, plan_id: 12, library_id: 1, run_id: 9, status: 'completed', source_root: '/old', target_root: '/new', series_count: 1, book_count: 2, code: '' } });
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  const commit = await screen.findByText('relocation.commit');
+  const target = screen.getByRole('textbox');
+  fireEvent.change(target, { target: { value: '/other' } });
+  expect((commit as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(target, { target: { value: '/new' } });
+  fireEvent.click(commit);
+  await screen.findByText('relocation.operation.completed');
+  expect(post).toHaveBeenCalledWith('/api/relocation-plans/12/commit', {});
+  expect(screen.queryByText('relocation.cancelCheck')).toBeNull();
+});
+
+it('reopens a persisted commit and shows its real stage without offering cancellation or a second commit', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : url.includes('relocation-operations') ? {
+    id: 5, status: 'paths_committed', series_count: 1, book_count: 2, code: '',
+  } : { ...plan, blocker_count: 0, anomaly_count: 0, operation_id: 5 } }));
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  await screen.findByText('relocation.operation.paths_committed');
+  expect(screen.getByText('relocation.noCancelCommit')).toBeTruthy();
+  expect(screen.queryByText('relocation.commit')).toBeNull();
+  expect(screen.queryByText('relocation.cancelCheck')).toBeNull();
+  expect((screen.getByRole('textbox') as HTMLInputElement).closest('fieldset')?.disabled).toBe(true);
+});
+
+
+it('shows a cancellable commit revalidation run and cancels by its run identifier', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : url.includes('tasks/live') ? { runs: [{ run_id: 9, phase: 'revalidate', current: 1, total: 2, can_cancel: true }] } : url.includes('relocation-operations') ? {
+    id: 5, run_id: 9, status: 'pending', series_count: 1, book_count: 2, code: '',
+  } : { ...plan, operation_id: 5 } }));
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByText('relocation.cancelCommit'));
+  await waitFor(() => expect(post).toHaveBeenCalledWith('/api/system/runs/9/cancel'));
+  expect(screen.getByText(/settings.maintenance.taskPhase.revalidate/)).toBeTruthy();
+});
+
+it('requires a new check after a stale confirmation instead of retrying an old plan', async () => {
+  get.mockImplementation((url: string) => Promise.resolve({ data: url.includes('details') ? { items: [], total: 0 } : { ...plan, blocker_count: 0, anomaly_count: 0 } }));
+  post.mockRejectedValue({ response: { data: { code: 'relocation_stale_plan' } } });
+  render(<RelocationModal library={library} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByText('relocation.commit'));
+  await screen.findByText('relocation.commitError.relocation_stale_plan');
+  expect(screen.queryByText('relocation.commit')).toBeNull();
+  expect(screen.getByText('relocation.check')).toBeTruthy();
 });

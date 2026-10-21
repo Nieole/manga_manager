@@ -1,0 +1,328 @@
+package relocation
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"manga-manager/internal/config"
+	"manga-manager/internal/runhandle"
+)
+
+// RelocationOperation survives run history pruning and records the committed boundary.
+type RelocationOperation struct {
+	ID          int64     `json:"id"`
+	PlanID      int64     `json:"plan_id"`
+	LibraryID   int64     `json:"library_id"`
+	RunID       int64     `json:"run_id"`
+	Status      string    `json:"status"`
+	SourceRoot  string    `json:"source_root"`
+	TargetRoot  string    `json:"target_root"`
+	SeriesCount int       `json:"series_count"`
+	BookCount   int       `json:"book_count"`
+	Code        string    `json:"code"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+var ErrPlanNotReady = errors.New("relocation_plan_not_ready")
+var ErrStalePlan = errors.New("relocation_stale_plan")
+
+type commitAccess struct {
+	mu       sync.Mutex
+	releases map[int64]func()
+}
+
+func (s *Service) Operation(ctx context.Context, id int64) (RelocationOperation, error) {
+	var op RelocationOperation
+	var data string
+	var runID int64
+	var status string
+	err := s.Store.DB().QueryRowContext(ctx, `SELECT run_id,status,result FROM relocation_operations WHERE id=?`, id).Scan(&runID, &status, &data)
+	if err != nil {
+		return op, err
+	}
+	if err = json.Unmarshal([]byte(data), &op); err != nil {
+		return op, err
+	}
+	op.ID, op.RunID, op.Status = id, runID, status
+	return op, err
+}
+
+// Prepare returns the same durable operation for every confirmation of a plan.
+func (s *Service) Prepare(ctx context.Context, planID int64) (RelocationOperation, bool, error) {
+	plan, err := s.Get(ctx, planID)
+	if err != nil {
+		return RelocationOperation{}, false, err
+	}
+	var existing int64
+	err = s.Store.DB().QueryRowContext(ctx, `SELECT id FROM relocation_operations WHERE plan_id=?`, planID).Scan(&existing)
+	if err == nil {
+		op, e := s.Operation(ctx, existing)
+		return op, false, e
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return RelocationOperation{}, false, err
+	}
+	if plan.Status != "checked" || plan.BlockerCount != 0 || plan.AnomalyCount != 0 || plan.PolicyCount != 0 {
+		return RelocationOperation{}, false, ErrPlanNotReady
+	}
+	op := RelocationOperation{PlanID: plan.ID, LibraryID: plan.LibraryID, Status: "pending", SourceRoot: plan.SourceRoot, TargetRoot: plan.TargetRoot, SeriesCount: plan.SeriesCount, BookCount: plan.BookCount, UpdatedAt: time.Now().UTC()}
+	data, err := json.Marshal(op)
+	if err != nil {
+		return op, false, err
+	}
+	result, err := s.Store.DB().ExecContext(ctx, `INSERT INTO relocation_operations(plan_id,library_id,status,result) VALUES(?,?,?,?) ON CONFLICT(plan_id) DO NOTHING`, planID, plan.LibraryID, op.Status, data)
+	if err != nil {
+		return op, false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return op, false, err
+	}
+	if err = s.Store.DB().QueryRowContext(ctx, `SELECT id FROM relocation_operations WHERE plan_id=?`, planID).Scan(&existing); err != nil {
+		return op, false, err
+	}
+	op.ID = existing
+	if n == 0 {
+		existingOp, e := s.Operation(ctx, existing)
+		return existingOp, false, e
+	}
+	if err = s.saveOperation(ctx, op); err != nil {
+		return op, false, err
+	}
+	return op, n == 1, nil
+}
+
+func (s *Service) BindOperationRun(ctx context.Context, id, runID int64) error {
+	_, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_operations SET run_id=? WHERE id=? AND run_id=0`, runID, id)
+	return err
+}
+
+// FailUnstarted records admission failure without changing a committed result.
+func (s *Service) FailUnstarted(ctx context.Context, id int64, code string) error {
+	op, err := s.Operation(ctx, id)
+	if err != nil {
+		return err
+	}
+	if op.Status != "pending" {
+		return nil
+	}
+	op.Status = "failed"
+	op.Code = code
+	return s.saveOperation(ctx, op)
+}
+
+func (s *Service) saveOperation(ctx context.Context, op RelocationOperation) error {
+	op.UpdatedAt = time.Now().UTC()
+	data, err := json.Marshal(op)
+	if err != nil {
+		return err
+	}
+	_, err = s.Store.DB().ExecContext(ctx, `UPDATE relocation_operations SET status=?,result=? WHERE id=?`, op.Status, data, op.ID)
+	return err
+}
+
+// Commit keeps exclusive access through database commit and derived effects.
+// Failed effects retain the reservation until recovery finishes.
+func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle) error {
+	op, err := s.Operation(ctx, id)
+	if err != nil {
+		return err
+	}
+	if op.Status != "pending" {
+		return nil
+	}
+	release, err := s.acquireOperation(ctx, op)
+	if err != nil {
+		op.Status = "failed"
+		op.Code = "relocation_conflict"
+		_ = s.saveOperation(context.WithoutCancel(ctx), op)
+		return err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			release()
+		}
+	}()
+	handle.Phase("revalidate", "task.msg.relocation.committing", nil)
+	err = s.Config.WithSnapshot(func(cfg config.Config) error {
+		plan, e := s.Get(ctx, op.PlanID)
+		if e != nil {
+			return e
+		}
+		if plan.Status != "checked" {
+			return ErrPlanNotReady
+		}
+		inspection := &Service{Store: s.Store, Config: config.NewManager(&cfg), Files: s.Files, transient: true}
+		if e = inspection.Check(ctx, plan.ID, handle, nil); e != nil {
+			return e
+		}
+		if inspection.evaluated.FactsDigest != plan.FactsDigest || inspection.evaluated.BlockerCount != 0 {
+			return ErrStalePlan
+		}
+		if e = handle.DisableCancellation(); e != nil {
+			return e
+		}
+		if e = ctx.Err(); e != nil {
+			return e
+		}
+		handle.Phase("commit", "task.msg.relocation.committing", nil)
+		tx, e := s.Store.DB().BeginTx(ctx, nil)
+		if e != nil {
+			return e
+		}
+		defer tx.Rollback()
+		if _, e = tx.ExecContext(ctx, `UPDATE relocation_plans SET status=status WHERE id=? AND status='checked'`, plan.ID); e != nil {
+			return e
+		}
+		inspection.db = tx
+		if e = inspection.Check(ctx, plan.ID, handle, nil); e != nil {
+			return e
+		}
+		checked := inspection.evaluated
+		if checked.FactsDigest != plan.FactsDigest || checked.BlockerCount != 0 || checked.AnomalyCount != 0 || checked.PolicyCount != 0 {
+			return ErrStalePlan
+		}
+		for _, kind := range []string{"series", "book"} {
+			table := "series"
+			if kind == "book" {
+				table = "books"
+			}
+			e = inspection.walkRecords(ctx, op.LibraryID, kind, func(item storedRecord) error {
+				mapped, mapErr := MapPath(op.SourceRoot, op.TargetRoot, item.Path)
+				if mapErr != nil {
+					return mapErr
+				}
+				_, mapErr = tx.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET path=? WHERE id=?", table), mapped, item.ID)
+				return mapErr
+			})
+			if e != nil {
+				return e
+			}
+		}
+		if _, e = tx.ExecContext(ctx, `UPDATE libraries SET path=? WHERE id=? AND path=?`, op.TargetRoot, op.LibraryID, plan.LibraryRoot); e != nil {
+			return e
+		}
+		if _, e = tx.ExecContext(ctx, `UPDATE relocation_plans SET status='consumed' WHERE id=? AND status='checked'`, plan.ID); e != nil {
+			return e
+		}
+		op.Status = "paths_committed"
+		data, _ := json.Marshal(op)
+		if _, e = tx.ExecContext(ctx, `UPDATE relocation_operations SET status=?,result=? WHERE id=?`, op.Status, data, op.ID); e != nil {
+			return e
+		}
+		return tx.Commit()
+	})
+	if err != nil {
+		op.Status = "failed"
+		op.Code = "relocation_commit_failed"
+		if errors.Is(err, context.Canceled) {
+			op.Status = "cancelled"
+			op.Code = "relocation_not_committed"
+		}
+		if errors.Is(err, ErrStalePlan) {
+			op.Code = "relocation_stale_plan"
+		}
+		_ = s.saveOperation(context.WithoutCancel(ctx), op)
+		return err
+	}
+	keep = true
+	s.access.mu.Lock()
+	s.access.releases[op.ID] = release
+	s.access.mu.Unlock()
+	handle.Phase("refresh", "task.msg.relocation.committing", nil)
+	return s.finish(context.WithoutCancel(ctx), op)
+}
+
+func (s *Service) acquireOperation(ctx context.Context, op RelocationOperation) (func(), error) {
+	if s.AcquireOperation != nil {
+		return s.AcquireOperation(ctx, op)
+	}
+	return s.Acquire(ctx, op.LibraryID)
+}
+
+func (s *Service) finish(ctx context.Context, op RelocationOperation) error {
+	if err := s.Effects(ctx, op); err != nil {
+		op.Code = "relocation_recovering"
+		_ = s.saveOperation(ctx, op)
+		return err
+	}
+	op.Status = "completed"
+	op.Code = "relocation_completed"
+	if err := s.saveOperation(ctx, op); err != nil {
+		return err
+	}
+	s.access.mu.Lock()
+	release := s.access.releases[op.ID]
+	delete(s.access.releases, op.ID)
+	s.access.mu.Unlock()
+	if release != nil {
+		release()
+	}
+	return nil
+}
+
+// Recover reserves every unfinished committed library before replaying effects.
+// It never reapplies path mappings or restarts an uncommitted confirmation.
+func (s *Service) Recover(ctx context.Context) error {
+	if err := s.Initialize(ctx); err != nil {
+		return err
+	}
+	rows, err := s.Store.DB().QueryContext(ctx, `SELECT id FROM relocation_operations WHERE status IN ('pending','paths_committed') ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	var committed []RelocationOperation
+	for _, id := range ids {
+		op, e := s.Operation(ctx, id)
+		if e != nil {
+			return e
+		}
+		if op.Status == "pending" {
+			op.Status = "interrupted"
+			op.Code = "relocation_not_committed"
+			if e = s.saveOperation(ctx, op); e != nil {
+				return e
+			}
+			continue
+		}
+		s.access.mu.Lock()
+		_, owned := s.access.releases[id]
+		s.access.mu.Unlock()
+		if !owned {
+			release, e := s.acquireOperation(ctx, op)
+			if e != nil {
+				return e
+			}
+			s.access.mu.Lock()
+			s.access.releases[id] = release
+			s.access.mu.Unlock()
+		}
+		committed = append(committed, op)
+	}
+	for _, op := range committed {
+		// finish persists an actionable recovery code and keeps the reservation
+		// on an external effect failure; unrelated libraries remain available.
+		_ = s.finish(ctx, op)
+	}
+	return nil
+}
