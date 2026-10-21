@@ -18,6 +18,22 @@ type RelocationPlan = relocation.RelocationPlan
 type RelocationDetail = relocation.RelocationDetail
 type RelocationDetails = relocation.RelocationDetails
 type RelocationPolicy = relocation.RelocationPolicy
+type RelocationSourceRoots = relocation.RelocationSourceRoots
+
+func (c *Controller) relocationSourceRoots(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "libraryId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid library ID")
+		return
+	}
+	roots, err := c.relocation.SourceRoots(r.Context(), id)
+	if err != nil {
+		writeRelocationError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, roots)
+}
+
 type RelocationOperation = relocation.RelocationOperation
 
 func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request) {
