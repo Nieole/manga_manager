@@ -1,0 +1,12 @@
+{
+  "filters": [
+    {
+      "filter": "blur(4px)",
+      "width": 2560,
+      "height": 1215
+    }
+  ],
+  "viewportArea": 3110400,
+  "foregroundAnimation": "running",
+  "backgroundAnimation": "running"
+}

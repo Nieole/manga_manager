@@ -19,8 +19,6 @@ interface ModalShellProps {
   children: ReactNode;
   size?: ModalSize;
   placement?: ModalPlacement;
-  // 背景持续变化时可关闭模糊，避免每帧过滤整个视口。
-  blurBackdrop?: boolean;
   closeOnBackdrop?: boolean;
   closeOnEsc?: boolean;
   showCloseButton?: boolean;
@@ -48,6 +46,9 @@ const sizeClassMap: Record<ModalSize, string> = {
   wide: 'max-w-6xl',
 };
 
+// 将全屏模糊拆成有界的小块，降低持续动画叠加时的滤镜绘制开销。
+const backdropTiles = Array.from({ length: 32 }, (_, index) => index);
+
 export function ModalShell({
   open,
   onClose,
@@ -60,7 +61,6 @@ export function ModalShell({
   children,
   size = 'standard',
   placement = 'center',
-  blurBackdrop = true,
   closeOnBackdrop = true,
   closeOnEsc = true,
   showCloseButton = true,
@@ -170,8 +170,11 @@ export function ModalShell({
 
   return createPortal(
     <div className={`fixed inset-0 ${zIndexClassName}`}>
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 grid grid-cols-8 grid-rows-4">
+        {backdropTiles.map((tile) => <div key={tile} className="backdrop-blur-xs" />)}
+      </div>
       <div
-        className={`absolute inset-0 ${blurBackdrop ? 'backdrop-blur-xs' : ''}`}
+        className="absolute inset-0"
         style={{
           background:
             'radial-gradient(circle at top, rgb(var(--theme-glow) / 0.16), transparent 35%), linear-gradient(to bottom, rgb(var(--theme-overlay-top) / 0.78), rgb(var(--theme-overlay-bottom) / 0.88))',

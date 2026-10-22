@@ -159,7 +159,7 @@ export function RestorationModal({ library, planID, onClose, onCompleted }: Prop
     catch { if (generation.current === token) { setError('relocation.cancelError'); setCancelling(false); } }
   };
   const control = 'mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-white';
-  return <ModalShell open blurBackdrop={false} onClose={onClose} title={t('restoration.title')} description={t('restoration.description')}
+  return <ModalShell open onClose={onClose} title={t('restoration.title')} description={t('restoration.description')}
     footer={<><button type="button" className={modalGhostButtonClass} onClick={onClose}>{t('relocation.close')}</button>
       {busy ? <button type="button" className={modalGhostButtonClass} disabled={cancelling || run?.can_cancel === false} onClick={cancel}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCheck')}</button>
         : <button type="button" className={modalGhostButtonClass} disabled={loading || submitting || recovering || !facts?.protection || operation?.status === 'completed'} onClick={recheck}>{t('restoration.recheck')}</button>}

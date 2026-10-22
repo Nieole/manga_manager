@@ -1,0 +1,9 @@
+{
+  "width": 2560,
+  "height": 1215,
+  "scope": "static background excluding foreground dialog, probe toolbar, and live task bubble",
+  "mean_absolute_RGB_difference": 0.031,
+  "p99_absolute_RGB_difference": 0.6667,
+  "tile_boundary_mean_difference": 0.2301,
+  "tile_boundary_p99_difference": 1.6667
+}
