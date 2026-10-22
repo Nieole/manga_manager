@@ -31,6 +31,8 @@ Go 验证使用进程级 Go 1.26.5、GOTOOLCHAIN=local、CGO/gcc 15.2；共享�
 
 ## 环境与收尾边界
 
+最终修复与父规格关闭已合并至集成分支 `codex/library-path-relocation`，合并提交为 `1b792edf9643ce9ee7334184d950bdf8239e7176`。合并后在主工作区重新执行 `npm run build` 退出 0，刷新实际嵌入的前端产物；随后使用上述 Go 1.26.5 进程环境执行 `go build ./...` 退出 0。构建产物保持忽略，不提交。
+
 Smart App Control 保持开启；仅按用户授权正常重试被阻止的 Go 程序，未添加排除、降低安全设置或重启系统。Windows 沙盒可选组件此前已启用但仍待用户方便时手动重启，本次验收不依赖沙盒。
 
 实现工作树清理尚未完成：自动审批先拒绝批量 worktree/junction 清理，再拒绝已核对单一目录的无递归 junction 移除，仅返回 `blocked by policy`，未给出更细原因。已停止删除并保留工作树、分支及证据，不尝试用其他代码绕过；主工作区的 node_modules 保留。
