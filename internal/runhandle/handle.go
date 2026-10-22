@@ -54,6 +54,9 @@ type Handle struct {
 // 位置参数下接反了未必有编译错误——后果是失败的文件名被当成告警码渲染成一句翻译缺失。
 type Writes struct {
 	DisableCancellation func() error
+	// AdvanceLive publishes provisional counters without database writes while
+	// a non-cancellable transaction holds the write lock.
+	AdvanceLive func(current, total int)
 	// Report 写整帧展示态，MergeParams 按键合并**任务参数**，AddMetrics 按键累加指标。
 	Report      func(Frame)
 	MergeParams func(map[string]string)
@@ -93,6 +96,14 @@ func (h *Handle) Report(f Frame) {
 // Advance 报告**计数推进**：做完了多少、一共多少。它只动计数与总数，不碰**阶段**。
 func (h *Handle) Advance(current, total int, code string, params map[string]string) {
 	h.Report(Frame{Current: &current, Total: &total, Code: code, Params: params})
+}
+
+// AdvanceLive reports transaction work in progress, not committed rows. Call
+// Advance after committing to persist the counters; rollback discards them.
+func (h *Handle) AdvanceLive(current, total int) {
+	if h.writes.AdvanceLive != nil {
+		h.writes.AdvanceLive(current, total)
+	}
 }
 
 // Phase 报告**阶段**：正在做什么。它只动阶段与文案，不碰计数与总数，

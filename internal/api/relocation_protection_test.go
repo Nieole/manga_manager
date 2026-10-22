@@ -401,7 +401,7 @@ func TestProtectedLibraryCleanRelocationRetainsOriginalSettings(t *testing.T) {
 	}
 }
 
-func TestRelocationAcceptsEveryFileAnomalyAndRejectsChangedFacts(t *testing.T) {
+func TestRelocationRetainsConfirmedAnomaliesAfterFileChanges(t *testing.T) {
 	for _, reason := range []string{"missing", "unreadable", "not_regular", "size_mismatch"} {
 		for _, stale := range []bool{false, true} {
 			t.Run(reason+"/stale="+strconv.FormatBool(stale), func(t *testing.T) {
@@ -444,16 +444,12 @@ func TestRelocationAcceptsEveryFileAnomalyAndRejectsChangedFacts(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if stale {
-					if op.Status != "failed" || op.Code != "relocation_stale_plan" || got.Path != book.Path {
-						t.Fatalf("stale facts: %+v %+v", op, got)
-					}
-					p, e := store.LibraryRelocationProtection(context.Background(), lib.ID)
-					if e != nil || p != nil {
-						t.Fatalf("stale confirmation established protection: %+v %v", p, e)
-					}
-				} else if op.Status != "completed" || !op.Protected || got.Path != path || got.ID != book.ID {
+				if op.Status != "completed" || !op.Protected || got.Path != path || got.ID != book.ID {
 					t.Fatalf("anomalous record not mapped: %+v %+v", op, got)
+				}
+				p, e := store.LibraryRelocationProtection(context.Background(), lib.ID)
+				if e != nil || p == nil {
+					t.Fatalf("confirmed anomalies lost protection: %+v %v", p, e)
 				}
 			})
 		}

@@ -158,17 +158,23 @@ func TestRelocationCommitCanCancelBeforeWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
-	files := blockingRelocationFiles{path: filepath.Join(target, "series", "book.cbz"), started: make(chan struct{}), resume: make(chan struct{})}
-	c.relocation.Files = files
+	started, resume := make(chan struct{}), make(chan struct{})
+	acquire := c.relocation.AcquireOperation
+	c.relocation.AcquireOperation = func(ctx context.Context, op RelocationOperation) (func(), error) {
+		release, err := acquire(ctx, op)
+		close(started)
+		<-resume
+		return release, err
+	}
 	op := submitRelocation(t, c, plan.ID)
 	select {
-	case <-files.started:
+	case <-started:
 	case <-time.After(10 * time.Second):
 		t.Fatal("revalidation not started")
 	}
 	rec := httptest.NewRecorder()
 	c.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
-	close(files.resume)
+	close(resume)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("cancel before commit: %d %s", rec.Code, rec.Body.String())
 	}
@@ -480,7 +486,7 @@ func submitRelocation(t *testing.T, c *Controller, planID int64) RelocationOpera
 }
 
 func TestRelocationCommitRejectsChangedConfirmationFacts(t *testing.T) {
-	for _, change := range []string{"file", "record", "config", "root", "occupied"} {
+	for _, change := range []string{"record", "config", "root", "occupied"} {
 		t.Run(change, func(t *testing.T) {
 			c, store, _, root := newTestController(t)
 			lib, series, book := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
@@ -491,10 +497,6 @@ func TestRelocationCommitRejectsChangedConfirmationFacts(t *testing.T) {
 			}
 			plan := startRelocationPreview(t, c, lib.ID, target)
 			switch change {
-			case "file":
-				if err := os.WriteFile(filepath.Join(target, "series", "book.cbz"), []byte("changed"), 0o644); err != nil {
-					t.Fatal(err)
-				}
 			case "record":
 				if _, err := store.DB().Exec(`UPDATE books SET size=size+1 WHERE id=?`, book.ID); err != nil {
 					t.Fatal(err)

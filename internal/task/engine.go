@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"manga-manager/internal/diskwork"
@@ -49,11 +50,13 @@ func (g publishGate) suppresses(run Run, now time.Time, window time.Duration) bo
 //
 // 三样能力由 beginLocked 一次填齐，因此拿到一份非 nil 的句柄就等于 ctx、取消函数与闸门都在。
 type taskRuntime struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	gate      *taskcontrol.PauseGate
-	canPause  bool
-	canCancel bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	gate        *taskcontrol.PauseGate
+	canPause    bool
+	canCancel   bool
+	progress    atomic.Pointer[Run]
+	liveAllowed atomic.Bool
 }
 
 // queuedRun 是一条**排队中**运行还没跑的那部分：它的声明与任务体。
@@ -348,6 +351,7 @@ func (e *Engine) capabilitiesLocked(run Run) Capabilities {
 // 控制动作与**终态**那一路不受水位约束，但它们本来就稀疏。落盘端口若压着任务 API，
 // 攒批与缓存归适配器，不得靠在这里存一份镜像换掉——那等于把两份数的风险换回来。
 func (e *Engine) snapshotLocked(run Run) Snapshot {
+	run = e.withLiveProgressLocked(run)
 	snapshot := Snapshot{Run: cloneRun(run), Capabilities: e.capabilitiesLocked(run)}
 	side, err := e.store.LoadRunSideData(context.Background(), []int64{run.ID})
 	if err != nil {

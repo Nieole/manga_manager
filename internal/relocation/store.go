@@ -24,6 +24,8 @@ type Service struct {
 	ApplyConfig      func(*config.Config) error
 	access           commitAccess
 	transient        bool
+	recordsOnly      bool
+	recordsDigest    string
 	evaluated        RelocationPlan
 	db               database.DBTX
 	once             sync.Once
@@ -82,6 +84,10 @@ CREATE TABLE IF NOT EXISTS relocation_plans (
  summary TEXT NOT NULL, facts_digest TEXT NOT NULL DEFAULT '', policies_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_relocation_library ON relocation_plans(library_id,id);
+CREATE TABLE IF NOT EXISTS relocation_record_facts (
+ plan_id INTEGER PRIMARY KEY, digest TEXT NOT NULL,
+ FOREIGN KEY(plan_id) REFERENCES relocation_plans(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS relocation_details (
  plan_id INTEGER NOT NULL, ordinal INTEGER NOT NULL, kind TEXT NOT NULL,
  detail TEXT NOT NULL, PRIMARY KEY(plan_id,ordinal),

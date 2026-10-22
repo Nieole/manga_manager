@@ -140,7 +140,7 @@ func (e *Engine) snapshotsOf(ctx context.Context, runs []Run) ([]Snapshot, error
 	snapshots := make([]Snapshot, 0, len(runs))
 	for _, run := range runs {
 		snapshots = append(snapshots, Snapshot{
-			Run:          run,
+			Run:          e.withLiveProgressLocked(run),
 			Capabilities: e.capabilitiesLocked(run),
 			Side:         side[run.ID],
 		})
@@ -335,6 +335,7 @@ func (e *Engine) disableCancellation(runID int64) error {
 		return err
 	}
 	rt.canCancel = false
+	rt.liveAllowed.Store(!rt.canPause)
 	e.touchLocked(&run)
 	return nil
 }

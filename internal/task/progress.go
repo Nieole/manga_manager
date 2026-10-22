@@ -23,6 +23,9 @@ func (e *Engine) report(runID int64, frame runhandle.Frame) {
 	if !ok {
 		return
 	}
+	if rt := e.runtimes[runID]; rt != nil {
+		rt.progress.Store(nil)
+	}
 	if frame.Current != nil {
 		run.Current = *frame.Current
 	}
@@ -51,6 +54,45 @@ func (e *Engine) report(runID int64, frame runhandle.Frame) {
 		}
 	}
 	e.touchLocked(&run)
+}
+
+// advanceLive avoids a second SQLite writer while a task owns a transaction.
+// Only counters are provisional; lifecycle, admission and recovery remain durable.
+func (e *Engine) advanceLive(runID int64, rt *taskRuntime, current, total int) {
+	if rt == nil || !rt.liveAllowed.Load() {
+		return
+	}
+	rt.progress.Store(&Run{Current: current, Total: total, UpdatedAt: e.clock()})
+	// A different task may hold mu while waiting for this transaction's writer.
+	// Counters remain readable; publication can wait for the next batch.
+	if !e.mu.TryLock() {
+		return
+	}
+	defer e.mu.Unlock()
+	if e.runtimes[runID] != rt {
+		return
+	}
+	run, ok := e.loadActiveLocked(context.Background(), runID)
+	if !ok {
+		return
+	}
+	run.Current, run.Total = current, total
+	run.UpdatedAt, run.Sequence = e.clock(), e.nextSequenceLocked()
+	rt.progress.Store(&run)
+	e.publishProgressLocked(run)
+}
+
+func (e *Engine) withLiveProgressLocked(run Run) Run {
+	if rt := e.runtimes[run.ID]; rt != nil && run.Status.IsActive() {
+		if progress := rt.progress.Load(); progress != nil {
+			run.Current, run.Total = progress.Current, progress.Total
+			run.UpdatedAt = progress.UpdatedAt
+			if progress.Sequence > run.Sequence {
+				run.Sequence = progress.Sequence
+			}
+		}
+	}
+	return run
 }
 
 // mergeArgs 按键合并重启入参。判据与另外两条一致，都是活动态：一份迟到的报文落在已收尾的

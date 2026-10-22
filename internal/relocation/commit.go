@@ -192,24 +192,23 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		if plan.Status != "checked" {
 			return ErrPlanNotReady
 		}
-		inspection := &Service{Store: s.Store, Config: config.NewManager(&cfg), Files: s.Files, transient: true}
-		if e = inspection.Check(ctx, plan.ID, handle, nil); e != nil {
-			return e
-		}
-		if inspection.evaluated.FactsDigest != plan.FactsDigest || inspection.evaluated.BlockerCount != 0 {
-			return ErrStalePlan
-		}
+		inspection := &Service{Store: s.Store, Config: config.NewManager(&cfg), transient: true, recordsOnly: true}
 		if e = handle.DisableCancellation(); e != nil {
 			return e
 		}
 		if e = ctx.Err(); e != nil {
 			return e
 		}
-		handle.Phase("commit", "task.msg.relocation.committing", nil)
+		handle.Phase("commit", "task.msg.relocation.updating", nil)
+		total := plan.SeriesCount + plan.BookCount
+		handle.Advance(0, total, "task.msg.relocation.updating", nil)
 		nextConfig, e := s.preparePolicies(ctx, &op, cfg, session)
 		if e != nil {
 			return e
 		}
+		// Register provisional progress before taking SQLite's write reservation,
+		// so background sample persistence cannot contend with this transaction.
+		handle.AdvanceLive(0, total)
 		tx, e := s.Store.DB().BeginTx(ctx, nil)
 		if e != nil {
 			return e
@@ -219,13 +218,21 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 			return e
 		}
 		inspection.db = tx
+		var expectedRecords string
+		if e = tx.QueryRowContext(ctx, `SELECT digest FROM relocation_record_facts WHERE plan_id=?`, plan.ID).Scan(&expectedRecords); e != nil {
+			if errors.Is(e, sql.ErrNoRows) {
+				return ErrStalePlan
+			}
+			return e
+		}
 		if e = inspection.Check(ctx, plan.ID, handle, nil); e != nil {
 			return e
 		}
 		checked := inspection.evaluated
-		if checked.FactsDigest != plan.FactsDigest || checked.BlockerCount != 0 || (checked.AnomalyCount != 0 && !op.AcceptAnomalies) {
+		if inspection.recordsDigest != expectedRecords || checked.BlockerCount != 0 || (plan.AnomalyCount != 0 && !op.AcceptAnomalies) {
 			return ErrStalePlan
 		}
+		processed := 0
 		for _, kind := range []string{"series", "book"} {
 			table := "series"
 			if kind == "book" {
@@ -237,6 +244,12 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 					return mapErr
 				}
 				_, mapErr = tx.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET path=? WHERE id=?", table), mapped, item.ID)
+				if mapErr == nil {
+					processed++
+					if processed%100 == 0 || processed == total {
+						handle.AdvanceLive(processed, total)
+					}
+				}
 				return mapErr
 			})
 			if e != nil {
@@ -270,6 +283,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		if e = tx.Commit(); e != nil {
 			return e
 		}
+		handle.Advance(processed, total, "task.msg.relocation.updating", nil)
 		keep = true
 		s.access.mu.Lock()
 		s.access.releases[op.ID] = release
@@ -299,6 +313,9 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 				if recoveryErr := s.reconcilePolicies(context.WithoutCancel(ctx), op, nil); recoveryErr == nil {
 					op.Status = "failed"
 					op.Code = "relocation_not_committed"
+					if errors.Is(err, ErrStalePlan) {
+						op.Code = "relocation_stale_plan"
+					}
 					if saveErr := s.saveOperation(context.WithoutCancel(ctx), op); saveErr == nil {
 						s.releaseOperation(op.ID)
 						return err

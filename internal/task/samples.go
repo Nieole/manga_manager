@@ -59,6 +59,13 @@ func (e *Engine) SampleInterval() time.Duration {
 func (e *Engine) SampleActiveRuns(ctx context.Context) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// All runs share SQLite's writer. A task registers provisional counters
+	// before taking its transaction, so sampling must defer writes for all runs.
+	for _, rt := range e.runtimes {
+		if rt.progress.Load() != nil {
+			return
+		}
+	}
 
 	runs, err := e.store.ListRuns(ctx, RunFilter{Statuses: activeStatuses})
 	if err != nil {

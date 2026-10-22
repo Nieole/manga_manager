@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -88,7 +89,7 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 		if err != nil {
 			return err
 		}
-	} else {
+	} else if !s.recordsOnly {
 		var rootErr error
 		err = handle.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindScanFast, Path: plan.TargetRoot}, func() error {
 			info, statErr := s.Files.Stat(plan.TargetRoot)
@@ -135,23 +136,25 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 		return err
 	}
 	facts := sha256.New()
-	_, _ = fmt.Fprintf(facts, "%d\n%s\n%s\n%s\n", plan.LibraryID, plan.LibraryRoot, plan.SourceRoot, plan.TargetRoot)
+	records := sha256.New()
+	databaseFacts := io.MultiWriter(facts, records)
+	_, _ = fmt.Fprintf(databaseFacts, "%d\n%s\n%s\n%s\n", plan.LibraryID, plan.LibraryRoot, plan.SourceRoot, plan.TargetRoot)
 	var scanMode, scanFormats string
 	var scanInterval int64
 	if err = s.dbtx().QueryRowContext(ctx, `SELECT scan_mode,scan_interval,scan_formats FROM libraries WHERE id=?`, plan.LibraryID).Scan(&scanMode, &scanInterval, &scanFormats); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(facts, "automatic:%s:%d:%s\n", scanMode, scanInterval, scanFormats)
+	_, _ = fmt.Fprintf(databaseFacts, "automatic:%s:%d:%s\n", scanMode, scanInterval, scanFormats)
 	var protectionOperation int64
 	if err = s.dbtx().QueryRowContext(ctx, `SELECT COALESCE((SELECT operation_id FROM library_relocation_protection WHERE library_id=?),0)`, plan.LibraryID).Scan(&protectionOperation); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(facts, "protection:%d\n", protectionOperation)
+	_, _ = fmt.Fprintf(databaseFacts, "protection:%d\n", protectionOperation)
 	err = s.walkRecords(ctx, plan.LibraryID, "series", func(item storedRecord) error {
 		if err = handle.Checkpoint(ctx); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(facts, "series:%d:%s:%s\n", item.ID, item.Path, item.ChangedAt)
+		_, _ = fmt.Fprintf(databaseFacts, "series:%d:%s:%s\n", item.ID, item.Path, item.ChangedAt)
 		if _, err = s.mapRecord(ctx, &plan, "series", item.ID, item.Path, 0, seen, occupied); err != nil {
 			return err
 		}
@@ -168,12 +171,12 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 		if err = handle.Checkpoint(ctx); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(facts, "book:%d:%s:%d:%s\n", item.ID, item.Path, item.Size, item.ChangedAt)
+		_, _ = fmt.Fprintf(databaseFacts, "book:%d:%s:%d:%s\n", item.ID, item.Path, item.Size, item.ChangedAt)
 		mapped, mapErr := s.mapRecord(ctx, &plan, "book", item.ID, item.Path, item.Size, seen, occupied)
 		if mapErr != nil {
 			return mapErr
 		}
-		if mapped != "" && validTarget {
+		if mapped != "" && validTarget && !s.recordsOnly {
 			detail := RelocationDetail{Kind: "anomaly", RecordType: "book", RecordID: item.ID, SourcePath: item.Path, TargetPath: mapped, ExpectedSize: item.Size}
 			err = handle.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindScanFast, Path: mapped}, func() error {
 				info, statErr := s.Files.Stat(mapped)
@@ -233,6 +236,15 @@ func (s *Service) Check(ctx context.Context, id int64, handle *runhandle.Handle,
 	}
 	plan.PoliciesJSON = string(policies)
 	_, _ = facts.Write(policies)
+	_, _ = records.Write(policies)
+	recordsDigest := hex.EncodeToString(records.Sum(nil))
+	if !s.transient {
+		if _, err = s.dbtx().ExecContext(ctx, `INSERT INTO relocation_record_facts(plan_id,digest) VALUES(?,?) ON CONFLICT(plan_id) DO UPDATE SET digest=excluded.digest`, plan.ID, recordsDigest); err != nil {
+			return err
+		}
+	} else {
+		s.recordsDigest = recordsDigest
+	}
 	plan.FactsDigest = hex.EncodeToString(facts.Sum(nil))
 	plan.Status = "checked"
 	if !s.transient {

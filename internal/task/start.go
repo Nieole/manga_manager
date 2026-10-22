@@ -372,7 +372,9 @@ func (e *Engine) Handle(runID int64) (*runhandle.Handle, bool) {
 // 运行 id 在这里一次性绑定，此后不出现在句柄上：给句柄开一个 id 形参等于把「谁有资格写
 // 由谁拿到句柄决定」这条结构约束重新打开。
 func (e *Engine) newHandle(runID int64) *runhandle.Handle {
+	rt := e.runtimes[runID]
 	return runhandle.New(runhandle.Writes{
+		AdvanceLive:         func(current, total int) { e.advanceLive(runID, rt, current, total) },
 		Report:              func(frame runhandle.Frame) { e.report(runID, frame) },
 		DisableCancellation: func() error { return e.disableCancellation(runID) },
 		MergeParams:         func(args map[string]string) { e.mergeArgs(runID, args) },
