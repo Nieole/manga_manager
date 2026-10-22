@@ -64,4 +64,4 @@ node .scratch/relocation-gpu/profile.mjs regression
 | TypeScript 与生产前端构建 | `npm run build` 退出 0，主工作区产物已刷新。 |
 | 差异空白检查 | 保留既有已跟踪 CRLF 文件，使用单次 `core.whitespace` 的 `cr-at-eol` 规则通过；未改全局 Git 配置。 |
 
-后端源码、SQL 与生成契约均未修改，因此未重复 Go、sqlc 或 tsgen 门禁。未修改浏览器硬件加速设置、安全策略或真实资料库数据。未推送或发布这个修复。模拟入口已从 web 移除，独立测量浏览器已关闭；复现工具与证据明确保留于此目录，缓存和完整日志位于 `.tmp/relocation-gpu/`。另一台电脑的原现场仍需在升级修复版本后复测，本地数值不代替该现场测量。
+后端源码、SQL 与生成契约均未修改，因此本地验收未重复 Go、sqlc 或 tsgen 门禁，正式发布继续执行完整 CI。未修改浏览器硬件加速设置、安全策略或真实资料库数据。发布版本见 CHANGELOG.md。模拟入口已从 web 移除，独立测量浏览器已关闭；复现工具与证据明确保留于此目录，缓存和完整日志位于 `.tmp/relocation-gpu/`。另一台电脑的原现场仍需在升级修复版本后复测，本地数值不代替该现场测量。
