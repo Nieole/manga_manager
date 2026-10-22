@@ -1,0 +1,26 @@
+[
+  {
+    "width": 390,
+    "height": 844,
+    "left": 16,
+    "right": 374,
+    "viewportWidth": 390,
+    "coverage": 1
+  },
+  {
+    "width": 1280,
+    "height": 720,
+    "left": 256,
+    "right": 1024,
+    "viewportWidth": 1280,
+    "coverage": 1
+  },
+  {
+    "width": 2560,
+    "height": 1215,
+    "left": 896,
+    "right": 1664,
+    "viewportWidth": 2560,
+    "coverage": 1
+  }
+]

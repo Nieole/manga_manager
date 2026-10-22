@@ -199,7 +199,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     </li>
   );
 
-  return <ModalShell open blurBackdrop={false} onClose={onClose} title={t('relocation.title')} description={t('relocation.description')} size="standard"
+  return <ModalShell open onClose={onClose} title={t('relocation.title')} description={t('relocation.description')} size="standard"
     footer={<><button type="button" className={modalGhostButtonClass} onClick={onClose}>{t('relocation.close')}</button>
       {committing && commitRun?.can_cancel && <button type="button" className={modalGhostButtonClass} disabled={cancelling} onClick={cancelCommit}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCommit')}</button>}
       {busy ? <button type="button" className={modalGhostButtonClass} disabled={cancelling || run?.can_cancel === false} onClick={cancel}>{t(cancelling ? 'relocation.cancelling' : 'relocation.cancelCheck')}</button>

@@ -1,0 +1,128 @@
+[
+  {
+    "label": "shared-probes-closed",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 2.04,
+    "maximum": 2.09,
+    "samples": [
+      2.07,
+      1.92,
+      1.89,
+      2.08,
+      2.08,
+      2.08,
+      2.07,
+      2.09
+    ],
+    "utc": "2026-10-22T04:03:24.2644275Z"
+  },
+  {
+    "label": "shared-probes-open-original",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 28.2,
+    "maximum": 28.55,
+    "samples": [
+      28.55,
+      28.51,
+      28.2,
+      28.47,
+      27.98,
+      28.36,
+      27.7,
+      27.84
+    ],
+    "utc": "2026-10-22T04:03:37.1252699Z"
+  },
+  {
+    "label": "shared-probes-open-pause-background",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 27.8,
+    "maximum": 28.42,
+    "samples": [
+      27.81,
+      28.42,
+      27.93,
+      27.66,
+      27.25,
+      27.53,
+      27.52,
+      28.3
+    ],
+    "utc": "2026-10-22T04:03:50.0556407Z"
+  },
+  {
+    "label": "shared-probes-open-original",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 28.03,
+    "maximum": 28.72,
+    "samples": [
+      28.24,
+      27.21,
+      27.69,
+      28.19,
+      27.95,
+      27.91,
+      28.3,
+      28.72
+    ],
+    "utc": "2026-10-22T04:04:02.8131693Z"
+  },
+  {
+    "label": "shared-probes-open-layer",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 28.14,
+    "maximum": 28.91,
+    "samples": [
+      27.85,
+      28.04,
+      27.38,
+      28.33,
+      28.6,
+      28.27,
+      28.91,
+      27.75
+    ],
+    "utc": "2026-10-22T04:04:15.7257071Z"
+  },
+  {
+    "label": "shared-probes-open-original",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 28.17,
+    "maximum": 28.79,
+    "samples": [
+      28.68,
+      28.78,
+      28.79,
+      27.78,
+      28.18,
+      27.82,
+      27.64,
+      27.69
+    ],
+    "utc": "2026-10-22T04:04:28.5101189Z"
+  },
+  {
+    "label": "shared-probes-open-root-filter",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 25.27,
+    "maximum": 25.93,
+    "samples": [
+      25.68,
+      24.99,
+      24.96,
+      25.04,
+      25.27,
+      25.15,
+      25.14,
+      25.93
+    ],
+    "utc": "2026-10-22T04:04:41.3357298Z"
+  }
+]

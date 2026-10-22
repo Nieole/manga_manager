@@ -1,0 +1,110 @@
+[
+  {
+    "label": "regression-closed",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 2.07,
+    "maximum": 2.25,
+    "samples": [
+      2.25,
+      2,
+      2,
+      2.1,
+      2.04,
+      2.11,
+      2.01,
+      2.03
+    ],
+    "utc": "2026-10-22T06:19:08.8122561Z"
+  },
+  {
+    "label": "regression-open-original",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 4.25,
+    "maximum": 4.72,
+    "samples": [
+      4.26,
+      4.43,
+      4.72,
+      4.13,
+      4.22,
+      4.13,
+      4.09,
+      4
+    ],
+    "utc": "2026-10-22T06:19:22.2578057Z"
+  },
+  {
+    "label": "regression-closed-repeat",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 1.87,
+    "maximum": 1.93,
+    "samples": [
+      1.83,
+      1.81,
+      1.92,
+      1.82,
+      1.93,
+      1.85,
+      1.9,
+      1.93
+    ],
+    "utc": "2026-10-22T06:19:35.6276771Z"
+  },
+  {
+    "label": "regression-open-repeat",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 4.22,
+    "maximum": 4.48,
+    "samples": [
+      3.99,
+      4.03,
+      4.45,
+      4.12,
+      4.17,
+      4.48,
+      4.21,
+      4.27
+    ],
+    "utc": "2026-10-22T06:19:49.4155017Z"
+  },
+  {
+    "label": "regression-single-blur-positive-control",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 28.65,
+    "maximum": 28.9,
+    "samples": [
+      28.9,
+      28.76,
+      28.51,
+      28.74,
+      28.59,
+      28.6,
+      28.42,
+      28.71
+    ],
+    "utc": "2026-10-22T06:20:03.2101285Z"
+  },
+  {
+    "label": "regression-tiled-final",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 4.2,
+    "maximum": 4.64,
+    "samples": [
+      4.15,
+      4.04,
+      4.42,
+      4.21,
+      3.95,
+      3.99,
+      4.24,
+      4.64
+    ],
+    "utc": "2026-10-22T06:20:16.8883357Z"
+  }
+]
