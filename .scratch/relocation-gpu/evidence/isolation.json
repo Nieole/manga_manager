@@ -1,0 +1,74 @@
+[
+  {
+    "label": "isolation-closed",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 2.05,
+    "maximum": 2.17,
+    "samples": [
+      1.92,
+      2,
+      2,
+      2.15,
+      2.17,
+      2.1,
+      2.02,
+      2.08
+    ],
+    "utc": "2026-10-22T03:48:36.6606373Z"
+  },
+  {
+    "label": "isolation-open-original",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 28.64,
+    "maximum": 29.52,
+    "samples": [
+      29.11,
+      29.22,
+      28.66,
+      28.03,
+      28.3,
+      28.58,
+      27.74,
+      29.52
+    ],
+    "utc": "2026-10-22T03:48:49.6644100Z"
+  },
+  {
+    "label": "isolation-open-no-modal-blur",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 2.04,
+    "maximum": 2.15,
+    "samples": [
+      2.15,
+      2.13,
+      2.07,
+      2.05,
+      2,
+      1.92,
+      1.87,
+      2.12
+    ],
+    "utc": "2026-10-22T03:49:02.5254561Z"
+  },
+  {
+    "label": "isolation-open-restored",
+    "metric": "Chrome GPU process 3D engine utilization",
+    "seconds": 8,
+    "mean": 28.67,
+    "maximum": 29.23,
+    "samples": [
+      27.93,
+      28.58,
+      28.58,
+      28.79,
+      29,
+      28.79,
+      29.23,
+      28.43
+    ],
+    "utc": "2026-10-22T03:49:15.8202596Z"
+  }
+]

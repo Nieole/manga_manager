@@ -19,6 +19,8 @@ interface ModalShellProps {
   children: ReactNode;
   size?: ModalSize;
   placement?: ModalPlacement;
+  // 背景持续变化时可关闭模糊，避免每帧过滤整个视口。
+  blurBackdrop?: boolean;
   closeOnBackdrop?: boolean;
   closeOnEsc?: boolean;
   showCloseButton?: boolean;
@@ -58,6 +60,7 @@ export function ModalShell({
   children,
   size = 'standard',
   placement = 'center',
+  blurBackdrop = true,
   closeOnBackdrop = true,
   closeOnEsc = true,
   showCloseButton = true,
@@ -168,7 +171,7 @@ export function ModalShell({
   return createPortal(
     <div className={`fixed inset-0 ${zIndexClassName}`}>
       <div
-        className="absolute inset-0 backdrop-blur-xs"
+        className={`absolute inset-0 ${blurBackdrop ? 'backdrop-blur-xs' : ''}`}
         style={{
           background:
             'radial-gradient(circle at top, rgb(var(--theme-glow) / 0.16), transparent 35%), linear-gradient(to bottom, rgb(var(--theme-overlay-top) / 0.78), rgb(var(--theme-overlay-bottom) / 0.88))',
