@@ -94,7 +94,8 @@ jobs:
 
       - name: Run Go tests with race detector
         if: matrix.os == 'ubuntu-latest'
-        run: go test -race ./...
+        # bcrypt 与 SQLite 的整包回归在 race 下超过默认的十分钟包级时限。
+        run: go test -race -timeout=30m ./...
 
       - name: Verify sqlc generated code is up to date
         if: matrix.os == 'ubuntu-latest'
