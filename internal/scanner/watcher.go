@@ -247,22 +247,36 @@ func (fw *FileWatcher) WatchLibrary(libraryID int64, path string, scanFormats st
 	return nil
 }
 
-// UnwatchLibrary 停止监听
+// UnwatchLibrary 停止监听指定库，保留其他已注册资料库共用的目录监听。
 func (fw *FileWatcher) UnwatchLibrary(path string) {
 	fw.mu.Lock()
-	if libID, ok := fw.libs[path]; ok {
-		delete(fw.formats, libID) // 与 libs 配套清理，否则删库/改库路径会让 formats 泄漏
+	for root, libID := range fw.libs {
+		if pathUnderRoot(root, path) && pathUnderRoot(path, root) {
+			delete(fw.formats, libID)
+			delete(fw.libs, root)
+		}
 	}
-	delete(fw.libs, path)
 	var toRemove []string
 	for watchedPath := range fw.watched {
-		if watchedPath == path || strings.HasPrefix(watchedPath, path+string(filepath.Separator)) {
-			toRemove = append(toRemove, watchedPath)
-			delete(fw.watched, watchedPath)
+		if !pathUnderRoot(watchedPath, path) {
+			continue
 		}
+		shared := false
+		for root := range fw.libs {
+			if pathUnderRoot(watchedPath, root) {
+				shared = true
+				break
+			}
+		}
+		if shared {
+			continue
+		}
+		delete(fw.watched, watchedPath)
+		toRemove = append(toRemove, watchedPath)
 	}
 	fw.mu.Unlock()
 
+	// fsnotify 的 reader 可能正等待事件消费者，底层注销不得持有 fw.mu。
 	for _, watchedPath := range toRemove {
 		_ = fw.watcher.Remove(watchedPath)
 	}

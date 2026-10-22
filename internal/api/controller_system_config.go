@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"manga-manager/internal/config"
 	"manga-manager/internal/metadata"
@@ -110,6 +111,7 @@ func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.C
 
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := c.currentConfig()
+	w.Header().Set("ETag", c.config.Version(cfg))
 	c.enrichConfigWithDatabase(r.Context(), &cfg)
 	// 回显前脱敏：LLM api_key、server.auth.token 等敏感字段以占位符返回，不向客户端泄露明文。
 	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(config.MaskSecrets(cfg)))
@@ -120,13 +122,14 @@ func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
+	expected := c.currentConfig()
 	var newCfg config.Config
 	if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid configuration format")
 		return
 	}
 	// 前端保存整份配置时会把未改动的密钥以占位符形式回传，用当前值回填，避免真实密钥被占位符覆盖。
-	config.RestoreMaskedSecrets(&newCfg, c.currentConfig())
+	config.RestoreMaskedSecrets(&newCfg, expected)
 	config.NormalizeConfig(&newCfg)
 
 	validation := config.ValidateConfig(&newCfg)
@@ -137,7 +140,14 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	if err := c.persistConfig(&newCfg); err != nil {
+	if !c.requireConfigVersion(w, r, expected) {
+		return
+	}
+	if err := c.persistConfigExpected(&expected, &newCfg); err != nil {
+		if errors.Is(err, config.ErrConflict) {
+			jsonError(w, http.StatusConflict, err.Error())
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, "Failed to persist configuration")
 		return
 	}
@@ -201,4 +211,16 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{
 		"response": response,
 	})
+}
+
+func (c *Controller) requireConfigVersion(w http.ResponseWriter, r *http.Request, expected config.Config) bool {
+	if r.Header.Get("If-Match") == "" {
+		jsonError(w, http.StatusPreconditionRequired, "Read the configuration and send its ETag in If-Match before saving")
+		return false
+	}
+	if r.Header.Get("If-Match") != c.config.Version(expected) {
+		jsonError(w, http.StatusConflict, config.ErrConflict.Error())
+		return false
+	}
+	return true
 }

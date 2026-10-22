@@ -316,6 +316,29 @@ func (e *Engine) Cancel(runID int64) error {
 	return nil
 }
 
+// disableCancellation 与取消请求共用锁，已进入取消流程时返回 context.Canceled。
+func (e *Engine) disableCancellation(runID int64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	run, err := e.store.LoadRun(context.Background(), runID)
+	if err != nil {
+		return err
+	}
+	if run.Status == StatusCancelling {
+		return context.Canceled
+	}
+	if run.Status != StatusRunning {
+		return ErrRunNotRunning
+	}
+	rt, err := e.controlHandleLocked(runID)
+	if err != nil {
+		return err
+	}
+	rt.canCancel = false
+	e.touchLocked(&run)
+	return nil
+}
+
 // cancelLocked 是取消的两条分支。调用方持锁；返回的 launch 必须在锁外调用。
 func (e *Engine) cancelLocked(runID int64) (func(), error) {
 	run, err := e.store.LoadRun(context.Background(), runID)

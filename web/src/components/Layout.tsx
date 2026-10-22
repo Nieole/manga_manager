@@ -7,6 +7,7 @@ import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle, BarChart3 } from 'lucide-react';
 import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { Library, SearchHit } from './layout/types';
+import { RelocationEntry } from './layout/RelocationEntry';
 import { useGlobalSearch } from './layout/useGlobalSearch';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
@@ -53,6 +54,8 @@ export default function Layout() {
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
+    const [relocationTarget, setRelocationTarget] = useState<string | undefined>();
+    const [relocationLibraryID, setRelocationLibraryID] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     // 侧栏资料库列表加载失败标记，用于渲染一个「加载失败 · 重试」入口。
     const [librariesError, setLibrariesError] = useState(false);
@@ -346,8 +349,15 @@ export default function Layout() {
             saveRecentLibraryPath(editForm.values.path);
             fetchLibraries();
         } catch (error) {
+            if (isAxiosError(error) && error.response?.data?.code === 'relocation_required') {
+                setShowEditModal(false);
+                setRelocationTarget(editForm.values.path);
+                setRelocationLibraryID(editLibId);
+                showToast(t('relocation.editRedirect'));
+                return;
+            }
             console.error(error);
-            showToast(extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
+            showToast(isAxiosError(error) && error.response?.data?.code === 'relocation_protected' ? t('relocation.protection.explanation') : extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
         } finally {
             editForm.setSubmitting(false);
         }
@@ -359,7 +369,7 @@ export default function Layout() {
             // 不必手动刷新界面，后端的 SSE 会通过 onmessage 广播数据到达
             // 后端带回一句话时以它为准：这个库已经排着一次扫描的话，本次强制重扫会被并进那一次，
             // 而那一次不是强制的——此时说「已提交」就是骗人。其余情况后端不带话，用本地这两句。
-            showToast(res.data.message || (force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued')), 'success');
+            showToast(libraries.find((item) => String(item.id) === id)?.relocation_protected ? t('relocation.protection.manualScan') : res.data.message || (force ? t('layout.toast.scanForcedQueued') : t('layout.toast.scanIncrementalQueued')), 'success');
         } catch (error) {
             console.error("Trigger scan failed", error);
             showToast(t('layout.toast.scanFailed'), 'error');
@@ -382,7 +392,7 @@ export default function Layout() {
             showToast(t('layout.toast.cleanupQueued'), 'success');
         } catch (error) {
             console.error("Trigger cleanup failed", error);
-            showToast(t('layout.toast.cleanupFailed'), 'error');
+            showToast(t(isAxiosError(error) && error.response?.data?.code === 'relocation_protected' ? 'relocation.protection.explanation' : 'layout.toast.cleanupFailed'), 'error');
         }
     };
 
@@ -763,6 +773,11 @@ export default function Layout() {
                                                     <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
                                                         {t('layout.libraryActions.title')}
                                                     </div>
+                                                    {lib.relocation_protected && <p className="px-3 py-2 text-xs text-amber-200">{t('relocation.protection.active')}</p>}
+                                                    {lib.relocation_protected && <button
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenMenuId(null); navigate(`/library/${lib.id}?restoration=1`); }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-amber-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                    >{t('restoration.open')}</button>}
                                                     <button
                                                         onClick={(e) => {
                                                             setOpenMenuId(null);
@@ -774,6 +789,19 @@ export default function Layout() {
                                                     >
                                                         <SettingsIcon className="w-4 h-4 mr-2" />
                                                         {t('layout.libraryActions.edit')}
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            setOpenMenuId(null);
+                                                            setRelocationTarget(undefined);
+                                                            setRelocationLibraryID(String(lib.id));
+                                                        }}
+                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                    >
+                                                        <FolderOpen className="w-4 h-4 mr-2" />
+                                                        {t('layout.libraryActions.relocate')}
                                                     </button>
                                                     <button
                                                         onClick={(e) => {
@@ -903,6 +931,8 @@ export default function Layout() {
                     onClearFinished={clearFinishedTaskBubbles}
                 />
             </main>
+
+            <RelocationEntry libraries={libraries} isAdmin={isAdmin} selectedID={relocationLibraryID} initialTarget={relocationTarget} onCompleted={fetchLibraries} onClose={() => { setRelocationLibraryID(null); setRelocationTarget(undefined); }} />
 
             <ShortcutsPanel open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 

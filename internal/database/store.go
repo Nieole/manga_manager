@@ -28,6 +28,9 @@ var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
 	Querier
+	LibraryRelocationProtection(context.Context, int64) (*LibraryRelocationProtection, error)
+	DeleteMissingSeries(context.Context, int64) error
+	DeleteMissingBook(context.Context, int64) error
 	Close() error
 	// DB 交出底层库句柄。它在接口上而不只在 SqlStore 上，是因为任务与运行那几张表由
 	// internal/taskstore 直接持句柄读写（它们没有 sqlc 查询，见 taskstore 的包 doc），

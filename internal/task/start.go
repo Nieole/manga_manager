@@ -26,6 +26,10 @@ var ErrInvalidRunSpec = errors.New("run declaration is incomplete")
 type RunSpec struct {
 	// Identity 是这次运行属于哪个任务。四要素显式给出，不从字符串里反解。
 	Identity Identity
+	// LibraryIDs declares every library this run can access.
+	LibraryIDs []int64
+	// ValidateAccess revalidates path-bound plans at admission; it must not call the engine.
+	ValidateAccess func() error
 	// Trigger 是**发起方**：谁叫来的。
 	Trigger Trigger
 
@@ -145,6 +149,16 @@ func (e *Engine) Start(ctx context.Context, spec RunSpec, body Body) (Launched, 
 	// 停发闸门与准入在**同一个临界区**里：那一行长期属性另有一个写入方（收尾那一侧），
 	// 分成两段就会有一次复位与一次失败计数互相覆盖。
 	e.mu.Lock()
+	if err := e.libraryAdmissionLocked(spec.LibraryIDs); err != nil {
+		e.mu.Unlock()
+		return Launched{}, err
+	}
+	if spec.ValidateAccess != nil {
+		if err := spec.ValidateAccess(); err != nil {
+			e.mu.Unlock()
+			return Launched{}, err
+		}
+	}
 	stalled := e.gateLaunchLocked(ctx, &owner, spec.Trigger)
 	if stalled != StallNone {
 		e.mu.Unlock()
@@ -208,6 +222,7 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 	if err != nil {
 		return Launched{}, nil, err
 	}
+	e.libraryRuns[created.ID] = append([]int64(nil), spec.LibraryIDs...)
 	e.writeSideDataLocked(ctx, created.ID, spec)
 
 	if created.Status == StatusQueued {
@@ -358,8 +373,9 @@ func (e *Engine) Handle(runID int64) (*runhandle.Handle, bool) {
 // 由谁拿到句柄决定」这条结构约束重新打开。
 func (e *Engine) newHandle(runID int64) *runhandle.Handle {
 	return runhandle.New(runhandle.Writes{
-		Report:      func(frame runhandle.Frame) { e.report(runID, frame) },
-		MergeParams: func(args map[string]string) { e.mergeArgs(runID, args) },
+		Report:              func(frame runhandle.Frame) { e.report(runID, frame) },
+		DisableCancellation: func() error { return e.disableCancellation(runID) },
+		MergeParams:         func(args map[string]string) { e.mergeArgs(runID, args) },
 		AddMetrics: func(increments map[string]int64, args map[string]string) {
 			e.addMetrics(runID, increments, args)
 		},
@@ -452,6 +468,7 @@ func (e *Engine) finalizeLocked(runID int64, status RunStatus, message Result, r
 
 	delete(e.runtimes, runID)
 	delete(e.queued, runID)
+	delete(e.libraryRuns, runID)
 	// 终态丢掉两道水位：这条运行不会再有帧、也不会再取到点，留着只是泄漏。
 	delete(e.gates, runID)
 	delete(e.samples, runID)

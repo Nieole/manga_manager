@@ -19,8 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
@@ -28,6 +26,7 @@ import (
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/proposal"
+	"manga-manager/internal/relocation"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/storageio"
@@ -55,12 +54,15 @@ type Controller struct {
 	config  *config.Manager
 	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
 	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**运行句柄**。
-	diskWork   *diskwork.Runner
-	koreader   *koreader.Service
-	external   *external.Manager
-	proposals  *proposal.Service
-	configPath string
-	watcher    *scanner.FileWatcher
+	diskWork           *diskwork.Runner
+	koreader           *koreader.Service
+	external           *external.Manager
+	proposals          *proposal.Service
+	relocation         *relocation.Service
+	configPath         string
+	watcher            *scanner.FileWatcher
+	watcherInitErr     error
+	relocationTopology relocationTopology
 
 	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
 	sse *sseBroker
@@ -339,7 +341,7 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 }
 
 // newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
-// 它不启动任何后台 goroutine，也不碰文件监听——那些属于「运行」而非「装配」，由 NewController 负责。
+// 它预备文件监听资源并恢复迁移；事件派发与后台服务由 NewController 启动。
 //
 // 白盒测试构造 Controller 必须调用这里，不得手工拼装字段：手工拼装在新增组件字段时容易漏掉，
 // 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
@@ -356,6 +358,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		config:             cfg,
 		external:           external.NewManager(store, 30*time.Minute),
 		proposals:          proposal.NewService(proposalDB{Store: store}),
+		relocation:         relocation.NewService(store, cfg),
 		configPath:         cfgPath,
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),
@@ -394,8 +397,26 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	})
 	// 构建「再发起一次」的注册表：它同时是可重试与**可续跑**两条判据的来源，因此必须在任何运行
 	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
+	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
+	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
+		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
+		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },
+	})
+	c.relocation.Acquire = c.acquireLibraryExclusive
+	c.relocation.AcquireOperation = c.acquireRelocationAccess
+	c.relocation.Effects = c.relocationEffects
+	c.relocation.RestoreEffects = c.restorationEffects
+	c.relocation.ConfigPath = c.configPath
+	c.relocation.ApplyConfig = runtimecfg.Apply
+	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
+		panic(fmt.Errorf("initialize relocation plans: %w", err))
+	}
+	if err := c.relocation.Recover(context.Background()); err != nil {
+		panic(fmt.Errorf("recover library relocation: %w", err))
+	}
 
+	c.config.SetAfterUpdate(c.configUpdated)
 	return c
 }
 
@@ -413,15 +434,10 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 
 	// 初始化文件系统监控。派生出去的扫描与清理各建一条**发起方**为「监听」的运行：
 	// 监听器自己不碰扫描器，它只知道「这个库该扫了」。
-	fw, err := scanner.NewFileWatcher(scanner.WatcherHooks{
-		ScanLibrary:        c.runWatchedLibraryScan,
-		CleanupLibrary:     c.runWatchedLibraryCleanup,
-		LibraryScanRunning: scan.LibraryScanActive,
-	})
-	if err != nil {
-		slog.Warn("Failed to create file watcher", "error", err)
+	if c.watcherInitErr != nil {
+		slog.Warn("Failed to create file watcher", "error", c.watcherInitErr)
 	} else {
-		c.watcher = fw
+		fw := c.watcher
 		fw.Start(c.PublishEvent)
 		// 为现有库开启监听
 		c.runBackground(func() {
@@ -432,7 +448,15 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 			}
 			for _, lib := range libs {
 				if lib.ScanMode == "watch" {
+					if c.requireAutomaticProcessing(context.Background(), lib.ID) != nil {
+						continue
+					}
+					release, accessErr := c.taskEngine.engine.AcquireLibraryRead(lib.ID)
+					if accessErr != nil {
+						continue
+					}
 					_ = fw.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
+					release()
 				}
 			}
 		})
@@ -573,40 +597,24 @@ func validateOutboundLLMTarget(baseURL, endpoint string) error {
 }
 
 func (c *Controller) persistConfig(cfg *config.Config) error {
+	expected := c.currentConfig()
+	return c.persistConfigExpected(&expected, cfg)
+}
+
+func (c *Controller) persistConfigExpected(expected, cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	config.NormalizeConfig(cfg)
+	return c.config.Save(c.configPath, expected, func(next *config.Config) error {
+		*next = config.CloneConfig(*cfg)
+		return nil
+	}, runtimecfg.Apply, nil)
+}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0o755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(cfg.Cache.Dir, 0o755); err != nil {
-		return err
-	}
-
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	// 原子写：避免保存过程中崩溃留下半截 config.yaml 导致下次启动解析失败。
-	// 权限用 ConfigFilePerm(0600)：这条路径写的是 RestoreMaskedSecrets 回填后的**真实**密钥，
-	// 是明文 api_key 真正落盘的地方（首次生成时配置里还没有密钥）。
-	if err := config.AtomicWriteFile(c.configPath, data, config.ConfigFilePerm); err != nil {
-		return err
-	}
-	c.config.Replace(cfg)
-	// 与文件热重载走同一条 runtimecfg.Apply：重建 parser 池 / images 处理器并设置日志级别，使经 UI 保存的
-	// archive_pool_size / max_ai_concurrency 立即生效，不依赖文件监听回环（监听器失效时也能生效）。
-	if err := runtimecfg.Apply(cfg); err != nil {
-		return err
-	}
-	// 并发上限也在这份配置里，而它是**现读**的：调小无须做什么（在跑的不打断，占用自然降下来），
-	// 调大则要催一次队列放行——此刻没有任何运行收尾，队列却已经可以往前走。
+func (c *Controller) configUpdated() {
 	if c.taskEngine != nil {
 		c.taskEngine.releaseQueued()
 	}
-	return nil
 }
 
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
@@ -783,6 +791,16 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/libraries", c.getLibraries)
 		r.Post("/libraries", c.createLibrary)
 		r.Put("/libraries/{libraryId}", c.updateLibrary)
+		r.Post("/libraries/{libraryId}/relocation-plans", c.createRelocationPlan)
+		r.Get("/libraries/{libraryId}/relocation-restoration", c.getRelocationRestoration)
+		r.Post("/libraries/{libraryId}/relocation-restoration/checks", c.createRestorationCheck)
+		r.Post("/libraries/{libraryId}/relocation-restoration/release", c.releaseRelocationProtection)
+		r.Get("/libraries/{libraryId}/relocation-source-roots", c.relocationSourceRoots)
+		r.Get("/libraries/{libraryId}/relocation-plans/latest", c.latestRelocationPlan)
+		r.Get("/relocation-plans/{planId}", c.getRelocationPlan)
+		r.Get("/relocation-plans/{planId}/details", c.relocationDetails)
+		r.Post("/relocation-plans/{planId}/commit", c.commitRelocationPlan)
+		r.Get("/relocation-operations/{operationId}", c.getRelocationOperation)
 		r.Get("/libraries/{libraryId}/franchise", c.getLibraryFranchiseGraph)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Post("/libraries/{libraryId}/external-libraries/session", c.createExternalLibrarySession)
@@ -1040,10 +1058,20 @@ func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if libs == nil {
-		libs = []database.Library{} // 保证 JSON 数组非 null
+	type libraryStatus struct {
+		database.Library
+		RelocationProtected bool `json:"relocation_protected"`
 	}
-	jsonResponse(w, http.StatusOK, libs)
+	result := make([]libraryStatus, 0, len(libs))
+	for _, lib := range libs {
+		protection, protectionErr := c.store.LibraryRelocationProtection(ctx, lib.ID)
+		if protectionErr != nil {
+			jsonError(w, http.StatusInternalServerError, "Unable to read relocation protection")
+			return
+		}
+		result = append(result, libraryStatus{Library: lib, RelocationProtected: protection != nil})
+	}
+	jsonResponse(w, http.StatusOK, result)
 }
 
 func parseID(r *http.Request, param string) (int64, error) {
@@ -1352,6 +1380,11 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, ok := c.guardBookRead(w, r, bookID)
+	if !ok {
+		return
+	}
+	defer release()
 	book, err := c.store.GetBook(ctx, bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book not found")

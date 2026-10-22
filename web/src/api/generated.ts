@@ -167,3 +167,114 @@ export interface StorageFailureResponse {
   path: string;
 }
 
+export interface RelocationDetail {
+  ordinal: number;
+  kind: string;
+  record_type: string;
+  record_id: number;
+  source_path: string;
+  target_path: string;
+  reason: string;
+  expected_size: number;
+  actual_size: number;
+  modified_ns: number;
+  run_id?: number;
+  run_status?: string;
+  can_cancel: boolean;
+  conflict_record_type?: string;
+  conflict_record_id?: number;
+  policy_before?: RelocationPolicy;
+  policy_after?: RelocationPolicy;
+}
+
+export interface RelocationPolicy {
+  storage_profile: string;
+  io_policy: StorageIOPolicy;
+}
+
+export interface StorageIOPolicy {
+  scan_concurrency: number;
+  archive_open_concurrency: number;
+  cover_concurrency: number;
+  hash_concurrency: number;
+  pause_background_when_reading: boolean;
+  idle_only_heavy_tasks: boolean;
+  disable_same_disk_page_cache: boolean;
+}
+
+export interface RelocationPlan {
+  purpose?: string;
+  protection_id?: number;
+  id: number;
+  library_id: number;
+  library_name: string;
+  library_root: string;
+  source_root: string;
+  target_root: string;
+  run_id: number;
+  operation_id?: number;
+  commit_run_id?: number;
+  status: string;
+  series_count: number;
+  book_count: number;
+  blocker_count: number;
+  anomaly_count: number;
+  policy_count: number;
+  anomaly_counts: Record<string, number>;
+  samples: RelocationDetail[];
+  created_at: string;
+  updated_at: string;
+  protection?: LibraryRelocationProtection;
+}
+
+export interface RelocationSourceRoots {
+  library_root: string;
+  records_outside_current_root: boolean;
+  candidates: string[];
+}
+
+export interface RelocationDetails {
+  items: RelocationDetail[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface RelocationOperation {
+  purpose?: string;
+  protection_id?: number;
+  scan_mode?: string;
+  scan_interval?: number;
+  scan_formats?: string;
+  id: number;
+  plan_id: number;
+  library_id: number;
+  run_id: number;
+  status: string;
+  source_root: string;
+  target_root: string;
+  series_count: number;
+  book_count: number;
+  code: string;
+  updated_at: string;
+  accept_anomalies: boolean;
+  protected: boolean;
+}
+
+export interface LibraryRelocationProtection {
+  library_id: number;
+  operation_id: number;
+  plan_id: number;
+  facts_digest: string;
+  anomaly_count: number;
+  scan_mode: string;
+  scan_interval: number;
+  scan_formats: string;
+}
+
+export interface RelocationRestoration {
+  protection?: LibraryRelocationProtection;
+  accepted?: RelocationPlan;
+  check?: RelocationPlan;
+}
+

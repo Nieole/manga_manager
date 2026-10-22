@@ -535,6 +535,12 @@ func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
 		return
 	}
+	release, ok := c.guardBookRead(w, r, bookID)
+	if !ok {
+		return
+	}
+	defer release()
+
 	book, err := c.store.GetBook(r.Context(), bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book not found")

@@ -136,6 +136,12 @@ func (c *Controller) writeBookComicInfo(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	release, ok := c.guardBookRead(w, r, bookID)
+	if !ok {
+		return
+	}
+	defer release()
+
 	book, err := c.store.GetBook(r.Context(), bookID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

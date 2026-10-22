@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/database"
 	"net/http"
 	"strconv"
 	"strings"
@@ -67,6 +68,14 @@ var errTaskAlreadyRunning = errors.New("task already running")
 // 将来某个真正的内部错误伪装成「已在运行」，用户等一个永远不会出现的任务。
 // 判定口径与 retryTask 一致；conflict 与 failure 是两条分支各自的英文提示。
 func writeTaskLaunchError(w http.ResponseWriter, err error, conflict, failure string) {
+	if errors.Is(err, database.ErrLibraryProtected) {
+		writeRelocationProtected(w)
+		return
+	}
+	if errors.Is(err, errLibraryUnavailable) {
+		writeLibraryUnavailable(w)
+		return
+	}
 	if errors.Is(err, errTaskAlreadyRunning) {
 		jsonResponse(w, http.StatusConflict, map[string]string{"error": conflict})
 		return
@@ -368,6 +377,10 @@ func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
 	// 用本次重试请求自身的 Accept-Language 构造 ctx，供 relauncher（如 AI 分组）在无持久化
 	// locale 时恢复语言。**发起方是手动**：重试是用户按下的那一下，重启之后的续跑另有一条路。
 	if err := relaunch(requestContextWithLocale(r), run, task.TriggerManual); err != nil {
+		if errors.Is(err, database.ErrLibraryProtected) {
+			writeRelocationProtected(w)
+			return
+		}
 		if errors.Is(err, errTaskAlreadyRunning) {
 			jsonError(w, http.StatusConflict, "Task is already running")
 			return

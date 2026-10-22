@@ -93,12 +93,6 @@ func main() {
 			"hint", "hot-reload will refuse to apply this file until these are fixed")
 	}
 
-	cfgWatcher, watchErr := config.StartWatcher(resolvedConfigPath, cfgManager, runtimecfg.Apply)
-	if watchErr != nil {
-		// 监听建不起来只影响「改文件自动生效」，服务本身照常跑（经设置页保存仍立即生效）。
-		slog.Warn("Config hot-reload disabled", "path", resolvedConfigPath, "error", watchErr)
-	}
-
 	// 数据目录按 database.path 的真实取值创建，而不是在 cwd 下写死一个 ./data：该路径可为绝对
 	// 路径，且 sqlite 只会打开文件、不会补建目录，父目录缺失时首启会以一句 "unable to open
 	// database file (14)" 退出。
@@ -150,7 +144,8 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.Server.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-API-Token"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-API-Token", "If-Match"},
+		ExposedHeaders:   []string{"ETag"},
 		AllowCredentials: allowCredentials,
 		MaxAge:           300,
 	}))
@@ -166,6 +161,12 @@ func main() {
 	// API 端点挂载
 	scan := scanner.NewScanner(store, cfgManager)
 	apiController := api.NewController(store, scan, cfgManager, resolvedConfigPath)
+
+	cfgWatcher, watchErr := config.StartWatcher(resolvedConfigPath, cfgManager, runtimecfg.Apply)
+	if watchErr != nil {
+		// 监听建不起来只影响「改文件自动生效」，服务本身照常跑（经设置页保存仍立即生效）。
+		slog.Warn("Config hot-reload disabled", "path", resolvedConfigPath, "error", watchErr)
+	}
 
 	// 注意：扫描完成回调由 NewController 内部注册（handleScannerBatchEvent），它会失效并预热
 	// dashboard 统计缓存、并以真实 action 名发 SSE。此处不要再 SetBatchCallback，否则单字段覆盖

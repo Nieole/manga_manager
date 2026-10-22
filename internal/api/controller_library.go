@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,12 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
+
+	release, ok := c.guardLibraryRead(w, libraryID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if lib, err := c.store.GetLibrary(ctx, libraryID); err == nil && c.watcher != nil {
 		c.watcher.UnwatchLibrary(lib.Path)
@@ -147,6 +154,12 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
 
 	ctx := r.Context()
+	c.relocationTopology.mu.Lock()
+	defer c.relocationTopology.mu.Unlock()
+	if c.relocationRootConflicts(req.Path) {
+		writeLibraryUnavailable(w)
+		return
+	}
 	if issues := c.validateLibraryRequest(ctx, requestLocale(r), nil, req); len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
 			"error":      "Library validation failed",
@@ -210,10 +223,42 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Name and Path are required")
 		return
 	}
+	c.relocationTopology.mu.Lock()
+	defer c.relocationTopology.mu.Unlock()
+	if c.relocationRootConflicts(req.Path) {
+		writeLibraryUnavailable(w)
+		return
+	}
+	release, ok := c.guardLibraryRead(w, libraryID)
+	if !ok {
+		return
+	}
+	defer release()
+
 	existingLib, err := c.store.GetLibrary(ctx, libraryID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Library not found")
 		return
+	}
+	protection, err := c.store.LibraryRelocationProtection(ctx, libraryID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Unable to inspect relocation protection")
+		return
+	}
+	if protection != nil && req.ScanMode != "none" {
+		writeRelocationProtected(w)
+		return
+	}
+	if !sameNativePath(existingLib.Path, req.Path) {
+		var populated bool
+		if err = c.store.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM series WHERE library_id=?) OR EXISTS(SELECT 1 FROM books WHERE library_id=?)`, libraryID, libraryID).Scan(&populated); err != nil {
+			jsonError(w, http.StatusInternalServerError, "Unable to inspect library")
+			return
+		}
+		if populated {
+			jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_required", "error": "Use library path relocation to preserve existing records"})
+			return
+		}
 	}
 
 	if req.ScanInterval <= 0 {
@@ -288,10 +333,33 @@ func (c *Controller) launchLibraryScanTask(lib database.Library, force bool, tri
 // （见 scanLibrary），不看这一格就只能无条件回「已发起」。其余调用方发起完就不过问结果，
 // 走那层薄壳即可。
 func (c *Controller) startLibraryScanRun(lib database.Library, force bool, trigger task.Trigger) (task.Launched, error) {
+	if trigger != task.TriggerManual {
+		if err := c.requireAutomaticProcessing(context.Background(), lib.ID); err != nil {
+			return task.Launched{}, err
+		}
+	}
 	cfg := c.currentConfig()
 	storagePolicy := config.ResolveStoragePolicy(cfg, lib.Path)
 
 	spec := RunSpec{
+		ValidateAccess: func() error {
+			if trigger != task.TriggerManual {
+				if err := c.requireAutomaticProcessing(context.Background(), lib.ID); err != nil {
+					return err
+				}
+			}
+			current, err := c.store.GetLibrary(context.Background(), lib.ID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if current.Path != lib.Path {
+				return errLibraryUnavailable
+			}
+			return nil
+		},
 		Key:         fmt.Sprintf("scan_library_%d", lib.ID),
 		StartCode:   "task.msg.scan_library.start",
 		StartParams: map[string]string{"name": lib.Name},
@@ -389,6 +457,17 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 // 存储画像与并发上限来自系列所属的**资料库**，因此任务声明要先查两跳（系列 → 资料库）才能拼齐；
 // 查不到就按「没有上限可报」落地，见下。
 func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger task.Trigger) error {
+	var automaticLibraryID int64
+	if trigger != task.TriggerManual {
+		series, err := c.store.GetSeries(context.Background(), seriesID)
+		if err != nil {
+			return err
+		}
+		automaticLibraryID = series.LibraryID
+		if err = c.requireAutomaticProcessing(context.Background(), series.LibraryID); err != nil {
+			return err
+		}
+	}
 	idParams := map[string]string{"id": strconv.FormatInt(seriesID, 10)}
 	scopeName := ""
 	storagePolicy := config.ResolvedStoragePolicy{}
@@ -407,6 +486,19 @@ func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger ta
 	}
 
 	spec := RunSpec{
+		ValidateAccess: func() error {
+			if trigger == task.TriggerManual {
+				return nil
+			}
+			current, err := c.store.GetSeries(context.Background(), seriesID)
+			if err != nil {
+				return err
+			}
+			if current.LibraryID != automaticLibraryID {
+				return errLibraryUnavailable
+			}
+			return c.requireAutomaticProcessing(context.Background(), current.LibraryID)
+		},
 		Key:         fmt.Sprintf("scan_series_%d", seriesID),
 		StartCode:   "task.msg.scan_series.start",
 		StartParams: idParams,
@@ -495,6 +587,9 @@ func (c *Controller) launchCleanupLibraryTask(libraryID int64, trigger task.Trig
 // startCleanupLibraryRun 与 launchCleanupLibraryTask 是同一次发起，多交回的那样与
 // startLibraryScanRun 同理：文件监听器要等它跑完（Stop 的契约是派生出去的清理也已退出）。
 func (c *Controller) startCleanupLibraryRun(libraryID int64, trigger task.Trigger) (task.Launched, error) {
+	if err := c.requireAutomaticProcessing(context.Background(), libraryID); err != nil {
+		return task.Launched{}, err
+	}
 	idParams := map[string]string{"id": strconv.FormatInt(libraryID, 10)}
 	scopeName := c.libraryScopeName(libraryID)
 

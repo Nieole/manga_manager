@@ -53,6 +53,7 @@ type Handle struct {
 // 收成结构体而不是位置参数：五个都是函数，而其中两个都以两个字符串打头（ItemFailed 与 Warn），
 // 位置参数下接反了未必有编译错误——后果是失败的文件名被当成告警码渲染成一句翻译缺失。
 type Writes struct {
+	DisableCancellation func() error
 	// Report 写整帧展示态，MergeParams 按键合并**任务参数**，AddMetrics 按键累加指标。
 	Report      func(Frame)
 	MergeParams func(map[string]string)
@@ -63,6 +64,15 @@ type Writes struct {
 	// code 是一个稳定的短码（由渲染方翻译），detail 是给排查用的补充说明，
 	// count 是「这一条涉及多少个条目」。
 	Warn func(code, detail string, count int64)
+}
+
+// DisableCancellation enters a non-cancellable commit boundary. If cancellation
+// already won the race, the caller must leave its persistent state unchanged.
+func (h *Handle) DisableCancellation() error {
+	if h.writes.DisableCancellation == nil {
+		return nil
+	}
+	return h.writes.DisableCancellation()
 }
 
 // New 建一个运行句柄。五条写入通道都不得为 nil。
