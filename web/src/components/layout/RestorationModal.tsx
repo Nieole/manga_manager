@@ -37,6 +37,8 @@ export function RestorationModal({ library, planID, onClose, onCompleted }: Prop
   const [pageLoading, setPageLoading] = useState(false);
   const [retry, setRetry] = useState(0);
   const generation = useRef(0);
+  const completed = useRef(onCompleted);
+  useEffect(() => { completed.current = onCompleted; }, [onCompleted]);
   const resetConsent = () => { setConsent(false); setLossRisk(false); };
   const base = `/api/libraries/${library.id}/relocation-restoration`;
   const busy = plan?.status === 'pending' || plan?.status === 'checking';
@@ -141,7 +143,7 @@ export function RestorationModal({ library, planID, onClose, onCompleted }: Prop
       });
       if (generation.current !== token) return;
       resetConsent(); setOperation(data);
-      if (data.status === 'completed') onCompleted?.();
+      if (data.status === 'completed') completed.current?.();
     } catch (err) {
       if (generation.current !== token) return;
       const code = isAxiosError(err) ? (err.response?.data as { code?: string } | undefined)?.code : undefined;
