@@ -1,6 +1,6 @@
 # Spec: 资料库路径迁移
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 
@@ -163,5 +163,15 @@ Status: ready-for-agent
 - 领域术语以项目 CONTEXT 为准：资料库、系列、书、任务与运行各自有明确含义。这里的迁移恢复是维持一次操作的一致性，不等于同一个任务的自动重试。
 - 用户已完成设计问答并确认整体设计，也已明确确认本规格采用的测试边界。书文件异常允许继续是刻意选择，不能在实现中改成一律阻止；目标根和记录冲突等阻断项仍不可绕过。
 - 迁移保护按管理员明确恢复解除，不随运行历史裁剪。允许解除时仍有异常，界面必须说明之后可能发生的失踪清理后果，不将恢复按钮变成无提示的配置开关。
-- 尚无生产迁移执行或现有用户数据库修复发生。本规格为后续拆票和实现提供验收依据，ready-for-agent 只表示规格完备，不表示功能完成。
+- 功能已在 `codex/library-path-relocation` 集成分支实现，八张实施票均已完成；验收使用临时配置、真实 SQLite 与演示目录，没有对现有用户数据库执行迁移或修复。
 - 前置设计问答保存在同目录 design-notes.md；本文件是后续拆票和验收的正式规格，发生差异以本文件及后续明确决策为准。实现不得将任何运行配置密钥或完整敏感配置写入公开的计划、结果、日志和测试输出。
+
+## Implementation evidence
+
+- 访问与配置边界：[01 资料库访问协调](issues/01-library-access-coordination.md)、[02 配置更新一致性](issues/02-config-update-consistency.md)。
+- 检查与路径提交：[03 迁移预览](issues/03-preview-relocation.md)、[04 正常迁移](issues/04-commit-relocation.md)、[05 根路径已改的补迁移](issues/05-repair-edited-root.md)。
+- 异常与一致性：[06 带异常迁移及保护](issues/06-migrate-with-protection.md)、[07 主动恢复自动处理](issues/07-restore-automatic-processing.md)、[08 目录策略迁移及恢复](issues/08-relocate-storage-policies.md)。
+- [组合验收](validation-combined.md)覆盖补迁移、异常保护、策略及新实例恢复，再由管理员明确解除保护；[最终验收](validation-final.md)记录全部门禁、Smart App Control 正常重试和执行边界。
+- [最终代码审查](final-review.md)分别保留 Standards 与 Spec 结论，五项意见均由同一实现分支处理；[界面证据](screenshots/README.md)逐项注明源码版本及临时演示数据。
+
+工作树清理被自动审批拒绝，工作树和证据保留，详情见最终验收。该环境收尾限制不改变已提交的功能与测试结果。

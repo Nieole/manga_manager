@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient, isAxiosError } from '../../api/client';
 import type { RelocationSourceRoots, RelocationOperation, RelocationDetail, RelocationDetails, RelocationPlan, RelocationPolicy, RunLive, RunSnapshot } from '../../api/generated';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -6,6 +6,7 @@ import { ModalShell } from '../ui/ModalShell';
 import { modalGhostButtonClass, modalPrimaryButtonClass, modalSectionClass } from '../ui/modalStyles';
 import { DirectoryPicker } from './DirectoryPicker';
 import { useDirectoryBrowser } from './useDirectoryBrowser';
+import { useRelocationOperation } from './useRelocationOperation';
 
 interface Props {
   library: { id: number; name: string; path: string };
@@ -53,8 +54,6 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   const [needsRecheck, setNeedsRecheck] = useState(false);
   const [acceptedPlan, setAcceptedPlan] = useState<number | null>(null);
   const changeTarget = (value: string) => { setTarget(value); setAcceptedPlan(null); };
-  const completedCallback = useRef(onCompleted);
-  useEffect(() => { completedCallback.current = onCompleted; }, [onCompleted]);
   const [operation, setOperation] = useState<RelocationOperation | null>(null);
   const [commitRun, setCommitRun] = useState<RunSnapshot | null>(null);
   const [run, setRun] = useState<RunSnapshot | null>(null);
@@ -136,31 +135,19 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
     return () => { active = false; };
   }, [id, status, kind, offset, detailsRetry]);
 
-  const operationID = operation?.id || plan?.operation_id;
-  const operationStatus = operation?.status;
-  useEffect(() => {
-    if (!operationID || (operationStatus && operationStatus !== 'pending' && operationStatus !== 'prepared' && operationStatus !== 'paths_committed')) return;
-    let active = true;
-    let timer: number | undefined;
-    const refresh = async () => {
-      try {
-        const { data } = await apiClient.get<RelocationOperation>(`/api/relocation-operations/${operationID}`);
-        if (!active) return;
-        setOperation(data);
-        if (data.status === 'pending' || data.status === 'prepared' || data.status === 'paths_committed') {
-          try {
-            const live = await apiClient.get<RunLive>('/api/system/tasks/live');
-            if (active) setCommitRun(live.data.runs?.find((item) => item.run_id === data.run_id) || null);
-          } catch { /* Persisted results remain available without live progress. */ }
-          if (active) timer = window.setTimeout(refresh, 1000);
-        }
-        else if (data.status === 'completed') completedCallback.current?.();
-      } catch { if (active) setError('relocation.operationLoadError'); }
-    };
-    void refresh();
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [operationID, operationStatus]);
-
+  useRelocationOperation({
+    libraryID: library.id,
+    operationID: operation?.id || plan?.operation_id,
+    status: operation?.status,
+    onOperation: (data) => { setOperation(data); return true; },
+    loadProgress: async (data) => {
+      const live = await apiClient.get<RunLive>('/api/system/tasks/live');
+      return live.data.runs?.find((item) => item.run_id === data.run_id) || null;
+    },
+    onProgress: setCommitRun,
+    onCompleted,
+    onError: () => setError('relocation.operationLoadError'),
+  });
   const commit = async () => {
     if (!plan || target !== plan.target_root || source !== plan.source_root) return;
     setSubmitting(true); setError('');

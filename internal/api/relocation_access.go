@@ -44,9 +44,7 @@ func (c *Controller) relocationCheckConflicts(ctx context.Context, plan Relocati
 				continue
 			}
 			for _, candidate := range []string{path, mapped} {
-				_, inside := relocation.MapPath(lib.Path, lib.Path, candidate)
-				_, contains := relocation.MapPath(candidate, candidate, lib.Path)
-				if inside == nil || contains == nil {
+				if relocationPathsIntersect(lib.Path, candidate) {
 					affected[lib.ID] = true
 				}
 			}
@@ -85,9 +83,7 @@ func (c *Controller) relocationCheckConflicts(ctx context.Context, plan Relocati
 func (c *Controller) relocationRootConflicts(path string) bool {
 	for _, roots := range c.relocationTopology.roots {
 		for _, root := range roots {
-			_, inside := relocation.MapPath(root, root, path)
-			_, contains := relocation.MapPath(path, path, root)
-			if inside == nil || contains == nil {
+			if relocationPathsIntersect(root, path) {
 				return true
 			}
 		}
@@ -144,9 +140,7 @@ func (c *Controller) acquireRelocationAccess(ctx context.Context, op RelocationO
 				continue
 			}
 			for _, candidate := range []string{detail.SourcePath, detail.TargetPath} {
-				_, inside := relocation.MapPath(lib.Path, lib.Path, candidate)
-				_, contains := relocation.MapPath(candidate, candidate, lib.Path)
-				if inside == nil || contains == nil {
+				if relocationPathsIntersect(lib.Path, candidate) {
 					affected[lib.ID] = true
 				}
 			}
@@ -180,4 +174,10 @@ func (c *Controller) acquireRelocationAccess(ctx context.Context, op RelocationO
 		delete(c.relocationTopology.roots, op.ID)
 		releaseAll()
 	}, nil
+}
+
+func relocationPathsIntersect(a, b string) bool {
+	_, inside := relocation.MapPath(a, a, b)
+	_, contains := relocation.MapPath(b, b, a)
+	return inside == nil || contains == nil
 }

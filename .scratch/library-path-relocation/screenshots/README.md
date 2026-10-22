@@ -13,3 +13,5 @@
 `policy-confirm.png` 和 `policy-completed.png` 对应 `0962f35` 源码的真实 HTTP 后端与 Vite 前端联调。临时演示资料库 3、系列 3 使用假账户和生成的 CBZ，从 `policy-source` 映射至 `policy-target`；预览展示一条外接机械盘显式策略的全部 IO 值，提交结果为完成。集成负责人另核对临时配置文件中的策略路径已为 `policy-target`。截图不涉及用户实际资料库；最终零策略磁盘事实修复的回归证据归 `validation-08.md`，这两张截图不作为该修复的运行证据。
 
 `restoration-rechecked.png`、`restoration-risk.png` 与 `restoration-completed.png` 使用 `ebd3f38` 的 Vite 前端和 `a1abc58` 编译的真实 HTTP 后端联调；这两个提交之间的 Go 源码相同。独立假资料库 2 的目标缺少第二卷，原自动设置为 interval / 60 / cbz。重查得到一个异常、零阻止项且保护继续保留；管理员选择 none / 60 / cbz，分别确认剩余异常可能造成后续记录和关联数据删除的风险以及主动解除保护，再得到持久完成结果。界面明确说明恢复不会立即扫描或清理。截图使用临时配置、假账户和生成的 CBZ，不涉及用户资料库；后续任务准入冲突与故障信息隐私修复的验证归 `validation-07.md`，不以这些截图证明其运行结果。
+
+`restoration-reopened.png` 使用 `6516c4e` 的真实 Vite 前端，读取 `a1abc58` 编译的既有 HTTP 后端中已完成的恢复操作。刷新并重新打开独立假资料库 2 的完成结果后，所选设置正确显示 none / 60 / cbz，控件锁定，没有再次发出 release 修改请求。本图证明最新前端对持久结果的准确回显；后端不包含最终共享监听修复，不能据此宣称覆盖该修复或新的事务边界，其运行证据见 `validation-final.md` 的真实 HTTP/fsnotify 与 race 门禁。演示使用独立临时 Vite 缓存和端口 18083，避开共享依赖缓存的开发预览哈希混用；产品 Vite 配置未改变。后续 `35fb65b` 仅保留切换资料库时的轮询清理生命周期，不改变该结果显示。截图使用临时配置、假账户和生成的 CBZ。

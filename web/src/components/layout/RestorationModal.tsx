@@ -3,6 +3,7 @@ import { apiClient, isAxiosError } from '../../api/client';
 import type { RelocationDetails, RelocationOperation, RelocationPlan, RelocationRestoration, RunLive, RunSnapshot } from '../../api/generated';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { ModalShell } from '../ui/ModalShell';
+import { useRelocationOperation } from './useRelocationOperation';
 import { modalGhostButtonClass, modalPrimaryButtonClass, modalSectionClass } from '../ui/modalStyles';
 
 interface Props {
@@ -90,26 +91,18 @@ export function RestorationModal({ library, planID, onClose, onCompleted }: Prop
     return () => { active = false; window.clearTimeout(timer); };
   }, [busy, checkID, library.id]);
 
-  const operationID = operation?.id || plan?.operation_id;
-  const operationStatus = operation?.status;
-  useEffect(() => {
-    if (!operationID || (operationStatus && !['pending', 'prepared', 'paths_committed'].includes(operationStatus))) return;
-    let active = true;
-    let timer: number | undefined;
-    const refresh = async () => {
-      try {
-        const { data } = await apiClient.get<RelocationOperation>(`/api/relocation-operations/${operationID}`);
-        if (!active) return;
-        if (data.purpose !== 'restoration' || data.library_id !== library.id) { setError('restoration.invalidCheck'); setStale(true); return; }
-        setOperation(data);
-        if (['pending', 'prepared', 'paths_committed'].includes(data.status)) timer = window.setTimeout(refresh, 1000);
-        else if (data.status === 'completed') completed.current?.();
-      } catch { if (active) setError('restoration.operationLoadError'); }
-    };
-    void refresh();
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [operationID, operationStatus, library.id]);
-
+  useRelocationOperation({
+    libraryID: library.id,
+    operationID: operation?.id || plan?.operation_id,
+    status: operation?.status,
+    onOperation: (data) => {
+      if (data.purpose !== 'restoration' || data.library_id !== library.id) { setError('restoration.invalidCheck'); setStale(true); return false; }
+      setOperation(data);
+      return true;
+    },
+    onCompleted,
+    onError: () => setError('restoration.operationLoadError'),
+  });
   const detailPlan = history ? facts?.accepted : plan;
   const detailID = detailPlan?.id;
   const detailStatus = detailPlan?.status;
@@ -199,9 +192,9 @@ export function RestorationModal({ library, planID, onClose, onCompleted }: Prop
       </section>}
       <fieldset className={`${modalSectionClass} space-y-3`} disabled={loading || busy || recovering || submitting || !facts?.protection || operation?.status === 'completed'}>
         <legend className="text-sm text-white">{t('restoration.selectedSettings')}</legend>
-        <label className="block text-sm">{t('restoration.scanMode')}<select className={control} value={mode} onChange={(event) => { setMode(event.target.value); resetConsent(); }}>{['none', 'interval', 'watch'].map((value) => <option key={value} value={value}>{t(`libraryForm.scanMode${value === 'watch' ? 'Watch' : value === 'interval' ? 'Interval' : 'None'}`)}</option>)}</select></label>
-        <label className="block text-sm">{t('restoration.scanInterval')}<input className={control} type="number" min="1" step="1" value={interval} onChange={(event) => { setInterval(Number(event.target.value)); resetConsent(); }} /></label>
-        <label className="block text-sm">{t('restoration.scanFormats')}<input className={control} value={formats} onChange={(event) => { setFormats(event.target.value); resetConsent(); }} /></label>
+        <label className="block text-sm">{t('restoration.scanMode')}<select className={control} value={operation?.scan_mode ?? mode} onChange={(event) => { setMode(event.target.value); resetConsent(); }}>{['none', 'interval', 'watch'].map((value) => <option key={value} value={value}>{t(`libraryForm.scanMode${value === 'watch' ? 'Watch' : value === 'interval' ? 'Interval' : 'None'}`)}</option>)}</select></label>
+        <label className="block text-sm">{t('restoration.scanInterval')}<input className={control} type="number" min="1" step="1" value={operation?.scan_interval ?? interval} onChange={(event) => { setInterval(Number(event.target.value)); resetConsent(); }} /></label>
+        <label className="block text-sm">{t('restoration.scanFormats')}<input className={control} value={operation ? operation.scan_formats ?? '' : formats} onChange={(event) => { setFormats(event.target.value); resetConsent(); }} /></label>
         {Boolean(plan?.anomaly_count) && <section className="space-y-3 rounded-lg border border-amber-700 p-3"><p className="text-sm text-amber-200">{t('restoration.lossConsequences')}</p><label className="flex gap-3 text-sm"><input type="checkbox" checked={lossRisk} onChange={(event) => setLossRisk(event.target.checked)} />{t('restoration.acceptLossRisk')}</label></section>}
         <label className="flex gap-3 text-sm"><input type="checkbox" disabled={!available} checked={consent} onChange={(event) => setConsent(event.target.checked)} />{t('restoration.confirm')}</label>
       </fieldset>
