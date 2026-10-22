@@ -136,6 +136,7 @@ export function RelocationModal({ library, planID, initialTarget, onCompleted, o
   }, [id, status, kind, offset, detailsRetry]);
 
   useRelocationOperation({
+    libraryID: library.id,
     operationID: operation?.id || plan?.operation_id,
     status: operation?.status,
     onOperation: (data) => { setOperation(data); return true; },

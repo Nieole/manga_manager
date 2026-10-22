@@ -92,6 +92,7 @@ export function RestorationModal({ library, planID, onClose, onCompleted }: Prop
   }, [busy, checkID, library.id]);
 
   useRelocationOperation({
+    libraryID: library.id,
     operationID: operation?.id || plan?.operation_id,
     status: operation?.status,
     onOperation: (data) => {

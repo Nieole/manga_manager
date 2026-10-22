@@ -3,6 +3,7 @@ import { apiClient } from '../../api/client';
 import type { RelocationOperation, RunSnapshot } from '../../api/generated';
 
 interface Options {
+  libraryID: number;
   operationID?: number;
   status?: string;
   onOperation: (operation: RelocationOperation) => boolean;
@@ -14,7 +15,7 @@ interface Options {
 
 const pending = (status: string) => ['pending', 'prepared', 'paths_committed'].includes(status);
 
-export function useRelocationOperation({ operationID, status, ...callbacks }: Options) {
+export function useRelocationOperation({ libraryID, operationID, status, ...callbacks }: Options) {
   const latest = useRef(callbacks);
   useEffect(() => { latest.current = callbacks; });
 
@@ -39,5 +40,5 @@ export function useRelocationOperation({ operationID, status, ...callbacks }: Op
     };
     void refresh();
     return () => { active = false; window.clearTimeout(timer); };
-  }, [operationID, status]);
+  }, [libraryID, operationID, status]);
 }
