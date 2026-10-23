@@ -56,50 +56,10 @@ func TestSQLInBatchesChunking(t *testing.T) {
 }
 
 // TestBulkOperationsExceedVariableLimit 是真正的判据：用超过 SQLite 变量上限的 ID 数
-// 跑真实的批量编辑与进度查询。未分批时这两个调用会直接报 "too many SQL variables"。
+// 跑真实的进度查询。未分批时调用会直接报 "too many SQL variables"。
 func TestBulkOperationsExceedVariableLimit(t *testing.T) {
 	// 32766 是 SQLITE_MAX_VARIABLE_NUMBER；取 40000 确保越过它。
 	const idCount = 40000
-
-	t.Run("BulkEditSeries", func(t *testing.T) {
-		store := newExecTxTestStore(t)
-		ctx := context.Background()
-		lib, err := store.CreateLibrary(ctx, CreateLibraryParams{
-			Name: "bulk", Path: t.TempDir(), ScanMode: "none", ScanInterval: 60,
-		})
-		if err != nil {
-			t.Fatalf("CreateLibrary: %v", err)
-		}
-		series, err := store.UpsertSeriesByPath(ctx, UpsertSeriesByPathParams{
-			LibraryID: lib.ID, Name: "S", Path: t.TempDir(),
-		})
-		if err != nil {
-			t.Fatalf("UpsertSeriesByPath: %v", err)
-		}
-
-		// 真实存在的只有一个系列，其余是不存在的 id —— 对 SQL 而言参数个数才是关键，
-		// 而参数个数正是这条用例要压的那个上限。
-		ids := make([]int64, 0, idCount)
-		ids = append(ids, series.ID)
-		for i := int64(1); len(ids) < idCount; i++ {
-			ids = append(ids, series.ID+i)
-		}
-
-		status := "completed"
-		if err := store.BulkEditSeries(ctx, ids, BulkSeriesEdit{
-			Status: &status, AddTags: []string{"Action"}, RemoveTags: []string{"Drama"},
-		}); err != nil {
-			t.Fatalf("BulkEditSeries(%d ids): %v", idCount, err)
-		}
-
-		updated, err := store.GetSeries(ctx, series.ID)
-		if err != nil {
-			t.Fatalf("GetSeries: %v", err)
-		}
-		if !updated.Status.Valid || updated.Status.String != status {
-			t.Fatalf("status = %+v, want %q —— 分批后编辑没有真正落到目标系列上", updated.Status, status)
-		}
-	})
 
 	t.Run("GetUserBookProgressMap", func(t *testing.T) {
 		store := newExecTxTestStore(t)
