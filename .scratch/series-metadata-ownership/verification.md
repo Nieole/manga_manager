@@ -107,7 +107,7 @@
 - 已验证并保留：扫描首建失败跳过书、已有元数据更新失败仍保留书、书事务失败回滚系列；批量提交后统计刷新失败不撤销成功内容。对应故障测试见 US 23、26、33。
 - 尚未独立复现的既有并发线索：`proposal.Service.Apply` 的部分应用分支没有终态 CAS；在事务外读取之后被并发拒绝时，可能仍写元数据并删字段。完整应用分支 CAS 的回滚有现有测试；本期未强化部分应用语义。
 - 原有入口间 dashboard cache、SSE、用户聚合和统计刷新安排不同。本期审查保留调用位置，未统一刷新策略；不声称覆盖所有生产缓存组合或进行了性能基准。
-- 路径迁移及持久化保护已有实际实现。本期没有修改其业务规则；既有 `TestRelocationCommitPreservesSeededMetadataAndUserAssociations`、`TestOldScanSnapshotCannotRunAfterRelocation`、`TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints` 由来源 tip 完整后端测试覆盖，最终分支仍需复验。ADR 0009 的“尚未实施”是该文档中的历史状态文字，不能据此判断当前功能不存在。
+- 路径迁移及持久化保护已有实际实现。本期没有修改其业务规则；既有 `TestRelocationCommitPreservesSeededMetadataAndUserAssociations`、`TestOldScanSnapshotCannotRunAfterRelocation`、`TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints` 由来源 tip 完整后端测试覆盖，最终集成复验亦已通过。ADR 0009 的“尚未实施”是该文档中的历史状态文字，不能据此判断当前功能不存在。
 
 ## 检查记录与最终门禁
 
@@ -116,4 +116,8 @@
 - 本票两项人工事务验收：`go test ./internal/api -run 'TestManualCompeting|TestManualStats' -count=1` 已通过；这补充了原有顺序 stale-save 测试的真实竞争和统计失败覆盖。
 - 本票来源聚焦运行 `go test ./internal/api ./internal/seriesmeta ./internal/proposal ./internal/scanner -run 'TestSeriesMetadataSources|TestGlobalTag|TestMetadataFingerprint|TestManual|TestSelection|TestBulk|TestEmptySelection|TestScan|TestProposal|TestApply|TestUpdateSeriesInfo' -count=1` 已通过。
 - 本票聚焦 `golangci-lint run --allow-parallel-runners ./internal/api/... ./internal/seriesmeta/... ./internal/proposal/... ./internal/scanner/...` 已通过，输出 `0 issues.`；`gofmt -l ./cmd ./internal` 空输出、`git diff --check` 通过。lint 使用工作树独立缓存。
-- 最终集成完整门禁、生成物复验、文档检查及双轴 code review 由集成负责人随后完成。在这些证据补齐前，05 及规格不宣称完成，最终状态保持待集成人确认。
+- 最终集成代码 `5ded495` 使用 Windows amd64、Go 1.26.10 复验：完整 `go test ./...` 通过（API 104.763s）；完整 `golangci-lint run --allow-parallel-runners` 输出 `0 issues.`；`gofmt -l ./cmd ./internal` 空输出；`go vet ./...`、服务端 `go build`、`scripts/check-doc-style.sh` 与 `git diff --check` 均通过。PowerShell `sqlc generate` exit 0，`go run ./cmd/tsgen` exit 0，数据库及前端生成物均无漂移。
+- 双轴审查以 `3e1764b` 为固定基线，审查到 `5ded495`：Standards 0 项，Spec 0 项；没有待修复审查项。68 条故事逐项唯一覆盖，引用的具体测试符号已核对存在。01–05 与规格在证据齐备后关闭。
+- 一次完整复验中，既有 `TestRelocationRepairLooseRootBooksAndVirtualSeries/true` 在测试准备的 `os.Rename` 收到 Windows `Access is denied`。未修改代码的完整复跑通过，该迁移测试独立连续 10 次通过；新增五个跨来源/指纹/人工事务验收也连续 10 次通过。没有将未知的目录占用原因归因于元数据重构，也未越界修改迁移行为。
+- 本机初始 Go 1.27 与固定 lint 的导出格式不兼容，最终门禁统一使用 CI 的 Go 1.26.10。部分工作树首次执行新测试二进制曾被 Windows Application Control 拦截，未修改代码重试后通过；这些运行失败没有计作通过证据。
+- 验证限制：未部署到真实用户数据库，未在 Linux/macOS 运行或执行 race 检查、独立性能基准。没有前端功能改动，未重跑前端门禁。生产运行、跨平台与性能结果不由本次本机测试推导。

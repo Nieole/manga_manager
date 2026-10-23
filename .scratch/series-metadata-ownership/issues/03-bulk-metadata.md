@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 人工编辑接入系列元数据 module。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** US 19–26、51、55–56、58–65、66–67。
 
@@ -21,7 +21,7 @@
 - [x] 元数据 interface 测试用真实临时 SQLite 覆盖 nil/空值、标签先加后删、缺失与重复 ID、大选区、跨块回滚及未涉及字段保留。
 - [x] 保留 HTTP 和调用流程测试验证整组选区原子性、响应分类及提交后刷新失败；延续 TestBulkOperationsExceedVariableLimit 的大选区保护，不用逐行循环绕过原问题。
 - [x] 删除旧 BulkEditSeries 高层入口、失去职责的高层输入类型和重复规则测试；保留数据库低层批量原语及仍有独立价值的分块测试。
-- [ ] 不改变数据库格式和外部请求响应。必要新增查询符合仓库生成约束，相关测试、生成产物检查和后端门禁通过。
+- [x] 不改变数据库格式和外部请求响应。必要新增查询符合仓库生成约束，相关测试、生成产物检查和后端门禁通过。
 - [x] 交付说明能指出批量编排的拥有者、实际验证的事务和规模行为，以及旧入口已退出；不声称做了未执行的性能测量。
 
 本票不依赖提案或扫描迁移。必须保留现有刷新失败语义；发现其他行为问题另行记录，不扩大本票范围。
@@ -32,4 +32,8 @@
 - Real SQLite module tests cover nil and raw empty scalar values, trimmed/blank tags, add-before-remove, missing/repeated IDs, unchanged title/summary/language/locks, no provenance, empty selection, 40,000-ID operations and a trigger failure in the last SQL chunk rolling back both earlier associations and all scalars/tag creation. The former database bulk-rule tests and 40,000-ID case move to this public module seam; independent SQL chunker/progress tests remain.
 - HTTP tests cover malformed/empty requests, unchanged updated counts including repeated/missing IDs, write failure rollback, successful derived-cache refresh, and refresh failure retaining committed metadata and the success response.
 - Focused module/database/API tests passed. `gofmt -l ./cmd ./internal` returned no output; scoped `golangci-lint run --allow-parallel-runners ./internal/seriesmeta/... ./internal/database/... ./internal/api/...` returned `0 issues.`. One newly compiled API test execution was transiently blocked by Windows Application Control; the unchanged retry passed.
-- Integration-wide backend gates and final review remain pending on the integration branch. No schema, sqlc source or external request/response contract changed; no performance measurement was made.
+- Integration-wide backend gates and final review passed on the integration branch. No schema, sqlc source or external request/response contract changed; no performance measurement was made.
+
+## Comments
+
+- 2026-10-23：已集成并提交；最终后端门禁、生成物复验及双轴审查完成。完整证据与限制见 [验收记录](../verification.md)。

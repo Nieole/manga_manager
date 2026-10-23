@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 人工编辑接入系列元数据 module。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** US 38–50、54、57–64、66–67。
 
@@ -24,7 +24,7 @@
 - [x] 已有提案查询归属守卫继续有效；入站 adapter 不绕过提案 module 直接处理提案表，共同元数据 module 也不取得提案关单能力。
 - [x] 删除被替代的提案字段写入实现及重复规则测试，保留仍有裁决或事务验证价值的测试；不保留第二套可独立演进的 writer。
 - [x] 不新增统一缓存失效、用户聚合刷新、来源记录或公开契约变化；既有刷新与错误传播保持。
-- [ ] 相关测试及仓库后端门禁通过；交付记录说明实际验证结果。发现提案部分应用并发等疑点时单独记录，不在本票修复。
+- [x] 相关测试及仓库后端门禁通过；交付记录说明实际验证结果。发现提案部分应用并发等疑点时单独记录，不在本票修复。
 
 本票不依赖批量编辑或扫描接入。扩展共同契约时保持人工流程兼容，不以同一文件可能发生编辑冲突增加业务阻塞关系。
 
@@ -36,4 +36,8 @@
 - Removed the original proposal writer. Writer compatibility tests now exercise the public seriesmeta interface in real SQLite transactions; the proposal high-level collection replacement, locked/partial application, provenance, CAS-preemption and rollback tests remain.
 - TDD tracer: `TestProposalDistinguishesAbsentAndEmptyCollections` first failed to compile against missing `ApplyProposal` / `ProposalInput`, then passed through the new source interface. Module tests also cover scalar preservation/status normalization, language/locks, initials, deduplication/author roles, source formatting/review linkage and Bangumi-only links.
 - Passed: `go test ./internal/seriesmeta ./internal/proposal -count=1`; `go test ./internal/api -run 'Test.*(MetadataReview|ScrapedMetadata|ApplyReports|ApplyFillEmpty|SingleApply|BulkApply|APIDoesNotQueryProposalTables)' -count=1`; `gofmt -l ./cmd ./internal` (empty); `git diff --check`; focused `golangci-lint run --allow-parallel-runners ./internal/seriesmeta/... ./internal/proposal/...` (`0 issues.`).
-- Full repository backend test/lint gates remain for final integration validation, so the final gate checkbox and ticket closure remain pending. No SQL/schema or public HTTP contract changes; no unrelated concurrency behavior changed.
+- Full repository backend test/lint gates and final review passed on the integration branch. No SQL/schema or public HTTP contract changes; no unrelated concurrency behavior changed.
+
+## Comments
+
+- 2026-10-23：已集成并提交；最终后端门禁、生成物复验及双轴审查完成。完整证据与限制见 [验收记录](../verification.md)。

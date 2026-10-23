@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** US 1–7、9–18、50、54–55、57–59、61–62、64–65、67–68。
 
@@ -22,7 +22,7 @@
 - [x] 保留人工入口的请求兼容、并发版本竞争、关联写入失败回滚和响应测试；可沿用 TestUpdateSeriesInfoConcurrentEditConflict 及系列元数据原子性测试。
 - [x] 删除人工入口中被替代的逐字段规则、重复版本实现及失去价值的规则测试；保留仍验证 HTTP 与事务接线的高层测试。
 - [x] 其余三条来源可暂时保留原实现，既有流程仍可验证通过；不要求提前迁移，不修改现有外部契约或数据库格式。
-- [ ] 相关测试及仓库后端门禁通过；如调整生成查询，按仓库要求生成并验证产物。交付说明区分实际通过的检查与尚未执行的检查，不声称首期必须净减代码行数。
+- [x] 相关测试及仓库后端门禁通过；如调整生成查询，按仓库要求生成并验证产物。交付说明区分实际通过的检查与尚未执行的检查，不声称首期必须净减代码行数。
 
 本票是首个真实来源的贯通，不是整个规格完成。保持所有既有行为；旁支疑点单独记录，不借迁移修复。
 
@@ -33,4 +33,8 @@
 - Existing API field replacement and fingerprint implementation were removed. Existing HTTP conflict, race, response and atomicity tests remain because they verify integration.
 - TDD tracer: new public-interface manual integration test initially failed because seriesmeta did not exist, then passed with implementation. Real SQLite tests cover raw persisted values, nil and explicit empty collections, locks, initials, conflicts, and association-trigger failures rolling back the original metadata version.
 - Passed: `go test ./internal/seriesmeta ./internal/api -run 'TestManual|TestUpdateSeriesInfo|TestSeriesMetadata' -count=1`, `gofmt -l ./cmd ./internal` (empty), `git diff --check`.
-- Full backend suite and final lint gate are reserved for integration validation; ticket stays ready-for-agent until all gate criteria pass.
+- Full backend suite and final lint gates passed on the integration branch; see the verification record.
+
+## Comments
+
+- 2026-10-23：已集成并提交；最终后端门禁、生成物复验及双轴审查完成。完整证据与限制见 [验收记录](../verification.md)。

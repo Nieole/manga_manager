@@ -1,6 +1,8 @@
 # Spec: 系列元数据规则归属
 
-Status: ready-for-agent
+Status: done
+
+Implementation verification: [验收记录](verification.md)
 
 ## Problem Statement
 
@@ -177,7 +179,7 @@ Status: ready-for-agent
 - 大选区可沿用 TestBulkOperationsExceedVariableLimit，确保实现没有用逐行循环绕过原问题。
 - 新 module 测试替代旧的重复字段规则测试；不删除仍验证事务、HTTP 或扫描接线的测试，也不以测试数变化作为完成标准。
 - 实施后运行仓库要求的后端测试、gofmt 检查和 golangci-lint。若修改 sqlc 查询或 schema，按仓库要求在 PowerShell 生成绑定并检查漂移；本期不计划 schema 迁移或对外生成契约变化。
-- 本次产物只有规格；没有将代码测试通过、运行时完成或性能改善作为已经取得的结果。
+- 规格定义验收边界；实际实现、检查结果及限制见 verification.md，不以规格状态替代运行证据。
 
 ## Out of Scope
 

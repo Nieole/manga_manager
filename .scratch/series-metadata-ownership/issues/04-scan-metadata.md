@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 人工编辑接入系列元数据 module。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** US 27–37、49–51、53、58–65、66–67。
 
@@ -24,7 +24,7 @@
 - [x] 保留原扫描高层测试验证身份与书同批写入、人工标题保留、缓存时机、增量扫描、取消收尾和派生统计；延续 TestScanLibraryDeferredRefreshPopulatesStats 的验证价值。
 - [x] 验证失败和取消后的最终事实，不用私有 helper 调用次数或脆弱耗时阈值代替行为断言；不添加只镜像 implementation 的测试。
 - [x] 删除失去职责的旧元数据投影、锁处理副本和重复规则测试；保留扫描仍需的身份、批次与跨流程规则，不为形式上的唯一入口删除合法底层查询。
-- [ ] 相关测试与后端门禁通过，现有对外契约与数据库格式不变。扫描集合锁、错误容忍或空值处理的疑点单独记录，不在本票修复。
+- [x] 相关测试与后端门禁通过，现有对外契约与数据库格式不变。扫描集合锁、错误容忍或空值处理的疑点单独记录，不在本票修复。
 
 本票不依赖提案或批量编辑迁移。扫描的特殊 seam 是范围内元数据准备与原身份 upsert 的组合，不公开 continuation、持久化变更集或通用修改协议。
 
@@ -35,5 +35,9 @@
 - Removed scanner scalar projection and lock parser duplicates. Existing high-level title/default-lock and deferred statistics tests remain as integration checks. The cancellation test now requires the committed six books and refreshed series count/stats row, without a conditional skip.
 - Public-source interface TDD first failed on missing scan entries and then passed. Real SQLite tests cover source defaults, locked scalar retention, unlocked empty clearing/status, title fallback/initial, metadata-only composition, append despite collection locks and a failed tag insert. Scanner trigger tests verify initial create failure, tolerated update failure and a book-trigger transaction rollback using final committed rows.
 - Passed: `go test ./internal/seriesmeta ./internal/scanner` (scanner 47.317s); latest `go test ./internal/seriesmeta -run TestScan -count=1`; scoped `golangci-lint run --allow-parallel-runners ./internal/seriesmeta/... ./internal/scanner/...` (`0 issues.`); `gofmt -l ./cmd ./internal` (empty); `git diff --check`.
-- Some repeated test invocations were blocked by Windows Application Control when launching temporary test executables; successful package runs above verified the implementation. Full backend and integration lint gate remain pending, so the final checklist and ticket status remain open.
+- Some repeated test invocations were blocked by Windows Application Control when launching temporary test executables; successful package runs above verified the implementation. Full backend and integration lint gates passed; final evidence is in the verification record.
 - Compatibility observations retained: scan collection append ignores collection locks and individual errors; unlocked empty ComicInfo scalars clear, and scan status is empty. These are preserved semantics, not fixes in this ticket.
+
+## Comments
+
+- 2026-10-23：已集成并提交；最终后端门禁、生成物复验及双轴审查完成。完整证据与限制见 [验收记录](../verification.md)。
