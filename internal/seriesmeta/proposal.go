@@ -1,9 +1,4 @@
-// 本文件是元数据写入器：把一份已裁决的元数据写进系列，并留下来源沿革。
-//
-// 它没有自己的事务——调用方在哪一次事务里调它，写入就落在那一次事务里。「写元数据」与
-// 「关单」因此天然是同一次事务的两段，不必再把事务句柄递给外人。
-
-package proposal
+package seriesmeta
 
 import (
 	"context"
@@ -16,12 +11,31 @@ import (
 	"manga-manager/internal/metadata"
 )
 
-// applyOptions 是一次写入的来源信息，落进 series_metadata_provenance 的各列。
-type applyOptions struct {
+// ProposalQueries is the transaction-bound persistence for adjudicated proposal metadata.
+// It excludes proposal lifecycle queries; database.Queries satisfies it directly.
+type ProposalQueries interface {
+	UpdateSeriesMetadata(context.Context, database.UpdateSeriesMetadataParams) (database.Series, error)
+	UpsertSeriesMetadataProvenance(context.Context, database.UpsertSeriesMetadataProvenanceParams) (database.SeriesMetadataProvenance, error)
+	ClearSeriesTags(context.Context, int64) error
+	UpsertTag(context.Context, string) (database.Tag, error)
+	LinkSeriesTag(context.Context, database.LinkSeriesTagParams) error
+	ClearSeriesAuthors(context.Context, int64) error
+	UpsertAuthor(context.Context, database.UpsertAuthorParams) (database.Author, error)
+	LinkSeriesAuthor(context.Context, database.LinkSeriesAuthorParams) error
+	GetLinksForSeries(context.Context, int64) ([]database.SeriesLink, error)
+	LinkSeriesLink(context.Context, database.LinkSeriesLinkParams) (database.SeriesLink, error)
+	RefreshSeriesStats(context.Context, int64) error
+}
+
+var _ ProposalQueries = (*database.Queries)(nil)
+
+// ProposalInput carries selected fields and effective source information after adjudication.
+// Confidence defaults are resolved by the proposal module before calling ApplyProposal.
+type ProposalInput struct {
 	ProviderName string
 	SourceURL    string
 	Confidence   float64
-	// ProposalID 把这次写入挂到发起它的提案上，构成审计链。人工编辑那条路径没有提案，留空。
+	// ProposalID links provenance to the originating proposal.
 	ProposalID *int64
 	// WrittenFields 是本次写入负责的字段名。tags 与 authors 是整体替换的集合，只有列在
 	// 这里时才清空重建：把「本次没在写它」当成「提案说它是空的」，一次只补空的部分应用
@@ -29,21 +43,20 @@ type applyOptions struct {
 	WrittenFields map[string]bool
 }
 
-// applyMetadata 把 result 写进 series，跳过 series 上已锁定的字段。
-//
-// 标量字段按「非空即覆盖」写，tags 与 authors 则是整体替换：写完之后系列上的这两个集合
-// 等于提案值，提案里没有的标签与署名错误的作者随之消失。只补不删的话，「去掉某个标签」
-// 这类建议永远不生效，而系列的当前值也永远追不上提案值，同一条提案会被反复生成。
-//
-// 锁在这里再判一次是有意为之：调用方筛过的是**提案字段行**，而 result 可以来自任何地方，
-// 写入器不该指望上游一定筛干净——被外部源悄悄抹掉用户手工改过的值是这一条防线的对象。
-func applyMetadata(ctx context.Context, q Queries, series database.Series, result *metadata.SeriesMetadata, opts applyOptions) error {
-	locked := lockedFieldSet(series)
+// ApplyProposal writes already selected metadata using the caller's existing snapshot.
+// Nonempty scalars overwrite unlocked fields; only selected collections are replaced.
+// The caller owns the transaction, including provenance, stats and proposal resolution.
+func ApplyProposal(ctx context.Context, q ProposalQueries, series database.Series, result *metadata.SeriesMetadata, opts ProposalInput) error {
+	locked := make(map[string]bool)
+	if series.LockedFields.Valid {
+		for _, field := range strings.Split(series.LockedFields.String, ",") {
+			if field = strings.TrimSpace(field); field != "" {
+				locked[field] = true
+			}
+		}
+	}
 	providerName := strings.TrimSpace(opts.ProviderName)
 	confidence := opts.Confidence
-	if confidence <= 0 {
-		confidence = defaultConfidence(opts.ProviderName)
-	}
 	proposalID := sql.NullInt64{}
 	if opts.ProposalID != nil {
 		proposalID = sql.NullInt64{Int64: *opts.ProposalID, Valid: true}
@@ -176,7 +189,11 @@ func applyMetadata(ctx context.Context, q Queries, series database.Series, resul
 			if err := q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: series.ID, AuthorID: inserted.ID}); err != nil {
 				return err
 			}
-			authorEntries = append(authorEntries, authorEntryString(name, role))
+			entry := name
+			if role != "" {
+				entry += " (" + role + ")"
+			}
+			authorEntries = append(authorEntries, entry)
 		}
 	}
 	if len(authorEntries) > 0 {

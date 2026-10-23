@@ -13,6 +13,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/seriesmeta"
 )
 
 // ApplyMode 决定一条提案里哪些字段参与本次应用。
@@ -152,11 +153,15 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 	}
 	partial := len(out.Remaining) > 0
 
+	confidence := proposal.Confidence
+	if confidence <= 0 {
+		confidence = defaultConfidence(proposal.Provider)
+	}
 	err = s.db.ExecTx(ctx, func(q Queries) error {
-		if err := applyMetadata(ctx, q, series, metadataFromFields(proposal, applicable), applyOptions{
+		if err := seriesmeta.ApplyProposal(ctx, q, series, metadataFromFields(proposal, applicable), seriesmeta.ProposalInput{
 			ProviderName: proposal.Provider,
 			SourceURL:    proposal.SourceUrl,
-			Confidence:   proposal.Confidence,
+			Confidence:   confidence,
 			ProposalID:   &proposal.ID,
 			// 交出的是本次真正参与写入的字段名：写入器据此判断该不该整体替换 tags/authors，
 			// 「本次没在写它」与「提案说它是空的」因此不会被混为一谈。

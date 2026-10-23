@@ -7,5 +7,6 @@
 // error 只留给故障。被抢先无论是前置检查发现的还是事务内 CAS 撞上的，都是同一个分类。
 //
 // 边界：HTTP 路由与编解码、字段标签与面向用户的提示文案属于 internal/api，SQL 属于
-// internal/database，本包内部只认字段名。AI 分组产出的合集成员建议不是提案，不在本包内。
+// internal/database，已裁决的系列字段写入属于 internal/seriesmeta。本包内部只认字段名。
+// AI 分组产出的合集成员建议不是提案，不在本包内。
 package proposal
