@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/seriesmeta"
 )
 
 // Queries 是提案裁决在一次事务内要用到的查询集合。生产上 *database.Queries 天然满足它，
@@ -29,18 +30,7 @@ type Queries interface {
 	DeleteMetadataReviewField(ctx context.Context, arg database.DeleteMetadataReviewFieldParams) error
 	ResolvePendingMetadataReview(ctx context.Context, arg database.ResolvePendingMetadataReviewParams) (int64, error)
 
-	// 应用一条提案时对系列的写入
-	UpdateSeriesMetadata(ctx context.Context, arg database.UpdateSeriesMetadataParams) (database.Series, error)
-	UpsertSeriesMetadataProvenance(ctx context.Context, arg database.UpsertSeriesMetadataProvenanceParams) (database.SeriesMetadataProvenance, error)
-	ClearSeriesTags(ctx context.Context, seriesID int64) error
-	UpsertTag(ctx context.Context, name string) (database.Tag, error)
-	LinkSeriesTag(ctx context.Context, arg database.LinkSeriesTagParams) error
-	ClearSeriesAuthors(ctx context.Context, seriesID int64) error
-	UpsertAuthor(ctx context.Context, arg database.UpsertAuthorParams) (database.Author, error)
-	LinkSeriesAuthor(ctx context.Context, arg database.LinkSeriesAuthorParams) error
-	GetLinksForSeries(ctx context.Context, seriesID int64) ([]database.SeriesLink, error)
-	LinkSeriesLink(ctx context.Context, arg database.LinkSeriesLinkParams) (database.SeriesLink, error)
-	RefreshSeriesStats(ctx context.Context, id int64) error
+	seriesmeta.ProposalQueries
 }
 
 // Database 是本包可用的数据库能力：事务外只列读路径要用的那些、裁决前要加载的那几样，
