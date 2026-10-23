@@ -56,7 +56,6 @@ type Store interface {
 	ListProtocolSeriesByIDs(ctx context.Context, ids []int64) ([]ProtocolSeriesRow, error)
 	SearchTags(ctx context.Context, query string, limit int) ([]Tag, error)
 	SearchAuthors(ctx context.Context, query string, limit int) ([]Author, error)
-	BulkEditSeries(ctx context.Context, seriesIDs []int64, edit BulkSeriesEdit) error
 	RenameTag(ctx context.Context, tagID int64, newName string) error
 	MergeTags(ctx context.Context, sourceID, targetID int64) error
 	DeleteTag(ctx context.Context, tagID int64) error
@@ -462,15 +461,6 @@ func (s *SqlStore) DeleteTag(ctx context.Context, tagID int64) error {
 	return nil
 }
 
-// BulkSeriesEdit 描述对一批系列的增量元数据编辑；nil / 空表示该维度不改。
-// 与 updateSeriesInfo 的“全量替换”不同，这里 AddTags/RemoveTags 是增量语义，适合多选批量。
-type BulkSeriesEdit struct {
-	AddTags    []string
-	RemoveTags []string
-	Status     *string
-	Publisher  *string
-}
-
 // sqlInBatchSize 是 IN (...) 展开的单批 ID 数上限。
 //
 // 硬约束是 SQLite 的 SQLITE_MAX_VARIABLE_NUMBER（32766）：超过就直接报
@@ -503,92 +493,6 @@ func sqlInClause(ids []int64) (string, []interface{}) {
 		args[i] = id
 	}
 	return strings.Join(placeholders, ","), args
-}
-
-// BulkEditSeries 在单个事务内对选中系列做增量元数据编辑，随后刷新受影响系列的派生统计。
-func (s *SqlStore) BulkEditSeries(ctx context.Context, seriesIDs []int64, edit BulkSeriesEdit) error {
-	if len(seriesIDs) == 0 {
-		return nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }() // Commit 之后的 Rollback 返回 ErrTxDone，无害
-
-	q := s.Queries.WithTx(tx)
-
-	// 以下三处都按 sqlInBatchSize 分批展开 IN (...)：整个 BulkEditSeries 仍在同一个事务里，
-	// 所以分批只影响语句条数，不影响原子性——用户选中上万个系列时，要么全成要么全不成，这一点没变。
-	if edit.Status != nil {
-		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
-			args := append([]interface{}{*edit.Status}, inArgs...)
-			_, execErr := tx.ExecContext(ctx, `UPDATE series SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+placeholders+`)`, args...)
-			return execErr
-		}); err != nil {
-			return err
-		}
-	}
-	if edit.Publisher != nil {
-		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
-			args := append([]interface{}{*edit.Publisher}, inArgs...)
-			_, execErr := tx.ExecContext(ctx, `UPDATE series SET publisher = ?, updated_at = CURRENT_TIMESTAMP WHERE id IN (`+placeholders+`)`, args...)
-			return execErr
-		}); err != nil {
-			return err
-		}
-	}
-
-	for _, name := range edit.AddTags {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		tag, err := q.UpsertTag(ctx, name)
-		if err != nil {
-			return err
-		}
-		// 一条语句挂一批，而不是每个系列一条：选中数万个系列时后者就是数万条 INSERT。
-		// 用 SELECT id FROM series WHERE id IN (...) 取代直接 VALUES，顺带把选区里
-		// 已不存在的系列 id 挡在外面——否则外键约束会让整个批量编辑失败。
-		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
-			args := append([]interface{}{tag.ID}, inArgs...)
-			_, execErr := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO series_tags (series_id, tag_id) SELECT id, ? FROM series WHERE id IN (`+placeholders+`)`,
-				args...)
-			return execErr
-		}); err != nil {
-			return err
-		}
-	}
-
-	for _, name := range edit.RemoveTags {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if err := sqlInBatches(seriesIDs, func(placeholders string, inArgs []interface{}) error {
-			args := append(append([]interface{}{}, inArgs...), name)
-			_, execErr := tx.ExecContext(ctx,
-				`DELETE FROM series_tags WHERE series_id IN (`+placeholders+`) AND tag_id IN (SELECT id FROM tags WHERE name = ?)`,
-				args...)
-			return execErr
-		}); err != nil {
-			return err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	// 刷新派生统计（tag_names_cache / author_names_cache 等）；单个失败不影响整体。
-	for _, sid := range seriesIDs {
-		if err := s.RefreshSeriesStats(ctx, sid); err != nil {
-			slog.Warn("refresh series stats after bulk edit failed", "series_id", sid, "error", err)
-		}
-	}
-	return nil
 }
 
 // GetReadingListItemProgress 返回某阅读清单各系列的进度。userID>0 时取该用户的 user_series_progress，

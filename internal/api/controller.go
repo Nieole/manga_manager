@@ -29,6 +29,7 @@ import (
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
+	"manga-manager/internal/seriesmeta"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/task"
 	"manga-manager/internal/taskcontrol"
@@ -1170,16 +1171,24 @@ func (c *Controller) bulkEditSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := c.store.BulkEditSeries(r.Context(), req.SeriesIDs, database.BulkSeriesEdit{
-		AddTags:    req.AddTags,
-		RemoveTags: req.RemoveTags,
-		Status:     req.Status,
-		Publisher:  req.Publisher,
+	err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
+		return seriesmeta.EditSelection(r.Context(), q, req.SeriesIDs, seriesmeta.SelectionInput{
+			AddTags:    req.AddTags,
+			RemoveTags: req.RemoveTags,
+			Status:     req.Status,
+			Publisher:  req.Publisher,
+		})
 	})
 	if err != nil {
 		slog.Error("Failed to bulk edit series", "count", len(req.SeriesIDs), "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to bulk edit series")
 		return
+	}
+
+	for _, id := range req.SeriesIDs {
+		if err := c.store.RefreshSeriesStats(r.Context(), id); err != nil {
+			slog.Warn("refresh series stats after bulk edit failed", "series_id", id, "error", err)
+		}
 	}
 
 	c.invalidateDashboardStatsCache("bulk_edit")
