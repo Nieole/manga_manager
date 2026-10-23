@@ -1,14 +1,9 @@
-/**
- * @vitest-environment jsdom
- *
- * 本文件是业务回归测试，覆盖全站 SSE 订阅的自动重连。
- * 锁住的性质是：EventSource 进入 CLOSED（服务端返回非 2xx，如会话过期的 401 或反代 502）
- * 之后必须由我们接管重连，否则全站实时刷新与任务进度气泡会静默死亡直到用户手动刷页。
- */
+/** @vitest-environment jsdom */
+// 浏览器放弃重连后恢复订阅，并保证卸载释放连接与重试。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useServerEvents } from './useServerEvents';
+import { useEventStream } from './useEventStream';
 
 // FakeEventSource 复刻我们依赖的那一小块 EventSource 契约，并暴露触发钩子供测试驱动。
 class FakeEventSource {
@@ -47,7 +42,7 @@ class FakeEventSource {
   }
 }
 
-describe('useServerEvents', () => {
+describe('useEventStream', () => {
   beforeEach(() => {
     FakeEventSource.instances = [];
     vi.stubGlobal('EventSource', FakeEventSource);
@@ -61,7 +56,7 @@ describe('useServerEvents', () => {
 
   it('delivers messages to the handler', () => {
     const onMessage = vi.fn();
-    renderHook(() => useServerEvents('/api/events', { onMessage }));
+    renderHook(() => useEventStream('/api/events', { onMessage }));
 
     act(() => {
       FakeEventSource.instances[0].onmessage?.({ data: 'refresh' });
@@ -71,7 +66,7 @@ describe('useServerEvents', () => {
   });
 
   it('reconnects with backoff after the browser gives up (readyState CLOSED)', () => {
-    renderHook(() => useServerEvents('/api/events', { onMessage: vi.fn() }));
+    renderHook(() => useEventStream('/api/events', { onMessage: vi.fn() }));
     expect(FakeEventSource.instances).toHaveLength(1);
 
     act(() => {
@@ -101,7 +96,7 @@ describe('useServerEvents', () => {
   });
 
   it('does not interfere while the browser is retrying on its own', () => {
-    renderHook(() => useServerEvents('/api/events', { onMessage: vi.fn() }));
+    renderHook(() => useEventStream('/api/events', { onMessage: vi.fn() }));
 
     act(() => {
       FakeEventSource.instances[0].failTransiently();
@@ -114,7 +109,7 @@ describe('useServerEvents', () => {
   });
 
   it('resets the backoff after a successful reconnect', () => {
-    renderHook(() => useServerEvents('/api/events', { onMessage: vi.fn() }));
+    renderHook(() => useEventStream('/api/events', { onMessage: vi.fn() }));
 
     act(() => {
       FakeEventSource.instances[0].failFatally();
@@ -132,7 +127,7 @@ describe('useServerEvents', () => {
   });
 
   it('closes the connection and cancels pending retries on unmount', () => {
-    const { unmount } = renderHook(() => useServerEvents('/api/events', { onMessage: vi.fn() }));
+    const { unmount } = renderHook(() => useEventStream('/api/events', { onMessage: vi.fn() }));
     const first = FakeEventSource.instances[0];
 
     act(() => {
