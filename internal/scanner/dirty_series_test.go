@@ -129,14 +129,25 @@ func TestScanDrainsDirtySeriesAfterCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSeriesByLibraryLite: %v", err)
 	}
-	if len(seriesList) == 0 {
-		t.Skip("取消得太早，没有系列入库，用例前提不成立")
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatal("batch callback did not cancel the scan")
 	}
-	// 已经写进去的书必须被统计到：BookCount 为 0 说明收尾刷新被取消的 ctx 打掉了。
-	if got := seriesList[0].BookCount; got == 0 {
-		books, _ := store.ListBooksByLibrary(context.Background(), lib.ID)
-		if len(books) > 0 {
-			t.Fatalf("库里已有 %d 本书，但 series.book_count 仍是 0 —— 取消后的收尾刷新没有执行", len(books))
-		}
+	books, err := store.ListBooksByLibrary(context.Background(), lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seriesList) != 1 || len(books) != 6 {
+		t.Fatalf("expected committed series and six books before cancellation; series=%d books=%d", len(seriesList), len(books))
+	}
+	series := seriesList[0]
+	if series.BookCount != 6 {
+		t.Fatalf("cancelled scan left stale count: %+v", series)
+	}
+	var statsCount int64
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM series_stats WHERE series_id = ?`, series.ID).Scan(&statsCount); err != nil {
+		t.Fatal(err)
+	}
+	if statsCount != 1 {
+		t.Fatalf("cancelled scan left stale read model: %d", statsCount)
 	}
 }

@@ -8,22 +8,32 @@
 
 **规格覆盖：** US 27–37、49–51、53、58–65、66–67。
 
-- [ ] 扫描首建和已有系列更新实际接入来源明确的元数据准备与关联追加入口，删除扫描中被替代的逐字段规则；不是只增加尚未接线的 helper。
-- [ ] 扫描准备结果只控制本期元数据列和标题关联的首字母，不能覆盖资料库归属、系列身份、name/path、计数、书记录或封面。
-- [ ] 首建保留目录名作为默认标题、默认锁定 title 的行为；扫描仍创建系列实体，元数据 module 不另开事务或先创建空系列。
-- [ ] 已有系列保留当前标题、缺失标题兜底、字段锁解析和标量处理，首字母跟随实际写入或保留的标题。
-- [ ] 保留 ComicInfo 当前字段取值、空标量及状态行为，不顺便统一为提案的非空覆盖或人工的清空策略。
-- [ ] 标签和作者按当前规则追加，保留集合字段锁的现有差异，不整体替换关联，不新增 provenance。
-- [ ] 使用扫描原有系列与锁缓存快照，保留首建后及更新时的缓存更新时机，不为规则内聚额外重新读取最新系列。
-- [ ] 元数据与系列身份及书记录继续参与原有书批次事务；保留现有单次系列 upsert 组合写入方式，不增加元数据独立提交窗口。
-- [ ] 首建失败对该书入库的影响保持；已有系列更新与关联写入错误保留当前容忍方式，不强行统一为整批事务失败。
-- [ ] 书的指纹、改名重连、阅读记录、封面批次与资料库保护规则不被本次元数据迁移改变。
-- [ ] 派生数据继续按原有节流与扫描收尾刷新，不改成逐书或每批全量重算；series 计数、series_stats 与已有用户聚合仍得到原有更新。
-- [ ] 保留取消时的刷新收尾、超时预算、原有扫描回调、统计缓存失效与完成时预热，不另造统一事件机制。
-- [ ] interface 测试覆盖首建与更新、元数据输出范围、锁与空值差异、标签作者追加及错误行为；使用真实临时 SQLite 验证最终关联。
-- [ ] 保留原扫描高层测试验证身份与书同批写入、人工标题保留、缓存时机、增量扫描、取消收尾和派生统计；延续 TestScanLibraryDeferredRefreshPopulatesStats 的验证价值。
-- [ ] 验证失败和取消后的最终事实，不用私有 helper 调用次数或脆弱耗时阈值代替行为断言；不添加只镜像 implementation 的测试。
-- [ ] 删除失去职责的旧元数据投影、锁处理副本和重复规则测试；保留扫描仍需的身份、批次与跨流程规则，不为形式上的唯一入口删除合法底层查询。
+- [x] 扫描首建和已有系列更新实际接入来源明确的元数据准备与关联追加入口，删除扫描中被替代的逐字段规则；不是只增加尚未接线的 helper。
+- [x] 扫描准备结果只控制本期元数据列和标题关联的首字母，不能覆盖资料库归属、系列身份、name/path、计数、书记录或封面。
+- [x] 首建保留目录名作为默认标题、默认锁定 title 的行为；扫描仍创建系列实体，元数据 module 不另开事务或先创建空系列。
+- [x] 已有系列保留当前标题、缺失标题兜底、字段锁解析和标量处理，首字母跟随实际写入或保留的标题。
+- [x] 保留 ComicInfo 当前字段取值、空标量及状态行为，不顺便统一为提案的非空覆盖或人工的清空策略。
+- [x] 标签和作者按当前规则追加，保留集合字段锁的现有差异，不整体替换关联，不新增 provenance。
+- [x] 使用扫描原有系列与锁缓存快照，保留首建后及更新时的缓存更新时机，不为规则内聚额外重新读取最新系列。
+- [x] 元数据与系列身份及书记录继续参与原有书批次事务；保留现有单次系列 upsert 组合写入方式，不增加元数据独立提交窗口。
+- [x] 首建失败对该书入库的影响保持；已有系列更新与关联写入错误保留当前容忍方式，不强行统一为整批事务失败。
+- [x] 书的指纹、改名重连、阅读记录、封面批次与资料库保护规则不被本次元数据迁移改变。
+- [x] 派生数据继续按原有节流与扫描收尾刷新，不改成逐书或每批全量重算；series 计数、series_stats 与已有用户聚合仍得到原有更新。
+- [x] 保留取消时的刷新收尾、超时预算、原有扫描回调、统计缓存失效与完成时预热，不另造统一事件机制。
+- [x] interface 测试覆盖首建与更新、元数据输出范围、锁与空值差异、标签作者追加及错误行为；使用真实临时 SQLite 验证最终关联。
+- [x] 保留原扫描高层测试验证身份与书同批写入、人工标题保留、缓存时机、增量扫描、取消收尾和派生统计；延续 TestScanLibraryDeferredRefreshPopulatesStats 的验证价值。
+- [x] 验证失败和取消后的最终事实，不用私有 helper 调用次数或脆弱耗时阈值代替行为断言；不添加只镜像 implementation 的测试。
+- [x] 删除失去职责的旧元数据投影、锁处理副本和重复规则测试；保留扫描仍需的身份、批次与跨流程规则，不为形式上的唯一入口删除合法底层查询。
 - [ ] 相关测试与后端门禁通过，现有对外契约与数据库格式不变。扫描集合锁、错误容忍或空值处理的疑点单独记录，不在本票修复。
 
 本票不依赖提案或批量编辑迁移。扫描的特殊 seam 是范围内元数据准备与原身份 upsert 的组合，不公开 continuation、持久化变更集或通用修改协议。
+
+## Implementation evidence
+
+- `seriesmeta.PrepareScanInitial`, `PrepareScanUpdate` and `AppendScanAssociations` own scan scalar rules, creation defaults and association append semantics. `ScanMetadata` contains only metadata and title initial; `ScanLocks` retains the original preload/creation cache boundary without reloading rows.
+- `Scanner.ingestResults` composes this metadata with identity and counts in its existing single series upsert inside the book batch transaction. Initial create failure still skips the book; existing update and individual association errors remain tolerated. Book identity/rehome, page/cover handling, callbacks, throttled derived refresh and cancellation budgets remain unchanged.
+- Removed scanner scalar projection and lock parser duplicates. Existing high-level title/default-lock and deferred statistics tests remain as integration checks. The cancellation test now requires the committed six books and refreshed series count/stats row, without a conditional skip.
+- Public-source interface TDD first failed on missing scan entries and then passed. Real SQLite tests cover source defaults, locked scalar retention, unlocked empty clearing/status, title fallback/initial, metadata-only composition, append despite collection locks and a failed tag insert. Scanner trigger tests verify initial create failure, tolerated update failure and a book-trigger transaction rollback using final committed rows.
+- Passed: `go test ./internal/seriesmeta ./internal/scanner` (scanner 47.317s); latest `go test ./internal/seriesmeta -run TestScan -count=1`; scoped `golangci-lint run --allow-parallel-runners ./internal/seriesmeta/... ./internal/scanner/...` (`0 issues.`); `gofmt -l ./cmd ./internal` (empty); `git diff --check`.
+- Some repeated test invocations were blocked by Windows Application Control when launching temporary test executables; successful package runs above verified the implementation. Full backend and integration lint gate remain pending, so the final checklist and ticket status remain open.
+- Compatibility observations retained: scan collection append ignores collection locks and individual errors; unlocked empty ComicInfo scalars clear, and scan status is empty. These are preserved semantics, not fixes in this ticket.
