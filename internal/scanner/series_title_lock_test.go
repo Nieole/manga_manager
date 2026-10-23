@@ -63,7 +63,7 @@ func seriesUnderTest(t *testing.T, store database.Store, libraryID int64) databa
 // 归档里的 ComicInfo.xml 会让扫描走系列增补分支。扫描对 title 唯一能给出的值是目录名，
 // 而目录名已原样存在 name 列里；locked_fields 则是用户在详情页开关的东西。扫描既不该
 // 把用户改过的标题打回目录名，也不该把用户主动解开的 title 锁重新锁上——锁一旦被扫描
-// 锁死，proposal.applyMetadata 的 !locked["title"] 永不成立，刮削从此写不进标题。
+// 锁死，提案写入的标题锁保护会一直阻止刮削更新标题。
 func TestScanKeepsUserEditedSeriesTitleAndLocks(t *testing.T) {
 	s, store, lib, libraryPath, _ := newSeriesLockScanner(t)
 	ctx := context.Background()

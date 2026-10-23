@@ -26,6 +26,7 @@ import (
 	"manga-manager/internal/images"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/parser"
+	"manga-manager/internal/seriesmeta"
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/taskcontrol"
 )
@@ -1217,13 +1218,13 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 	// 系列缓存：路径 -> 原系列对象 (保留原属性能防止 Upsert 被 NULL 覆盖)
 	seriesCache := make(map[string]database.Series)
 	// 锁定字段缓存：ID -> 锁定字段列表 (用 map 提高查找速度)
-	lockedFieldsCache := make(map[int64]map[string]bool)
+	lockedFieldsCache := make(map[int64]seriesmeta.ScanLocks)
 
 	// 预加载已有的 Series
 	existingSeries, _ := s.store.ListSeriesByLibraryLite(ctx, libIDInt)
 	for _, series := range existingSeries {
 		seriesCache[series.Path] = series
-		lockedFieldsCache[series.ID] = parseLockedFields(series.LockedFields)
+		lockedFieldsCache[series.ID] = seriesmeta.ParseScanLocks(series.LockedFields)
 	}
 
 	var batch []scanResult
@@ -1255,36 +1256,23 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					seriesID = existingS.ID
 				}
 
-				// 提取元数据准备
-				var rSummary, rPublisher, rStatus, rLang string
-				if res.comicInfo != nil {
-					rSummary = res.comicInfo.Summary
-					rPublisher = res.comicInfo.Publisher
-					rLang = res.comicInfo.LanguageISO
-				}
-				var rating float64
-				if res.comicInfo != nil && res.comicInfo.CommunityRating > 0 {
-					rating = float64(res.comicInfo.CommunityRating)
-				}
-
 				if !ok {
-					// 初次创建：目录名既是 name 也是 title 的默认值，locked_fields 给一个默认锁。
-					// 这三样都只是这一行的**初值**，此后 locked_fields 归用户所有，扫描只读它。
+					metadata := seriesmeta.PrepareScanInitial(res.seriesName, res.comicInfo)
 					createdSeries, err := q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
 						LibraryID:    libIDInt,
 						Name:         res.seriesName,
 						Path:         res.seriesPath,
-						Title:        sql.NullString{String: res.seriesName, Valid: true},
-						Summary:      sql.NullString{String: rSummary, Valid: rSummary != ""},
-						Publisher:    sql.NullString{String: rPublisher, Valid: rPublisher != ""},
-						Status:       sql.NullString{String: rStatus, Valid: rStatus != ""},
-						Rating:       sql.NullFloat64{Float64: rating, Valid: rating > 0},
-						Language:     sql.NullString{String: rLang, Valid: rLang != ""},
-						LockedFields: sql.NullString{String: "title", Valid: true},
+						Title:        metadata.Title,
+						Summary:      metadata.Summary,
+						Publisher:    metadata.Publisher,
+						Status:       metadata.Status,
+						Rating:       metadata.Rating,
+						Language:     metadata.Language,
+						LockedFields: metadata.LockedFields,
 						VolumeCount:  0,
 						BookCount:    0,
 						TotalPages:   0,
-						NameInitial:  database.SeriesInitial(res.seriesName, res.seriesName),
+						NameInitial:  metadata.NameInitial,
 					})
 					if err != nil {
 						slog.ErrorContext(ctx, "Failed to create/upsert series", "series_name", res.seriesName, "error", err)
@@ -1294,92 +1282,33 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 					// 缓存整行而不是只留 ID：同一次扫描里该系列的后续卷会走增补分支，
 					// 要在那里读到刚写下的默认标题与默认锁，而不是把它们冲成空。
 					seriesCache[res.seriesPath] = createdSeries
-					lockedFieldsCache[seriesID] = parseLockedFields(createdSeries.LockedFields)
+					lockedFieldsCache[seriesID] = seriesmeta.ParseScanLocks(createdSeries.LockedFields)
 				} else {
-					// 已存在的系列，利用 UpsertSeriesByPath 去更新其累积统计和元数据（仅当有新元数据时增补）
 					if res.comicInfo != nil {
-						// 锁定字段是用户在系列详情页开合的开关，扫描只读不写：归档内嵌的
-						// ComicInfo 同样是外部来源，锁挡的就是它这一类。扫描若自己把锁置上，
-						// proposal.applyMetadata 的 !locked[field] 从此永不成立，用户为放行
-						// 刮削而做的解锁会被悄悄撤销。
-						locks := lockedFieldsCache[seriesID]
-						if locks == nil {
-							locks = make(map[string]bool)
-						}
-
-						// 若被锁定则沿用旧有库中的数据，不被更新的 NULL 覆盖掉
-						getStr := func(field string, newVal string) sql.NullString {
-							if locks[field] {
-								// 从缓存的老对象中读
-								switch field {
-								case "summary":
-									return existingS.Summary
-								case "publisher":
-									return existingS.Publisher
-								case "status":
-									return existingS.Status
-								case "language":
-									return existingS.Language
-								}
-							}
-							return sql.NullString{String: newVal, Valid: newVal != ""}
-						}
-
-						getRating := func() sql.NullFloat64 {
-							if locks["rating"] {
-								return existingS.Rating
-							}
-							return sql.NullFloat64{Float64: rating, Valid: rating > 0}
-						}
-
-						// 扫描能给 title 的唯一值就是目录名，而目录名已原样存在 name 列里：
-						// 库里一旦有 title，扫描就不带来任何新信息，原样留着——用户改过的标题
-						// 因此不被打回目录名。只有还没有 title 的系列才要目录名兜个默认值。
-						title := existingS.Title
-						if !locks["title"] && strings.TrimSpace(title.String) == "" {
-							title = sql.NullString{String: res.seriesName, Valid: true}
-						}
-
-						// UpsertSeriesByPath 的每一列都是 excluded 无条件覆盖，所以不动的列要原样传回。
+						metadata := seriesmeta.PrepareScanUpdate(existingS, lockedFieldsCache[seriesID], res.seriesName, res.comicInfo)
+						// Identity and counts stay in the scanner's single batch upsert.
 						_, _ = q.UpsertSeriesByPath(ctx, database.UpsertSeriesByPathParams{
 							LibraryID:    libIDInt,
 							Name:         res.seriesName,
 							Path:         res.seriesPath,
-							Title:        title,
-							Summary:      getStr("summary", rSummary),
-							Publisher:    getStr("publisher", rPublisher),
-							Status:       getStr("status", rStatus),
-							Rating:       getRating(),
-							Language:     getStr("language", rLang),
-							LockedFields: existingS.LockedFields,
+							Title:        metadata.Title,
+							Summary:      metadata.Summary,
+							Publisher:    metadata.Publisher,
+							Status:       metadata.Status,
+							Rating:       metadata.Rating,
+							Language:     metadata.Language,
+							LockedFields: metadata.LockedFields,
 							VolumeCount:  existingS.VolumeCount,
 							BookCount:    existingS.BookCount,
 							TotalPages:   existingS.TotalPages,
-							// A-Z 索引跟着实际写入的标题走，不能按目录名另算一份。
-							NameInitial: database.SeriesInitialFromNullTitle(title, res.seriesName),
+							NameInitial:  metadata.NameInitial,
 						})
 					}
 				}
 				res.book.SeriesID = seriesID
 				updatedSeriesIDs[seriesID] = true
 
-				// 维护系列与标签、作者的多对多关系 (在单卷有新元数据时重刷)
-				if res.comicInfo != nil {
-					// 为每个卷提取补充，由于事务中，且中间表用 INSERT OR IGNORE, 不会报错。
-					tags := res.comicInfo.GetTags()
-					for _, t := range tags {
-						if inserted, err := q.UpsertTag(ctx, t); err == nil {
-							_ = q.LinkSeriesTag(ctx, database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID})
-						}
-					}
-
-					authors := res.comicInfo.GetAuthors()
-					for _, a := range authors {
-						if inserted, err := q.UpsertAuthor(ctx, database.UpsertAuthorParams{Name: a.Name, Role: a.Role}); err == nil {
-							_ = q.LinkSeriesAuthor(ctx, database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID})
-						}
-					}
-				}
+				seriesmeta.AppendScanAssociations(ctx, q, seriesID, res.comicInfo)
 
 				// 改名重连：先把那条「文件已消失」的旧记录改挂到新路径上，紧接着的 UpsertBookByPath
 				// 就会经 ON CONFLICT(path) 命中同一行——id 不变，user_book_progress / 书签 / 合集归属
@@ -1561,20 +1490,6 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 			refreshDirtySeries(ctx) // 每 ~10s 节流刷新一次 touched 系列（取代每批全量重算）
 		}
 	}
-}
-
-// parseLockedFields 把系列的 locked_fields 列展开成便于查询的集合。
-func parseLockedFields(lockedFields sql.NullString) map[string]bool {
-	locks := make(map[string]bool)
-	if !lockedFields.Valid || lockedFields.String == "" {
-		return locks
-	}
-	for _, f := range strings.Split(lockedFields.String, ",") {
-		if f = strings.TrimSpace(f); f != "" {
-			locks[f] = true
-		}
-	}
-	return locks
 }
 
 func thumbnailBaseDir(cfg config.Config) string {
