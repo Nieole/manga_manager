@@ -1,5 +1,3 @@
-// 本文件由 controller.go 拆分而来，属于后端 API 层的系列/标签/作者子域，负责系列分页搜索、系列信息与上下文、标签与作者的查询/搜索接口。
-
 package api
 
 import (
@@ -9,6 +7,7 @@ import (
 	"log/slog"
 	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
+	"manga-manager/internal/seriesmeta"
 	"net/http"
 	"os"
 	"sort"
@@ -261,15 +260,9 @@ func (c *Controller) openSeriesDirectory(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, map[string]any{"success": true})
 }
 
-type UpdateAuthorRequest struct {
-	Name string `json:"name"`
-	Role string `json:"role"`
-}
+type UpdateAuthorRequest = seriesmeta.Author
 
-type UpdateLinkRequest struct {
-	Name string `json:"name"`
-	Url  string `json:"url"`
-}
+type UpdateLinkRequest = seriesmeta.Link
 
 type UpdateSeriesRequest struct {
 	Title        string                `json:"title"`
@@ -282,7 +275,7 @@ type UpdateSeriesRequest struct {
 	Tags         []string              `json:"tags"`
 	Authors      []UpdateAuthorRequest `json:"authors"`
 	Links        []UpdateLinkRequest   `json:"links"`
-	// ExpectedVersion 是用户开始编辑时手里那份元数据的版本（见 seriesMetadataVersion）。
+	// ExpectedVersion 是用户开始编辑时手里那份元数据的版本（见 seriesmeta.Version）。
 	// 服务端此刻的版本与它不符，说明编辑期间有别的途径写过这个系列，保存被拒而不是照写不误——
 	// 这份请求是「先清空再重建」的全量替换，照写会把别人新加的标签、作者、链接整批抹掉。
 	//
@@ -291,10 +284,6 @@ type UpdateSeriesRequest struct {
 	// 「本该带版本却没拿到」的调用方，放行等于把防护栏静默关掉，用户还以为自己受着保护。
 	ExpectedVersion *string `json:"expected_version"`
 }
-
-// errSeriesMetadataConflict 由事务体抛出、由 updateSeriesInfo 翻成 409；用哨兵值是因为
-// ExecTx 会用 %w 包装，调用方只能靠 errors.Is 认出它。
-var errSeriesMetadataConflict = errors.New("series metadata version conflict")
 
 func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
@@ -319,98 +308,24 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// currentVersion 只在冲突时被写；用户看过提示后若仍要以自己这份为准，带着它重发即可。
+	// 冲突时返回当前版本，供用户确认后重试。
 	var currentVersion string
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		// 版本校验必须在事务内：放在事务外时两个并发保存会双双读到同一个旧版本、双双通过检查，
-		// 检测就只是把窗口变窄而没有关掉。DSN 上的 _txlock=immediate 让 BeginTx 即取写锁，
-		// 后到的那次事务是在前一次提交之后才读到版本的。
-		if req.ExpectedVersion != nil {
-			version, err := loadSeriesMetadataVersion(r.Context(), q, seriesID)
-			if err != nil {
-				return err
-			}
-			if version != *req.ExpectedVersion {
-				currentVersion = version
-				return errSeriesMetadataConflict
-			}
-		}
-
-		_, err := q.UpdateSeriesMetadata(r.Context(), database.UpdateSeriesMetadataParams{
-			Title:        sql.NullString{String: req.Title, Valid: req.Title != ""},
-			Summary:      sql.NullString{String: req.Summary, Valid: req.Summary != ""},
-			Publisher:    sql.NullString{String: req.Publisher, Valid: req.Publisher != ""},
-			Status:       sql.NullString{String: req.Status, Valid: req.Status != ""},
-			Rating:       sql.NullFloat64{Float64: req.Rating, Valid: req.Rating > 0},
-			Language:     sql.NullString{String: req.Language, Valid: req.Language != ""},
-			LockedFields: sql.NullString{String: req.LockedFields, Valid: true},
-			NameInitial:  database.SeriesInitial(req.Title, currentSeries.Name),
-			ID:           seriesID,
+		var err error
+		currentVersion, err = seriesmeta.SaveManual(r.Context(), q, currentSeries, seriesmeta.ManualInput{
+			Title: req.Title, Summary: req.Summary, Publisher: req.Publisher,
+			Status: req.Status, Rating: req.Rating, Language: req.Language,
+			LockedFields: req.LockedFields, Tags: req.Tags, Authors: req.Authors,
+			Links: req.Links, ExpectedVersion: req.ExpectedVersion,
 		})
 		if err != nil {
 			return err
 		}
 
-		// 这一整段是「先清空、再重建」：所有写入错误都必须向上返回让 ExecTx 回滚，否则
-		// 清空成功但重建失败时事务照样提交，用户的标签/作者/链接被静默清空，接口还返回 200。
-		if req.Tags != nil {
-			if err := q.ClearSeriesTags(r.Context(), seriesID); err != nil {
-				return err
-			}
-			for _, t := range req.Tags {
-				if strings.TrimSpace(t) == "" {
-					continue
-				}
-				inserted, err := q.UpsertTag(r.Context(), t)
-				if err != nil {
-					return err
-				}
-				if err := q.LinkSeriesTag(r.Context(), database.LinkSeriesTagParams{SeriesID: seriesID, TagID: inserted.ID}); err != nil {
-					return err
-				}
-			}
-		}
-
-		if req.Authors != nil {
-			if err := q.ClearSeriesAuthors(r.Context(), seriesID); err != nil {
-				return err
-			}
-			for _, a := range req.Authors {
-				if strings.TrimSpace(a.Name) == "" {
-					continue
-				}
-				inserted, err := q.UpsertAuthor(r.Context(), database.UpsertAuthorParams{Name: a.Name, Role: a.Role})
-				if err != nil {
-					return err
-				}
-				if err := q.LinkSeriesAuthor(r.Context(), database.LinkSeriesAuthorParams{SeriesID: seriesID, AuthorID: inserted.ID}); err != nil {
-					return err
-				}
-			}
-		}
-
-		if req.Links != nil {
-			if err := q.ClearSeriesLinks(r.Context(), seriesID); err != nil {
-				return err
-			}
-			for _, link := range req.Links {
-				if strings.TrimSpace(link.Name) == "" || strings.TrimSpace(link.Url) == "" {
-					continue
-				}
-				if _, err := q.LinkSeriesLink(r.Context(), database.LinkSeriesLinkParams{
-					SeriesID: seriesID,
-					Name:     link.Name,
-					Url:      link.Url,
-				}); err != nil {
-					return err
-				}
-			}
-		}
-
 		return q.RefreshSeriesStats(r.Context(), seriesID)
 	})
 
-	if errors.Is(err, errSeriesMetadataConflict) {
+	if errors.Is(err, seriesmeta.ErrConflict) {
 		// 409 而不是 412：请求里带的是我们自己定义的 expected_version 字段，不是 If-Match 前置条件头。
 		// 载荷只报「变了」和最新版本，不报变的是哪几项——版本是内容指纹，服务端手里没有用户那一版的原值。
 		jsonResponse(w, http.StatusConflict, map[string]any{
@@ -487,7 +402,7 @@ type SeriesContextResponse struct {
 	FailedTasks       []RunSnapshot           `json:"failed_tasks"`
 	FailedTaskSummary SeriesFailedTaskSummary `json:"failed_task_summary"`
 	Continue          SeriesContinue          `json:"continue"`
-	// MetadataVersion 是本次下发的元数据版本，用户按下保存时原样带回（见 seriesMetadataVersion）。
+	// MetadataVersion 是本次下发的元数据版本，用户按下保存时原样带回（见 seriesmeta.Version）。
 	MetadataVersion string `json:"metadata_version"`
 }
 
@@ -622,7 +537,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		FailedTasks:       failedTasks,
 		FailedTaskSummary: summarizeFailedTasks(failedTasks),
 		Continue:          buildSeriesContinue(books),
-		MetadataVersion:   seriesMetadataVersion(series, tags, authors, links),
+		MetadataVersion:   seriesmeta.Version(series, tags, authors, links),
 	})
 }
 
