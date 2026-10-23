@@ -159,3 +159,20 @@ CREATE TABLE IF NOT EXISTS library_relocation_protection (
  scan_interval INTEGER NOT NULL,
  scan_formats TEXT NOT NULL
 );
+
+-- Durable comparison metadata. user_id=0 is the legacy anonymous reader.
+CREATE TABLE IF NOT EXISTS reading_position_basis (
+ user_id INTEGER NOT NULL,
+ book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+ changed_at_ns INTEGER NOT NULL,
+ fact_id TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY (user_id,book_id)
+);
+
+
+CREATE TABLE IF NOT EXISTS reading_position_receipts (
+ user_id INTEGER NOT NULL,
+ book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+ fact_id TEXT NOT NULL,
+ PRIMARY KEY (user_id, book_id, fact_id)
+);

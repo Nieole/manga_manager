@@ -9,7 +9,7 @@ interface UseReaderProgressIndicatorOptions {
   loading: boolean;
   isOnline: boolean;
   offlineQueuedPage: number | null;
-  queueOfflineReaderProgress: (page: number) => void;
+  queueOfflineReaderProgress: (page: number, occurredAt?: string) => void;
 }
 
 export interface UseReaderProgressIndicatorResult {
@@ -29,6 +29,7 @@ export function useReaderProgressIndicator({
 }: UseReaderProgressIndicatorOptions): UseReaderProgressIndicatorResult {
   const [status, setStatus] = useState<ProgressSyncStatus>('idle');
   const inFlightRef = useRef(0);
+  const lastFactTimeRef = useRef(0);
   const syncedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -66,8 +67,11 @@ export function useReaderProgressIndicator({
     if (bookId !== pagesBookIdRef.current) return;
     if (pageNumber <= 0) return;
 
+    lastFactTimeRef.current = Math.max(Date.now(), lastFactTimeRef.current + 1);
+    const occurredAt = new Date(lastFactTimeRef.current).toISOString();
+
     if (!isOnline) {
-      queueOfflineReaderProgress(pageNumber);
+      queueOfflineReaderProgress(pageNumber, occurredAt);
       setStatus('offline-queued');
       return;
     }
@@ -75,7 +79,7 @@ export function useReaderProgressIndicator({
     inFlightRef.current += 1;
     setStatus('syncing');
 
-    apiClient.post(`/api/books/${bookId}/progress`, { page: pageNumber })
+    apiClient.post(`/api/books/${bookId}/progress`, { page: pageNumber, updated_at: occurredAt })
       .then(() => {
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
         if (inFlightRef.current === 0) {
@@ -92,7 +96,7 @@ export function useReaderProgressIndicator({
       .catch((err) => {
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
         if (!isAxiosError(err) || !err.response) {
-          queueOfflineReaderProgress(pageNumber);
+          queueOfflineReaderProgress(pageNumber, occurredAt);
           setStatus('offline-queued');
         } else if (inFlightRef.current === 0) {
           setStatus('idle');

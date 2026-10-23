@@ -1,18 +1,19 @@
-// 本文件由 controller.go 拆分而来，属于后端 API 层的阅读进度子域，负责上一本/下一本导航、单本与批量进度更新、KOReader 风格批量同步、阅读书签的增删查。
-
 package api
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
-	"manga-manager/internal/booksort"
-	"manga-manager/internal/database"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	"manga-manager/internal/booksort"
+	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 )
 
 func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
@@ -80,13 +81,10 @@ func sortBooksForReading(books []database.Book) {
 }
 
 type UpdateProgressRequest struct {
-	Page int64 `json:"page"`
-	// UpdatedAt 可选：离线队列逐本回退时携带本地记录时间，服务端据此做「已有更新进度则跳过」的陈旧判定，
-	// 与 bulk 同步端点口径一致，避免回退覆盖较新的跨设备进度。不带时按顺序覆盖（历史行为不变）。
+	Page      int64      `json:"page"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	FactID    string     `json:"fact_id,omitempty"`
 }
-
-const progressWriteThrottleWindow = 2 * time.Second
 
 type cachedProgressWrite struct {
 	userID    int64
@@ -107,82 +105,31 @@ func clampPageToBook(page, pageCount int64) int64 {
 }
 
 func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
 		return
 	}
-
 	var req UpdateProgressRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-
-	uid := c.currentUserID(r)
-
-	if c.progressWriteCache != nil {
-		if cached, ok := c.progressWriteCache.Get(bookID); ok && cached.userID == uid && cached.page == req.Page && time.Since(cached.updatedAt) < progressWriteThrottleWindow {
-			jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
-			return
-		}
-	}
-
-	// 校验页码合法性
-	book, err := c.store.GetBook(ctx, bookID)
+	service := reading.New(c.store, func() { c.invalidateVolatileStatsCache("book_progress") })
+	result, err := service.RecordPosition(r.Context(), reading.Position{UserID: c.currentUserID(r), BookID: bookID, Page: req.Page, OccurredAt: req.UpdatedAt, FactID: req.FactID})
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "Book not found")
-		return
-	}
-
-	validPage := clampPageToBook(req.Page, book.PageCount)
-
-	// 取当前用户对本书的既有进度（uid==0 时退回全局 books 列，保持旧行为与既有测试）。
-	previousPage, previousAt := c.bookProgressFor(ctx, uid, book)
-	// 陈旧判定：客户端带了 updated_at 且早于服务端已记录时间，说明本地进度更旧，跳过（与 bulk 同步一致）。
-	if req.UpdatedAt != nil && previousAt.Valid && req.UpdatedAt.Before(previousAt.Time) {
-		jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
-		return
-	}
-	if previousAt.Valid && previousPage == validPage && time.Since(previousAt.Time) < progressWriteThrottleWindow {
-		if c.progressWriteCache != nil {
-			c.progressWriteCache.Add(bookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: time.Now()})
-		}
-		jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress unchanged"})
-		return
-	}
-
-	now := time.Now()
-	if uid > 0 {
-		if err := c.store.SetUserBookProgress(ctx, uid, bookID, validPage, now); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "Book not found")
+		} else {
 			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
-			return
 		}
-	} else {
-		if err := c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
-			LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
-			LastReadAt:   sql.NullTime{Time: now, Valid: true},
-			ID:           bookID,
-		}); err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
-			return
-		}
+		return
 	}
-	c.invalidateVolatileStatsCache("book_progress")
-	if c.progressWriteCache != nil {
-		c.progressWriteCache.Add(bookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: now})
+	status := "Progress unchanged"
+	if result.Applied {
+		status = "Progress updated"
 	}
-
-	// 阅读活动只记录前进页，避免 Webtoon 滚动和重复上报刷高活动写入。全局表 + 每用户表双写。
-	if validPage > previousPage || previousPage == 0 {
-		c.logReadingActivity(ctx, uid, bookID, validPage)
-	}
-
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "Progress updated"})
+	jsonResponse(w, http.StatusOK, map[string]string{"status": status})
 }
 
 // ReadingTimeRequest 是阅读时长增量上报体（活跃阅读秒数）。
