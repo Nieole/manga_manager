@@ -1,21 +1,18 @@
-// 本文件守元数据写入器：**锁定字段**一律不被外部数据覆盖、也不留下来源沿革；
-// 标签与作者按名去重后落库；Bangumi 外链只在该数据源下写、且重复写入不产生第二条。
-//
-// 锁失效就是用户手工改过的元数据被外部源悄悄抹掉——这是本包里唯一直接改写系列的地方。
-
-package proposal
+package seriesmeta_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/seriesmeta"
 )
 
 // writeMetadata 在一次事务里调用写入器，与生产上的调用形态一致（裁决与写入同事务）。
 // opts 没给 WrittenFields 时按 result 里有值的集合字段补上——生产上交出的正是这一份。
-func writeMetadata(t *testing.T, store database.Store, series database.Series, result *metadata.SeriesMetadata, opts applyOptions) {
+func writeMetadata(t *testing.T, store database.Store, series database.Series, result *metadata.SeriesMetadata, opts seriesmeta.ProposalInput) {
 	t.Helper()
 	ctx := context.Background()
 	if opts.WrittenFields == nil {
@@ -24,11 +21,10 @@ func writeMetadata(t *testing.T, store database.Store, series database.Series, r
 			"authors": len(result.Authors) > 0,
 		}
 	}
-	db := testDB{Store: store}
-	if err := db.ExecTx(ctx, func(q Queries) error {
-		return applyMetadata(ctx, q, series, result, opts)
+	if err := store.ExecTx(ctx, func(q *database.Queries) error {
+		return seriesmeta.ApplyProposal(ctx, q, series, result, opts)
 	}); err != nil {
-		t.Fatalf("applyMetadata: %v", err)
+		t.Fatalf("ApplyProposal: %v", err)
 	}
 }
 
@@ -45,8 +41,8 @@ func provenanceByField(t *testing.T, store database.Store, seriesID int64) map[s
 	return byField
 }
 
-func bangumiOptions() applyOptions {
-	return applyOptions{
+func bangumiOptions() seriesmeta.ProposalInput {
+	return seriesmeta.ProposalInput{
 		ProviderName: "bangumi",
 		SourceURL:    "https://bgm.tv/subject/12345",
 		Confidence:   0.91,
@@ -58,8 +54,7 @@ func bangumiOptions() applyOptions {
 // 沿革一并断言是因为它是审计链：写了沿革却没写值，用户会在界面上看到「这个值来自 Bangumi」，
 // 而实际显示的是他自己填的内容。
 func TestApplyMetadataHonorsLockedFields(t *testing.T) {
-	_, store := newTestService(t)
-	series := seedSeries(t, store, "Lib", "Series Alpha")
+	store, series := fixture(t)
 	series.Title = nullString("Locked Title")
 	series.Summary = nullString("Old summary")
 	series.Publisher = nullString("Old publisher")
@@ -115,15 +110,12 @@ func TestApplyMetadataHonorsLockedFields(t *testing.T) {
 
 // TestApplyMetadataRecordsProvenance：写进去的每个字段都要记下来源、外链与置信度。
 func TestApplyMetadataRecordsProvenance(t *testing.T) {
-	svc, store := newTestService(t)
-	series := seedSeries(t, store, "Lib", "Series Alpha")
-
-	// 沿革的 review_id 带外键，得挂在一条真实提案上。
-	queued, err := svc.Queue(context.Background(), series, fullResult(), "bangumi", "Alpha", QueueOptions{})
-	if err != nil || queued.Status != QueueQueued {
-		t.Fatalf("入队：status=%q err=%v", queued.Status, err)
+	store, series := fixture(t)
+	review, err := store.CreateMetadataReview(t.Context(), database.CreateMetadataReviewParams{SeriesID: series.ID, Provider: "bangumi", Status: "pending"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	proposalID := queued.Proposal.ID
+	proposalID := review.ID
 
 	opts := bangumiOptions()
 	opts.ProposalID = &proposalID
@@ -152,8 +144,7 @@ func TestApplyMetadataRecordsProvenance(t *testing.T) {
 
 // TestApplyMetadataUpsertsTagsAndAuthorsWithDedup：同名标签/作者只落一条，空白项丢弃。
 func TestApplyMetadataUpsertsTagsAndAuthorsWithDedup(t *testing.T) {
-	_, store := newTestService(t)
-	series := seedSeries(t, store, "Lib", "Series Alpha")
+	store, series := fixture(t)
 
 	writeMetadata(t, store, series, &metadata.SeriesMetadata{
 		Tags: []string{"Action", "Mystery", "Action", " "},
@@ -195,9 +186,8 @@ func TestApplyMetadataUpsertsTagsAndAuthorsWithDedup(t *testing.T) {
 //
 // 不去重的话，每刮削一次就多一条一模一样的「Bangumi」外链，系列页上越堆越长。
 func TestApplyMetadataWritesBangumiLinkOnce(t *testing.T) {
-	_, store := newTestService(t)
+	store, series := fixture(t)
 	ctx := context.Background()
-	series := seedSeries(t, store, "Lib", "Series Alpha")
 
 	result := &metadata.SeriesMetadata{Title: "New Title", SourceID: 12345}
 	writeMetadata(t, store, series, result, bangumiOptions())
@@ -229,10 +219,9 @@ func TestApplyMetadataWritesBangumiLinkOnce(t *testing.T) {
 //
 // 显示名（如 "Ollama LLM"）里带着的条目号与 bgm.tv 毫无关系，写下去就是一条指向错误条目的链接。
 func TestApplyMetadataSkipsSourceLinkForOtherProviders(t *testing.T) {
-	_, store := newTestService(t)
-	series := seedSeries(t, store, "Lib", "Series Alpha")
+	store, series := fixture(t)
 
-	writeMetadata(t, store, series, &metadata.SeriesMetadata{Title: "New Title", SourceID: 12345}, applyOptions{
+	writeMetadata(t, store, series, &metadata.SeriesMetadata{Title: "New Title", SourceID: 12345}, seriesmeta.ProposalInput{
 		ProviderName: "Ollama LLM",
 		Confidence:   0.6,
 	})
@@ -244,4 +233,15 @@ func TestApplyMetadataSkipsSourceLinkForOtherProviders(t *testing.T) {
 	if len(links) != 0 {
 		t.Errorf("非 Bangumi 数据源写下了 %+v —— 这条链接指向的 bgm.tv 条目与本次刮削无关", links)
 	}
+}
+
+func nullString(value string) sql.NullString  { return sql.NullString{String: value, Valid: true} }
+func nullFloat(value float64) sql.NullFloat64 { return sql.NullFloat64{Float64: value, Valid: true} }
+func updateSeries(t *testing.T, store database.Store, s database.Series) database.Series {
+	t.Helper()
+	updated, err := store.UpdateSeriesMetadata(t.Context(), database.UpdateSeriesMetadataParams{ID: s.ID, Title: s.Title, Summary: s.Summary, Publisher: s.Publisher, Rating: s.Rating, Status: s.Status, Language: s.Language, LockedFields: s.LockedFields, NameInitial: database.SeriesInitialFromNullTitle(s.Title, s.Name)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return updated
 }
