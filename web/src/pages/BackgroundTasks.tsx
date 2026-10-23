@@ -209,7 +209,7 @@ export default function BackgroundTasks({ embedded = false, onViewRawLogs }: Bac
   }, [fetchLive, fetchTasks, taskReloadToken]);
 
   useEffect(() => {
-    // 复用 Layout 中已挂载的全局 EventSource：它把推送通道上的帧解开之后
+    // 复用应用会话中已挂载的 EventSource：它把推送通道上的帧解开之后
     // dispatch 'manga-manager:run-push' 自定义事件。这里只监听自定义事件，
     // 避免对同一 origin 再开第二条 SSE 长连接占用浏览器并发额度。
     const handler = (event: Event) => {
