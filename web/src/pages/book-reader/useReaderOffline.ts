@@ -117,9 +117,9 @@ export function useReaderOffline({
     };
   }, [refreshOfflineStatus]);
 
-  const queueProgress = useCallback((pageNumber: number) => {
+  const queueProgress = useCallback((pageNumber: number, occurredAt?: string) => {
     if (!bookId) return;
-    queueOfflineProgress(bookId, pageNumber, bookTitle || undefined);
+    queueOfflineProgress(bookId, pageNumber, bookTitle || undefined, occurredAt);
     setOfflineQueuedPage(pageNumber);
   }, [bookId, bookTitle]);
 

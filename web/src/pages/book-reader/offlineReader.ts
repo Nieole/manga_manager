@@ -397,9 +397,9 @@ function writeQueuedProgress(progress: Record<string, QueuedProgress>) {
   writeJSON(OFFLINE_PROGRESS_KEY, progress);
 }
 
-export function queueOfflineProgress(bookId: string, page: number, title?: string) {
+export function queueOfflineProgress(bookId: string, page: number, title?: string, occurredAt?: string) {
   const progress = readQueuedProgress();
-  progress[bookId] = { bookId, page, title, updatedAt: new Date().toISOString() };
+  progress[bookId] = { bookId, page, title, updatedAt: occurredAt ?? new Date().toISOString() };
   writeQueuedProgress(progress);
 }
 
