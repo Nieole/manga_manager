@@ -1,7 +1,7 @@
 // 系列元数据的版本：由内容算出的指纹，而不是库里存的一列。
 // 它是手工保存做冲突检测的依据，读路径下发、写路径回验。
 
-package api
+package seriesmeta
 
 import (
 	"context"
@@ -21,18 +21,10 @@ const (
 	metadataItemSep   = "\x1d"
 )
 
-// seriesMetadataVersion 是「元数据编辑器管辖的那些字段」此刻的指纹。
-//
-// 取内容指纹而不是自增版本列，是因为要防的是**内容**被盖掉，而改这些内容的写入方不止一处
-// （手工保存、刮削应用提案、批量编辑、扫描增补），没有一个共同的写入口能保证「谁写了谁 +1」；
-// 漏掉任何一处，那条路径下的覆盖就仍然是静默的。指纹由读路径算出，任何来源改了内容，
-// 用户手里那份版本自然作废，写入方一行都不用改。
-//
-// 覆盖面刻意只到编辑器管辖的字段：is_favorite、阅读进度、卷数/页数/封面等派生统计一律不进——
-// 它们进来了，用户读完一本书就存不下正在写的简介。
-//
-// 代价是它只说明「变了」，说不出变的是哪一项：指纹不可逆，服务端手里没有用户那一版的原值。
-func seriesMetadataVersion(series database.Series, tags []database.Tag, authors []database.Author, links []database.SeriesLink) string {
+// Version fingerprints editable metadata, normalizing only collection order and whitespace.
+// Identity, reading state and derived statistics do not participate. Any writing source
+// changing editable content invalidates the version without maintaining a version column.
+func Version(series database.Series, tags []database.Tag, authors []database.Author, links []database.SeriesLink) string {
 	var b strings.Builder
 	writeField := func(name, value string) {
 		b.WriteString(name)
@@ -98,9 +90,17 @@ func normalizedMetadataSet(values []string) []string {
 	return out
 }
 
-// loadSeriesMetadataVersion 在给定查询句柄上读齐四份内容再算指纹。传事务句柄即可让
+// VersionQueries loads only the content participating in the metadata fingerprint.
+type VersionQueries interface {
+	GetSeries(context.Context, int64) (database.Series, error)
+	GetTagsForSeries(context.Context, int64) ([]database.Tag, error)
+	GetAuthorsForSeries(context.Context, int64) ([]database.Author, error)
+	GetLinksForSeries(context.Context, int64) ([]database.SeriesLink, error)
+}
+
+// LoadVersion 在给定查询句柄上读齐四份内容再算指纹。传事务句柄即可让
 // 「校验版本」与「写入」落在同一次事务里。
-func loadSeriesMetadataVersion(ctx context.Context, q database.Querier, seriesID int64) (string, error) {
+func LoadVersion(ctx context.Context, q VersionQueries, seriesID int64) (string, error) {
 	series, err := q.GetSeries(ctx, seriesID)
 	if err != nil {
 		return "", err
@@ -117,5 +117,5 @@ func loadSeriesMetadataVersion(ctx context.Context, q database.Querier, seriesID
 	if err != nil {
 		return "", err
 	}
-	return seriesMetadataVersion(series, tags, authors, links), nil
+	return Version(series, tags, authors, links), nil
 }
