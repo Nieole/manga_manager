@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -17,7 +17,7 @@
 - [x] 临时断网和会话过期不按显式登出处理，不删除离线 owner、内容和队列，也不将设备级偏好改成账户级。
 - [x] 为未迁消费者保留单向兼容桥，来自同一连接，不能同时保留两份权威连接或导致一次事件重复刷新；后续消费者迁移后可删除桥。
 - [x] 以会话 seam 与页面回归验证角色、身份切换、主导航与独立路线切换、断线恢复和卸载；保留页面局部状态。
-- [ ] 执行前端测试、构建、适用 lint 及所需传输回归；本票不要求等待后台架构迁完。
+- [x] 执行前端测试、构建、适用 lint 及所需传输回归；本票不要求等待后台架构迁完。
 
 ## 实施与验证
 
@@ -27,3 +27,7 @@
 - 前端全量 `npm run test`：83 文件、869 用例通过；会话及实际 App/AuthProvider/Layout/LibraryPage 路由回归 3 文件、8 用例通过，覆盖普通刷新、多个消费者、角色和身份变化、关闭连接滞留回调、断线恢复、卸载、阅读器/图谱范围及页面局部筛选保留。既有 offlineOwner、sessionExpiryOffline、offlineAuthGate 回归随全量通过。
 - `npm run build`、`npm run lint`、`git diff --check` 通过。
 - 所需后端传输回归尝试：`go test ./internal/api -run 'Test(SSE|ServerEventsFiltersTaskFramesByRole|RunEventsAreNotPushed)' -count=1`。受机器 Application Control policy 阻止 Scoop gcc 执行，未开始运行测试；未绕过系统策略。因此最后一项及 Status 保留未完成，等待集成环境完成该传输门禁后关闭。
+
+## 集成验收
+
+在集成分支上使用 CI Go 1.26.10 和原编译器配置执行所需 SSE 角色过滤及运行事件权限回归，通过（2.118s）。先前受阻的传输门禁已补验，全部验收项满足。
