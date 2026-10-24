@@ -67,6 +67,10 @@ func TestMarkSeriesIsolatedAndUnreadPreservesActivity(t *testing.T) {
 	if err != nil || global.LastReadPage.Valid {
 		t.Fatalf("global changed=%+v err=%v", global.LastReadPage, err)
 	}
+	before, err = store.GetUserPeriodStats(ctx, uid, 2026, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	clearAt := readAt.Add(time.Hour)
 	if _, err := service.MarkSeries(ctx, reading.MarkSeriesInput{UserID: uid, SeriesIDs: []int64{book.SeriesID}, IsRead: false, OccurredAt: &clearAt, OperationID: "clear-series"}); err != nil {
 		t.Fatal(err)
@@ -224,7 +228,7 @@ func TestMarkSelectionLimitsAndUnknownPages(t *testing.T) {
 		t.Fatalf("unknown pages=%+v err=%v", result, err)
 	}
 	p, found, err := store.GetUserBookProgress(ctx, uid, bid)
-	if err != nil || !found || p.LastReadPage.Int64 != 99999 {
+	if err != nil || !found || p.LastReadPage.Valid || !p.IsRead {
 		t.Fatalf("unknown progress=%+v found=%v err=%v", p, found, err)
 	}
 	other, err := store.CreateUser(ctx, database.CreateUserParams{Username: "other", PasswordHash: "x", Role: "regular"})
@@ -236,7 +240,7 @@ func TestMarkSelectionLimitsAndUnknownPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, found, err = store.GetUserBookProgress(ctx, uid, bid)
-	if err != nil || !found || p.LastReadPage.Int64 != 99999 {
+	if err != nil || !found || p.LastReadPage.Valid || !p.IsRead {
 		t.Fatalf("other user clear leaked: %+v %v %v", p, found, err)
 	}
 }

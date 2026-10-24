@@ -107,12 +107,10 @@ func requestWithRouteParams(method, path string, body []byte, params map[string]
 
 type countingStore struct {
 	database.Store
-	getBookCalls            int
-	getDashboardStatsCalls  int
-	structuralStatsCalls    int
-	volatileStatsCalls      int
-	updateBookProgressCalls int
-	logReadingActivityCalls int
+	getBookCalls           int
+	getDashboardStatsCalls int
+	structuralStatsCalls   int
+	volatileStatsCalls     int
 }
 
 func (s *countingStore) GetBook(ctx context.Context, id int64) (database.Book, error) {
@@ -133,16 +131,6 @@ func (s *countingStore) GetDashboardStructuralStats(ctx context.Context) (*datab
 func (s *countingStore) GetDashboardVolatileStats(ctx context.Context) (*database.DashboardVolatileStats, error) {
 	s.volatileStatsCalls++
 	return s.Store.GetDashboardVolatileStats(ctx)
-}
-
-func (s *countingStore) UpdateBookProgress(ctx context.Context, arg database.UpdateBookProgressParams) error {
-	s.updateBookProgressCalls++
-	return s.Store.UpdateBookProgress(ctx, arg)
-}
-
-func (s *countingStore) LogReadingActivity(ctx context.Context, arg database.LogReadingActivityParams) error {
-	s.logReadingActivityCalls++
-	return s.Store.LogReadingActivity(ctx, arg)
 }
 
 type blockingMetadataProvider struct {
@@ -3277,34 +3265,44 @@ func TestUpdateBookProgressClampsToPageCount(t *testing.T) {
 	}
 }
 
-func TestUpdateBookProgressThrottlesRepeatedWrites(t *testing.T) {
+func TestProgressFactsRefreshSamePageAndLegacyReportsAreThrottled(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 12)
-	counting := &countingStore{Store: store}
-	controller.store = counting
-
-	postProgress := func(page int64) {
+	post := func(body []byte) string {
 		t.Helper()
-		req := requestWithRouteParam(http.MethodPost, "/api/books/1/progress", []byte(`{"page":`+strconv.FormatInt(page, 10)+`}`), "bookId", strconv.FormatInt(book.ID, 10))
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, req)
+		controller.updateBookProgress(rec, requestWithRouteParam(http.MethodPost, "/", body, "bookId", strconv.FormatInt(book.ID, 10)))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("expected progress update 200, got %d body=%s", rec.Code, rec.Body.String())
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
 		}
+		return statusOf(rec)
 	}
-
-	postProgress(6)
-	postProgress(6)
-	postProgress(4)
-
-	if counting.updateBookProgressCalls != 2 {
-		t.Fatalf("expected repeated same-page progress write to be throttled, got %d writes", counting.updateBookProgressCalls)
+	if got := post([]byte(`{"page":6}`)); got != "Progress updated" {
+		t.Fatal(got)
 	}
-	if counting.logReadingActivityCalls != 1 {
-		t.Fatalf("expected reading activity only for forward progress, got %d calls", counting.logReadingActivityCalls)
+	first, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := post([]byte(`{"page":6}`)); got != "Progress unchanged" {
+		t.Fatal(got)
+	}
+	at := first.LastReadAt.Time.Add(time.Second)
+	body, err := json.Marshal(UpdateProgressRequest{Page: 6, UpdatedAt: &at, FactID: "same-page-new-reading"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := post(body); got != "Progress updated" {
+		t.Fatal(got)
+	}
+	if got := post(body); got != "Progress unchanged" {
+		t.Fatal(got)
+	}
+	updated, err := store.GetBook(context.Background(), book.ID)
+	if err != nil || !updated.LastReadAt.Time.Equal(at) || updated.LastReadPage.Int64 != 6 {
+		t.Fatalf("book=%+v err=%v", updated, err)
 	}
 }
-
 func TestBulkUpdateBookProgressMarksReadAndUnread(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 8)

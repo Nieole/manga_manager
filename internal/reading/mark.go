@@ -38,7 +38,10 @@ type MarkSeriesInput struct {
 }
 
 // MarkResult retains committed book identities even when a later batch fails.
-type MarkResult struct{ CommittedBookIDs []int64 }
+type MarkResult struct {
+	CommittedBookIDs []int64
+	Warnings         []error
+}
 
 // MarkBooks applies a read state in bounded atomic batches. Clears retain durable rejection evidence.
 func (s *Service) MarkBooks(ctx context.Context, input MarkBooksInput) (MarkResult, error) {
@@ -47,13 +50,21 @@ func (s *Service) MarkBooks(ctx context.Context, input MarkBooksInput) (MarkResu
 		return result, ErrMarkLimit
 	}
 	ids := uniqueIDs(input.BookIDs)
-	at := time.Now()
+	if len(ids) == 0 {
+		return result, nil
+	}
+	at := s.now()
 	if input.OccurredAt != nil {
 		at = *input.OccurredAt
 	}
 	factID := ""
 	if input.OperationID != "" {
 		factID = "mark:" + input.OperationID
+		var err error
+		at, err = s.store.ResolveReadingOperationTime(ctx, input.UserID, factID, at)
+		if err != nil {
+			return result, err
+		}
 	}
 	defer func() {
 		if len(result.CommittedBookIDs) > 0 && s.invalidate != nil {
@@ -71,9 +82,9 @@ func (s *Service) MarkBooks(ctx context.Context, input MarkBooksInput) (MarkResu
 			}
 			page := state.PageCount
 			if page <= 0 {
-				page = 99999
+				page = 0
 			}
-			return database.ReadingPositionMutation{Apply: true, Clear: !input.IsRead, Page: page, OccurredAt: at}
+			return database.ReadingPositionMutation{IsRead: input.IsRead && state.PageCount <= 0, Apply: true, Clear: !input.IsRead, Page: page, OccurredAt: at}
 		})
 		if err != nil {
 			return result, err
@@ -81,6 +92,9 @@ func (s *Service) MarkBooks(ctx context.Context, input MarkBooksInput) (MarkResu
 		for _, id := range ids[start:end] {
 			if saved[id].Apply {
 				result.CommittedBookIDs = append(result.CommittedBookIDs, id)
+				if input.IsRead {
+					result.Warnings = append(result.Warnings, s.recordActivity(ctx, input.UserID, id, saved[id].Page, saved[id].OccurredAt)...)
+				}
 			}
 		}
 	}

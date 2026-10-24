@@ -466,7 +466,7 @@ INSERT INTO books (
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, is_read, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
 `
 
 type CreateBookParams struct {
@@ -520,6 +520,7 @@ func (q *Queries) CreateBook(ctx context.Context, arg CreateBookParams) (Book, e
 		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.IsRead,
 		&i.FileHash,
 		&i.QuickHash,
 		&i.PathFingerprint,
@@ -1287,7 +1288,7 @@ func (q *Queries) GetAuthorsForSeries(ctx context.Context, seriesID int64) ([]Au
 }
 
 const getBook = `-- name: GetBook :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE id = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, is_read, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
@@ -1311,6 +1312,7 @@ func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
 		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.IsRead,
 		&i.FileHash,
 		&i.QuickHash,
 		&i.PathFingerprint,
@@ -1323,7 +1325,7 @@ func (q *Queries) GetBook(ctx context.Context, id int64) (Book, error) {
 }
 
 const getBookByPath = `-- name: GetBookByPath :one
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE path = ? LIMIT 1
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, is_read, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE path = ? LIMIT 1
 `
 
 func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) {
@@ -1347,6 +1349,7 @@ func (q *Queries) GetBookByPath(ctx context.Context, path string) (Book, error) 
 		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.IsRead,
 		&i.FileHash,
 		&i.QuickHash,
 		&i.PathFingerprint,
@@ -1544,7 +1547,7 @@ const getDashboardCoreStats = `-- name: GetDashboardCoreStats :one
 SELECT
     (SELECT COUNT(*) FROM series) AS total_series,
     (SELECT COUNT(*) FROM books) AS total_books,
-    (SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
+    (SELECT COUNT(*) FROM books WHERE is_read OR last_read_page > 0) AS read_books,
     (SELECT COALESCE(SUM(page_count), 0) FROM books) AS total_pages,
     (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= ?1) AS active_days_7
 `
@@ -1704,7 +1707,7 @@ func (q *Queries) GetMihonSeries(ctx context.Context, id int64) (GetMihonSeriesR
 }
 
 const getNextBookInSeries = `-- name: GetNextBookInSeries :one
-SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.cover_locked, nb.last_read_page, nb.last_read_at, nb.file_hash, nb.quick_hash, nb.path_fingerprint, nb.path_fingerprint_no_ext, nb.filename_fingerprint, nb.created_at, nb.updated_at FROM books nb
+SELECT nb.id, nb.series_id, nb.library_id, nb.name, nb.path, nb.size, nb.file_modified_at, nb.volume, nb.title, nb.summary, nb.number, nb.sort_number, nb.page_count, nb.cover_path, nb.cover_locked, nb.last_read_page, nb.last_read_at, nb.is_read, nb.file_hash, nb.quick_hash, nb.path_fingerprint, nb.path_fingerprint_no_ext, nb.filename_fingerprint, nb.created_at, nb.updated_at FROM books nb
 INNER JOIN books cb ON cb.id = ? AND nb.series_id = cb.series_id
 WHERE 
    (nb.volume > cb.volume)
@@ -1735,6 +1738,7 @@ func (q *Queries) GetNextBookInSeries(ctx context.Context, id int64) (Book, erro
 		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.IsRead,
 		&i.FileHash,
 		&i.QuickHash,
 		&i.PathFingerprint,
@@ -1828,8 +1832,7 @@ JOIN series s ON s.id = ss.series_id
 JOIN books b ON b.id = ss.last_read_book_id
 WHERE ss.last_read_at IS NOT NULL
   AND ss.last_read_book_id > 0
-  AND b.last_read_page IS NOT NULL
-  AND b.last_read_page > 0
+  AND (b.is_read OR b.last_read_page > 0)
 ORDER BY ss.last_read_at DESC, s.name ASC
 LIMIT ?
 `
@@ -1988,12 +1991,12 @@ WITH preferred_tags AS (
     FROM series_tags st
     JOIN series s ON s.id = st.series_id
     WHERE s.is_favorite = 1
-       OR (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) >= 2
+       OR (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND (b.is_read OR b.last_read_page > 0)) >= 2
 ),
 unread_series AS (
     SELECT s.id
     FROM series s
-    WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0)
+    WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND (b.is_read OR b.last_read_page > 0))
 )
 SELECT s.id, s.name, s.title, s.book_count,
     (SELECT b.cover_path FROM books b
@@ -2154,7 +2157,7 @@ SELECT
     s.total_pages,
     GROUP_CONCAT(DISTINCT t.name) as tags_string,
     (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
-    (SELECT COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
+    (SELECT COUNT(DISTINCT CASE WHEN b.is_read OR b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
 FROM series s
 LEFT JOIN series_tags st ON s.id = st.series_id
 LEFT JOIN tags t ON st.tag_id = t.id
@@ -2905,7 +2908,7 @@ func (q *Queries) ListBooksByLibrary(ctx context.Context, libraryID int64) ([]Li
 }
 
 const listBooksBySeries = `-- name: ListBooksBySeries :many
-SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE series_id = ? ORDER BY volume, sort_number, name
+SELECT id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, is_read, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at FROM books WHERE series_id = ? ORDER BY volume, sort_number, name
 `
 
 func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book, error) {
@@ -2935,6 +2938,7 @@ func (q *Queries) ListBooksBySeries(ctx context.Context, seriesID int64) ([]Book
 			&i.CoverLocked,
 			&i.LastReadPage,
 			&i.LastReadAt,
+			&i.IsRead,
 			&i.FileHash,
 			&i.QuickHash,
 			&i.PathFingerprint,
@@ -4581,6 +4585,7 @@ SELECT
         WHERE b.series_id = s.id
         ORDER BY
             CASE
+                WHEN b.is_read THEN 1
                 WHEN b.page_count = 0 THEN 0
                 WHEN b.last_read_page IS NULL THEN 0
                 WHEN b.last_read_page < b.page_count THEN 0
@@ -4684,6 +4689,7 @@ SELECT
         WHERE b.series_id = s.id
         ORDER BY
             CASE
+                WHEN b.is_read THEN 1
                 WHEN b.page_count = 0 THEN 0
                 WHEN b.last_read_page IS NULL THEN 0
                 WHEN b.last_read_page < b.page_count THEN 0
@@ -5572,12 +5578,12 @@ SELECT
     COALESCE((
         SELECT COUNT(*)
         FROM books b
-        WHERE b.series_id = s.id AND b.last_read_page IS NOT NULL AND b.last_read_page > 0
+        WHERE b.series_id = s.id AND (b.is_read OR b.last_read_page > 0)
     ), 0) AS read_book_count,
     COALESCE((
         SELECT COUNT(*)
         FROM books b
-        WHERE b.series_id = s.id AND b.page_count > 0 AND b.last_read_page >= b.page_count
+        WHERE b.series_id = s.id AND (b.is_read OR (b.page_count > 0 AND b.last_read_page >= b.page_count))
     ), 0) AS completed_book_count,
     (
         SELECT b.last_read_at
@@ -5835,18 +5841,24 @@ func (q *Queries) UpdateAIGroupingReviewStatus(ctx context.Context, arg UpdateAI
 
 const updateBookProgress = `-- name: UpdateBookProgress :exec
 UPDATE books 
-SET last_read_page = ?, last_read_at = ?, updated_at = CURRENT_TIMESTAMP
+SET last_read_page = ?, last_read_at = ?, is_read = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
 `
 
 type UpdateBookProgressParams struct {
 	LastReadPage sql.NullInt64 `json:"last_read_page"`
 	LastReadAt   sql.NullTime  `json:"last_read_at"`
+	IsRead       bool          `json:"is_read"`
 	ID           int64         `json:"id"`
 }
 
 func (q *Queries) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
-	_, err := q.db.ExecContext(ctx, updateBookProgress, arg.LastReadPage, arg.LastReadAt, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateBookProgress,
+		arg.LastReadPage,
+		arg.LastReadAt,
+		arg.IsRead,
+		arg.ID,
+	)
 	return err
 }
 
@@ -6220,7 +6232,7 @@ ON CONFLICT(path) DO UPDATE SET
     page_count = excluded.page_count,
     cover_path = CASE WHEN books.cover_locked THEN books.cover_path ELSE excluded.cover_path END,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, is_read, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
 `
 
 type UpsertBookByPathParams struct {
@@ -6288,6 +6300,7 @@ func (q *Queries) UpsertBookByPath(ctx context.Context, arg UpsertBookByPathPara
 		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.IsRead,
 		&i.FileHash,
 		&i.QuickHash,
 		&i.PathFingerprint,
@@ -6318,7 +6331,7 @@ ON CONFLICT(path) DO UPDATE SET
     number = excluded.number,
     sort_number = excluded.sort_number,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
+RETURNING id, series_id, library_id, name, path, size, file_modified_at, volume, title, summary, number, sort_number, page_count, cover_path, cover_locked, last_read_page, last_read_at, is_read, file_hash, quick_hash, path_fingerprint, path_fingerprint_no_ext, filename_fingerprint, created_at, updated_at
 `
 
 type UpsertBookByPathKeepingPagesAndCoverParams struct {
@@ -6377,6 +6390,7 @@ func (q *Queries) UpsertBookByPathKeepingPagesAndCover(ctx context.Context, arg 
 		&i.CoverLocked,
 		&i.LastReadPage,
 		&i.LastReadAt,
+		&i.IsRead,
 		&i.FileHash,
 		&i.QuickHash,
 		&i.PathFingerprint,

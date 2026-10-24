@@ -4,7 +4,6 @@ package reading
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"manga-manager/internal/database"
@@ -28,6 +27,7 @@ type Result struct {
 
 // Store exposes the atomic position operation and the independent activity projections.
 type Store interface {
+	ResolveReadingOperationTime(context.Context, int64, string, time.Time) (time.Time, error)
 	MutateReadingPositions(context.Context, int64, []int64, string, func(int64, database.ReadingPositionState) database.ReadingPositionMutation) (map[int64]database.ReadingPositionMutation, error)
 	ListBooksBySeries(context.Context, int64) ([]database.Book, error)
 	MutateReadingPosition(context.Context, int64, int64, string, func(database.ReadingPositionState) database.ReadingPositionMutation) (database.ReadingPositionMutation, error)
@@ -39,17 +39,34 @@ type Store interface {
 type Service struct {
 	store      Store
 	invalidate func()
+	now        func() time.Time
 }
 
 // New connects durable state and the affected read-cache invalidation.
-func New(store Store, invalidate func()) *Service {
-	return &Service{store: store, invalidate: invalidate}
+func New(store Store, invalidate func(), options ...Option) *Service {
+	service := &Service{store: store, invalidate: invalidate, now: time.Now}
+	for _, option := range options {
+		option(service)
+	}
+	return service
+}
+
+// Option configures a service dependency.
+type Option func(*Service)
+
+// WithClock supplies the occurrence clock for reports without a client timestamp.
+func WithClock(now func() time.Time) Option {
+	return func(service *Service) {
+		if now != nil {
+			service.now = now
+		}
+	}
 }
 
 // RecordPosition saves a newer position and attempts each compatibility activity projection independently.
 func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error) {
 	saved, err := s.store.MutateReadingPosition(ctx, p.UserID, p.BookID, p.FactID, func(state database.ReadingPositionState) database.ReadingPositionMutation {
-		at := time.Now()
+		at := s.now()
 		if p.OccurredAt != nil {
 			at = *p.OccurredAt
 		} else if at.UnixNano() == state.ChangedAtNS {
@@ -69,6 +86,11 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 		if state.PageCount > 0 && page > state.PageCount {
 			page = state.PageCount
 		}
+		// Legacy clients cannot identify retries. Bound their repeated same-page writes,
+		// while timestamped reading facts always retain the newer occurrence.
+		if p.OccurredAt == nil && p.FactID == "" && state.LastReadAt.Valid && page == state.Page && at.Sub(state.LastReadAt.Time) < 2*time.Second {
+			return retained
+		}
 		if state.LastReadAt.Valid && page == state.Page && at.Equal(state.LastReadAt.Time) {
 			return retained
 		}
@@ -81,15 +103,6 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 	if s.invalidate != nil {
 		defer s.invalidate()
 	}
-	warn := func(err error) {
-		if err != nil {
-			result.Warnings = append(result.Warnings, err)
-			slog.WarnContext(ctx, "Reading position saved; activity projection failed", "user_id", p.UserID, "book_id", p.BookID, "error", err)
-		}
-	}
-	warn(s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: p.BookID, PagesRead: saved.Page, Date: database.ActivityDayKey(database.LocalWallClock(saved.OccurredAt))}))
-	if p.UserID > 0 {
-		warn(s.store.LogUserReadingActivityAt(ctx, p.UserID, p.BookID, saved.Page, saved.OccurredAt))
-	}
+	result.Warnings = s.recordActivity(ctx, p.UserID, p.BookID, saved.Page, saved.OccurredAt)
 	return result, nil
 }

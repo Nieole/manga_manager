@@ -38,8 +38,8 @@ WHERE s.summary IS NOT NULL AND s.summary != ''
                    -- userID > 0 走每用户进度；否则回落到全局列（未登录/单用户旧数据）。
                    CASE WHEN ?1 > 0
                         THEN EXISTS (SELECT 1 FROM user_book_progress ubp
-                                      WHERE ubp.user_id = ?1 AND ubp.book_id = b.id AND ubp.last_read_page > 0)
-                        ELSE b.last_read_page > 0
+                                      WHERE ubp.user_id = ?1 AND ubp.book_id = b.id AND (ubp.is_read OR ubp.last_read_page > 0))
+                        ELSE b.is_read OR b.last_read_page > 0
                    END
                  )
         ) < s.book_count * 0.5
