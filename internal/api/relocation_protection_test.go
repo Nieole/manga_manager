@@ -129,6 +129,7 @@ func TestProtectedRelocationRejectsPreviouslyCheckedSeriesResume(t *testing.T) {
 	plan := startRelocationPreview(t, c, lib.ID, target)
 	delayed := &delayedSeriesAdmissionStore{Store: store, entered: make(chan struct{}), resume: make(chan struct{})}
 	c.store = delayed
+	c.assembleScanUseCases()
 	result := make(chan error, 1)
 	go func() { result <- c.launchSeriesScanTask(series.ID, false, task.TriggerResumed) }()
 	<-delayed.entered

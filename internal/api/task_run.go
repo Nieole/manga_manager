@@ -211,8 +211,13 @@ func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec Run
 	// 撞上排队运行的那次被**合并**进去（同样返回 nil）。留着这层翻译是为了那种「引擎刚判完
 	// 状态就被落盘侧的索引否掉」的竞态——它对调用方仍然是同一个答案「这件事已经在跑了」，
 	// 而不是一个 500。
+	return launched, taskLaunchError(err)
+}
+
+// taskLaunchError preserves the HTTP conflict contract for application launches.
+func taskLaunchError(err error) error {
 	if errors.Is(err, task.ErrRunAlreadyActive) || errors.Is(err, task.ErrRunAlreadyQueued) {
-		return task.Launched{}, errTaskAlreadyRunning
+		return errTaskAlreadyRunning
 	}
-	return launched, err
+	return err
 }

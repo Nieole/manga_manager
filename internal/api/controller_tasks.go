@@ -17,10 +17,9 @@ import (
 	"strconv"
 	"strings"
 
-	"manga-manager/internal/config"
+	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/runhandle"
-	"manga-manager/internal/scanner"
 	"manga-manager/internal/task"
 )
 
@@ -246,23 +245,7 @@ func taskIOMetricsParams(handleIO runhandle.IOMetrics) map[string]string {
 // 入参必须是一条**真的会被扫**的库路径，否则报出来的数字没有对应的实物——只有扫描任务调它，
 // 别的后台任务受**磁盘作业**按工种裁定的上限约束，与扫描 worker 数无关。
 func (c *Controller) runLimitsForPath(path string) RunLimits {
-	cfg := c.currentConfig()
-	profile := scanner.NormalizeScanProfile(cfg.Scanner.ScanProfile)
-	policy := config.ResolveStoragePolicy(cfg, path)
-	return RunLimits{
-		ScanProfile:                string(profile),
-		ScannerWorkersConfigured:   cfg.Scanner.Workers,
-		ScannerWorkersEffective:    scanner.WorkerCount(cfg, path, scanner.ScanOptions{Profile: profile}),
-		StorageProfile:             policy.StorageProfile,
-		VolumeKey:                  policy.VolumeKey,
-		ScanConcurrency:            policy.IOPolicy.ScanConcurrency,
-		ArchiveOpenConcurrency:     policy.IOPolicy.ArchiveOpenConcurrency,
-		CoverConcurrency:           policy.IOPolicy.CoverConcurrency,
-		HashConcurrency:            policy.IOPolicy.HashConcurrency,
-		PauseBackgroundWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
-		IdleOnlyHeavyTasks:         policy.IOPolicy.IdleOnlyHeavyTasks,
-		DisableSameDiskPageCache:   policy.IOPolicy.DisableSameDiskPageCache,
-	}
+	return *runLimitsFromDomain(scanning.LimitsForPath(c.currentConfig(), path))
 }
 
 // ---- HTTP 端点 ----
