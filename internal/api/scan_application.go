@@ -13,5 +13,6 @@ func (c *Controller) assembleScanUseCases() {
 	})
 	if c.scanner != nil {
 		c.scanner.SetBatchCallback(c.handleScannerBatchEvent)
+		c.scanner.SetCoverRunLauncher(c.dispatchCoverBatch)
 	}
 }

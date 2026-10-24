@@ -23,7 +23,7 @@ type heldCoverBatches struct {
 	batches []*CoverBatch
 }
 
-func (h *heldCoverBatches) launch(batch *CoverBatch) {
+func (h *heldCoverBatches) launch(_ context.Context, batch *CoverBatch) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.batches = append(h.batches, batch)

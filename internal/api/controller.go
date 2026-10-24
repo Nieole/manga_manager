@@ -83,9 +83,6 @@ type Controller struct {
 	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
 	rebuildThumbAgg *rebuildThumbAggregator
 
-	// coverRuns 是「哪一批封面归哪一条**封面运行**」的配对处（cover_run.go），自带互斥锁。
-	coverRuns *coverRunQueues
-
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
 
@@ -365,14 +362,8 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		sse:                newSSEBroker(),
 		recommendations:    newRecommendationCache(24 * time.Hour),
 		rebuildThumbAgg:    newRebuildThumbAggregator(),
-		coverRuns:          newCoverRunQueues(),
 		openPath:           openPathInDefaultFileManager,
 		auth:               newAuthState(),
-	}
-	if scan != nil {
-		// 扫描排出来的每一批封面都在这里换成一条**封面运行**：报文自带去处，
-		// 「扫描完成」从此只说扫描本身（ADR 0005）。
-		scan.SetCoverRunLauncher(c.dispatchCoverBatch)
 	}
 
 	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。

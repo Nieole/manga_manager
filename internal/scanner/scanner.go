@@ -1389,7 +1389,7 @@ func (s *Scanner) ingestResults(ctx context.Context, libIDInt int64, results <-c
 				s.onBatchIngested("batch_inserted")
 			}
 			progress.publish("queueing_covers", "", true)
-			s.enqueueCoverJobs(covers, metrics, coverJobs)
+			s.enqueueCoverJobs(ctx, covers, metrics, coverJobs)
 		}
 
 		batch = batch[:0]
@@ -1519,7 +1519,7 @@ func existingThumbnailPath(cfg config.Config, bookHash string) sql.NullString {
 //
 // 排队本身不阻塞、不过闸门：这一批的寿命超出扫描调用，扫描不该被它按住——「扫描完成」
 // 从此只说扫描本身（ADR 0005）。派发、暂停与取消都是那条封面运行的事，见 CoverBatch.Drain。
-func (s *Scanner) enqueueCoverJobs(covers *CoverBatch, metrics *scanMetrics, jobs []coverJob) {
+func (s *Scanner) enqueueCoverJobs(ctx context.Context, covers *CoverBatch, metrics *scanMetrics, jobs []coverJob) {
 	if covers == nil || len(jobs) == 0 {
 		return
 	}
@@ -1527,7 +1527,7 @@ func (s *Scanner) enqueueCoverJobs(covers *CoverBatch, metrics *scanMetrics, job
 	if metrics != nil {
 		metrics.queuedCovers.Add(int64(len(jobs)))
 	}
-	covers.attach()
+	covers.attach(ctx)
 }
 
 // dispatchCover 把一个封面作业派进共享的 worker 池，并把它记进那一批的在飞数。
