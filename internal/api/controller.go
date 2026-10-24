@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
@@ -61,6 +62,7 @@ type Controller struct {
 	proposals          *proposal.Service
 	relocation         *relocation.Service
 	configPath         string
+	scans              *scanning.Service
 	watcher            *scanner.FileWatcher
 	watcherInitErr     error
 	relocationTopology relocationTopology
@@ -369,7 +371,6 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		auth:               newAuthState(),
 	}
 	if scan != nil {
-		scan.SetBatchCallback(c.handleScannerBatchEvent)
 		// 扫描排出来的每一批封面都在这里换成一条**封面运行**：报文自带去处，
 		// 「扫描完成」从此只说扫描本身（ADR 0005）。
 		scan.SetCoverRunLauncher(c.dispatchCoverBatch)
@@ -400,6 +401,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
 	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
+	c.assembleScanUseCases()
 	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
 		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
 		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },

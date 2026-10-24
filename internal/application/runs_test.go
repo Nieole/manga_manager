@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -138,5 +139,64 @@ func TestHistoryCleanupIsAnObservedRun(t *testing.T) {
 	}
 	if history[0].Run.MessageParams["runs"] != "0" {
 		t.Fatalf("cleanup result: %+v", history[0])
+	}
+}
+
+func TestWatchedQueueWaitsForTheRealRunAndObservesCancellation(t *testing.T) {
+	var pending []func()
+	runs, engine := testRuns(t, func(fn func()) { pending = append(pending, fn) }, nil)
+	ctx := context.Background()
+	spec := task.RunSpec{Identity: task.Identity{Type: "scan_library", Scope: task.ScopeLibrary, ScopeID: 1}, Trigger: task.TriggerWatch, CanCancel: true}
+	body := func(context.Context, *runhandle.Handle) (task.Result, error) { return task.Result{}, nil }
+	first, err := runs.Start(ctx, spec, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := runs.Start(ctx, spec, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if err = runs.AwaitWatched(wait, queued, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("queued run returned early: %v", err)
+	}
+	merged, err := runs.Start(ctx, spec, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = runs.AwaitWatched(ctx, merged, nil); !errors.Is(err, application.ErrRunCoalesced) {
+		t.Fatalf("merged run: %v", err)
+	}
+	if err = engine.Cancel(queued.Run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = runs.AwaitWatched(ctx, queued, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("queued cancellation: %v", err)
+	}
+	if _, err = engine.SetTaskDisabled(ctx, first.Run.TaskID, true); err != nil {
+		t.Fatal(err)
+	}
+	stalled, err := runs.Start(ctx, spec, body)
+	if err = runs.AwaitWatched(ctx, stalled, err); !errors.Is(err, application.ErrRunSuppressed) {
+		t.Fatalf("disabled run: %v", err)
+	}
+	for _, fn := range pending {
+		fn()
+	}
+}
+
+func TestWatchedFailureCannotBeReportedAsSuccess(t *testing.T) {
+	runs, _ := testRuns(t, func(fn func()) { fn() }, nil)
+	ctx := context.Background()
+	spec := task.RunSpec{Identity: task.Identity{Type: "scan_library", Scope: task.ScopeLibrary, ScopeID: 1}, Trigger: task.TriggerWatch}
+	launched, err := runs.Start(ctx, spec, func(context.Context, *runhandle.Handle) (task.Result, error) {
+		return task.Result{}, errors.New("scan cannot read archive")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = runs.AwaitWatched(ctx, launched, nil); err == nil {
+		t.Fatal("failed scan was treated as successful")
 	}
 }

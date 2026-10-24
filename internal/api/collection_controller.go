@@ -39,13 +39,7 @@ type CollectionSeriesItem struct {
 	AddedAt    time.Time      `json:"added_at"`
 }
 
-const franchiseCollectionSourceType = organize.FranchiseCollectionSourceType
-
 var errCollectionNameTaken = organize.ErrCollectionNameTaken
-
-func derivedCollectionSourceType(source string) bool {
-	return organize.DerivedCollectionSourceType(source)
-}
 
 func collectionUseCaseError(w http.ResponseWriter, err error, fallback string) {
 	status := http.StatusInternalServerError
@@ -558,11 +552,4 @@ func (c *Controller) updateSeriesRelation(w http.ResponseWriter, r *http.Request
 	c.scheduleFranchiseRebuild()
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "updated"})
-}
-
-func nullStringFromString(value string) sql.NullString {
-	if value == "" {
-		return sql.NullString{}
-	}
-	return sql.NullString{String: value, Valid: true}
 }

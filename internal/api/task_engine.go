@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -431,19 +430,7 @@ func (e *taskEngine) live(ctx context.Context) (RunLive, error) {
 // 等的判据是运行的状态，不是「任务体返回了没有」：**排队中**被取消的运行任务体根本不会执行
 // （用户在实况区按下那张排队卡片上的取消就是这一种），只等任务体的话，等待方会一直挂到停机。
 func (e *taskEngine) awaitRunOutcome(ctx context.Context, runID int64) error {
-	run, err := e.engine.Await(ctx, runID)
-	if err != nil {
-		return err
-	}
-	switch run.Status {
-	case task.StatusCompleted:
-		return nil
-	case task.StatusCancelled:
-		// 取消不是故障：等待方（文件监听器）据此不记错误日志，但也不会把它当成功。
-		return context.Canceled
-	default:
-		return fmt.Errorf("run %d ended as %s: %s", runID, run.Status, run.Error)
-	}
+	return e.runs.AwaitOutcome(ctx, runID)
 }
 
 // listTaskSummaries 取任务清单：一个任务一行，行上带它最近一次运行。

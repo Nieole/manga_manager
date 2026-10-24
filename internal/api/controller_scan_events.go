@@ -1,121 +1,20 @@
-// scanner 报文在 api 侧的落点：把批次事件翻成缓存失效与 SSE，把进度与指标翻成任务更新。
-//
-// 这里定义两个**扫描观察者**——发起扫描的一方交出哪一个，就决定了这次扫描的报文写到哪：
-// 资料库/系列扫描任务交出 taskScanObserver（守护扫描、监听器派生的扫描与建库首扫走的是同一条路，
-// 差别只在**发起方**），「重建缩略图」逐库交出 rebuildThumbLibrary。
-// 交出 nil 的只剩「重建索引」那趟逐库强扫：它归属重建索引那次运行，而那条运行的进度不按扫描的口径走。
-
 package api
 
 import (
 	"path/filepath"
 	"strconv"
 
+	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
 )
 
-func (c *Controller) handleScannerBatchEvent(action string) {
-	c.invalidateDashboardStatsCache("scanner_" + action)
-	if action == "scan_completed" {
-		c.warmDashboardStatsCacheAsync("scanner_" + action)
-	}
-	c.PublishEvent(action)
-}
+func (c *Controller) handleScannerBatchEvent(action string) { c.scans.BatchEvent(action) }
 
-// taskScanObserver 把一次扫描的报文写进它所属任务的**运行句柄**。
-//
-// 它只是句柄的一层翻译，不持有任何状态：谁有资格写这个任务，由「谁拿到了这个句柄」回答，
-// 与句柄本身的所有权模型一致（见 runhandle.Handle）。
-type taskScanObserver struct {
-	progress *runhandle.Handle
-}
-
-// newTaskScanObserver 把运行句柄包成一个扫描观察者；句柄为 nil 时返回 nil 接口值，
-// 于是「这次扫描的报文无处可报」在扫描器那边只有一个形状。
+// newTaskScanObserver is the compatibility observer for maintenance tasks.
 func newTaskScanObserver(progress *runhandle.Handle) scanner.ScanObserver {
-	if progress == nil {
-		return nil
-	}
-	return &taskScanObserver{progress: progress}
-}
-
-func (o *taskScanObserver) Progress(report scanner.ScanProgressReport) {
-	o.progress.Report(scanProgressFrame(report))
-}
-
-// ItemFailed 把一个条目的失败落成这条运行的**运行事件**：详情页的失败明细读的就是它。
-func (o *taskScanObserver) ItemFailed(failure scanner.ItemFailure) {
-	o.progress.ItemFailed(failure.Path, failure.Reason)
-}
-
-// Warn 把一次运行级告警落成这条运行的**运行事件**。
-//
-// 三项逐个搬过去，不把计数拼进补充说明：拼进去的话，详情页只能把一句英文错误串连同一个数字
-// 原样甩给用户，而「这一批有多少本」正是它唯一说得清的那部分。
-func (o *taskScanObserver) Warn(warning scanner.ScanWarning) {
-	o.progress.Warn(warning.Code, warning.Detail, warning.Count)
-}
-
-// Metrics 把扫描收尾的那份报文定版进这条运行的**指标**。
-//
-// **一个数报到哪，判据是这个**：可聚合的计数与时长走指标——那张表可查询可聚合，「这个库最近
-// 十次扫描平均处理了多少归档」因此是一句 SQL；描述「这次是在什么条件下跑的」走**任务参数**
-// 或**上限**表；同一件事只报一次。报文里那四个描述性值因此不在这里——发起声明
-// （见 startLibraryScanRun）与上限表里已经各有一份，而这一路解析的是同一条存储策略。
-//
-// 走整帧上报而不是**累加指标**：单库扫描的每份进度报文送的已经是快照绝对值（见
-// scanner.ScanProgressReport.Metrics），累加会把收尾的总量再加到那份绝对值上，翻一倍。
-// 累加那条通道属于跨资料库的运行（见 rebuildThumbLibrary.Metrics），那里每份报文只覆盖一个库。
-//
-// 十三个数一次报完，不拆成两次写入——理由见 runhandle.Handle.Report。
-func (o *taskScanObserver) Metrics(report scanner.ScanMetricsReport) {
-	o.progress.Report(runhandle.Frame{Metrics: scanMetricValues(report)})
-}
-
-// scanMetricValues 把一份扫描指标报文摊成指标那张表里的十三个键。
-func scanMetricValues(report scanner.ScanMetricsReport) map[string]int64 {
-	return map[string]int64{
-		"discovered_archives":      report.DiscoveredArchives,
-		"skipped_archives":         report.SkippedArchives,
-		"processed_archives":       report.ProcessedArchives,
-		"opened_archives":          report.OpenedArchives,
-		"hashed_files":             report.HashedFiles,
-		"queued_covers":            report.QueuedCovers,
-		"failed_archives":          report.FailedArchives,
-		"rehomed_books":            report.RehomedBooks,
-		"stale_series_stats":       report.StaleSeriesStats,
-		"format_filtered_archives": report.FormatFilteredArchives,
-		"io_wait_ms":               report.IOWaitMillis,
-		"paused_ms":                report.PausedMillis,
-		"duration_ms":              report.DurationMillis,
-	}
-}
-
-// scanProgressFrame 把扫描器的一份进度报文翻成**一帧**任务进度。
-//
-// 一份报文里计数、阶段、当前条目与指标同时变，只能整帧报（理由见 runhandle.Handle.Report）。
-func scanProgressFrame(report scanner.ScanProgressReport) runhandle.Frame {
-	metrics := make(map[string]int64, len(report.Metrics))
-	for key, value := range report.Metrics {
-		metrics[key] = value
-	}
-	current := int(report.Current)
-	total := int(report.Total)
-	frame := runhandle.Frame{
-		Current: &current,
-		Total:   &total,
-		Phase:   report.Phase,
-		Item:    report.CurrentItem,
-		Code:    "task.msg.scan.scanning",
-		Metrics: metrics,
-	}
-	if report.CurrentItem != "" {
-		frame.Code = "task.msg.scan.scanning_item"
-		frame.Params = map[string]string{"item": filepath.Base(report.CurrentItem)}
-	}
-	return frame
+	return scanning.NewObserver(progress)
 }
 
 // Progress 把本库的一份进度报文并进跨库聚合，再按全局视角写一帧重建任务的进度。
@@ -179,7 +78,7 @@ func (l *rebuildThumbLibrary) Warn(warning scanner.ScanWarning) {
 //
 // 报文里那四个描述性值（存储画像、卷键、两个并发数）不随指标写上去：它们描述的是这一个库，
 // 而这条运行跨着全部资料库，理由见 launchRebuildThumbnailsTask。哪个数走指标、哪个走参数，
-// 判据见 taskScanObserver.Metrics。
+// 判据见 scanning.NewObserver。
 func (l *rebuildThumbLibrary) Metrics(report scanner.ScanMetricsReport) {
 	snap := l.fixate(report)
 	if snap.Progress == nil {
