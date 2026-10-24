@@ -4,7 +4,7 @@
 
 **Blocked by:** 17: 应用运行入口与历史保留清理
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -16,7 +16,7 @@
 - [x] 运行槽位、暂停闸门、取消及后台磁盘许可继续控制实际封面工作，未获准运行时不能先生成。
 - [x] 重启重试或恢复按既有缺封面回填规则重新找工作，不依赖已丢失的进程内批；等待只针对正确的批和运行。
 - [x] 沿用唯一运行引擎，不新增扫描守卫或另外一套封面运行事实源，也不将扫描与封面合成一条运行。
-- [ ] 应用与扫描集成测试覆盖槽位占满、发起合并、多批交错、暂停取消、等待和重启回填；完成相关后端门禁。
+- [x] 应用与扫描集成测试覆盖槽位占满、发起合并、多批交错、暂停取消、等待和重启回填；完成相关后端门禁。
 - [x] 删除本票旧批次配对与发起副本，保留尚未迁移调用方的薄兼容入口。
 
 ## Comments
@@ -37,3 +37,7 @@
 - 上下文修复并合并集成 tip 后，`go test ./... -json -timeout 180s` 实际执行结束：除 API 包外全部通过，包含 `internal/application`、`internal/application/scanning`、`internal/scanner`（19.88 秒）与 `internal/database`。API 包唯一失败仍为 `TestUpdateBookProgressThrottlesRepeatedWrites`（包耗时 107.06 秒），没有本票新增失败。
 - 同版本全量 `golangci-lint run` 为 `0 issues.`；`gofmt -l ./cmd ./internal` 输出为空；`git diff --check` 通过；`go run ./cmd/tsgen` 后 `web/src/api/generated.ts` 无 diff。
 - 后续完整 Scanner 复验正常执行通过，替代上文那次受系统策略阻断的验证结果；没有改变工具路径、临时目录或系统策略。全量门禁因独立阅读回归仍未全绿，验收第七项留待集成处理后勾选。
+
+## 集成补验
+
+04 基于含 19 的集成分支完成最终全量 Go 测试、全量 lint（0 issues）、格式、SQL 与 TypeScript 生成检查，全部通过；前端 893 项测试、build/lint 通过。04 合入 cb8fab1 后 reading/database 及 HTTP 节流、批量读态、未知页数定向回归再次通过。此前记录的环境阻碍与旧测试缺口已补验，全部本票验收项满足，关闭工单。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 在线阅读位置的完整用例
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -19,7 +19,7 @@
 - [x] 持久化升级不改变既有用户、书、系列身份；无法证明的旧清除不反向猜测回填，无用户兼容路径也能拒绝有证据的旧重放。
 - [x] 使用真实 SQLite 和可控时间覆盖按书、按系列、清除后重放、重启后重放、新阅读恢复、批内失败及后批失败；保留界面批量操作回归。
 - [x] 本票交付批量读态和清除保护；批量已读活动与未知页数全链统计由 04 完成，不在此引入第二份活动规则。
-- [ ] 删除本票替代的旧读态写入配方，完成相关后端、前端、存储升级和生成检查。
+- [x] 删除本票替代的旧读态写入配方，完成相关后端、前端、存储升级和生成检查。
 ## Comments
 
 实现：`reading.MarkBooks` / `MarkSeries` 拥有系列展开、数量限制、主体、时间/重试、清除和分批规则。每 500 本通过 `database.MutateReadingPositions` 原子保存进度、basis/receipt 及聚合；后批失败返回前批 committed_book_ids，并按已提交事实失效缓存。HTTP 只解码、调用及映射结果，错误响应仍携带已提交数量/身份。删除旧 HTTP 逐书配方与已无生产调用的 SetUserBooksReadState / ClearUserBookProgress。原查询、迁移与继续阅读回归保留，纯旧写法镜像批写测试由完整阅读用例测试替代。
@@ -37,3 +37,7 @@
 - 未改变 sqlc 输入或 tsgen 契约目标，无生成漂移需要更新。提交前已合并集成分支 9658dac；前端完整门禁是在此合并前运行，合并未触碰本票前端文件。
 
 集成复验（Go 1.26.10）：最新 reading/database 全包测试通过；HTTP 回归 TestBulkMarkUnreadRejectsDelayedOnlineReplay 通过，本次未触发 Application Control 拒绝。读态操作及卷内选择最小前端回归 2 文件 / 5 用例通过，git diff --check 通过。全仓门禁由集成阶段统一确认，故本票最后门禁项及状态暂保留。
+
+## 集成补验
+
+04 基于含 19 的集成分支完成最终全量 Go 测试、全量 lint（0 issues）、格式、SQL 与 TypeScript 生成检查，全部通过；前端 893 项测试、build/lint 通过。04 合入 cb8fab1 后 reading/database 及 HTTP 节流、批量读态、未知页数定向回归再次通过。此前记录的环境阻碍与旧测试缺口已补验，全部本票验收项满足，关闭工单。
