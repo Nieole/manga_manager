@@ -13,6 +13,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { LocaleProvider } from '../i18n/LocaleProvider';
 import { ToastProvider } from '../components/ToastProvider';
 import { messages as zhCN } from '../i18n/locales/zh-CN';
+import { ApplicationSessionProvider } from '../session/ApplicationSessionProvider';
 import BackgroundTasks from './BackgroundTasks';
 import Logs from './Logs';
 
@@ -79,10 +80,11 @@ function logRequests() {
 }
 
 function wrap(node: React.ReactNode) {
+  vi.stubGlobal('EventSource', class { close() {} });
   return render(
     <LocaleProvider initialLocale="zh-CN" initialMessages={zhCN} fallbackMessages={zhCN}>
       <ToastProvider>
-        <MemoryRouter>{node}</MemoryRouter>
+        <MemoryRouter><ApplicationSessionProvider identity="1:admin" isAdmin>{node}</ApplicationSessionProvider></MemoryRouter>
       </ToastProvider>
     </LocaleProvider>,
   );
@@ -92,6 +94,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('任务中心的搜索框', () => {

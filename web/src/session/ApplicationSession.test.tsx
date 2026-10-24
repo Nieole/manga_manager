@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { ApplicationSessionProvider, useLibraryRefresh, useSessionRunPush } from './ApplicationSessionProvider';
+import { ApplicationSessionProvider, useLibraryRefresh, useSessionRunPush, useSessionRecovery } from './ApplicationSessionProvider';
 
 class Source {
   static CLOSED = 2;
@@ -33,14 +33,11 @@ it('shares one connection, decodes refresh once, and preserves consumer local in
 });
 it('replaces sensitive projections on identity/role change and rejects old connection callbacks', () => {
   vi.stubGlobal('EventSource', Source);
-  const bridge = vi.fn();
-  window.addEventListener('manga-manager:run-push', bridge);
   const view = render(<ApplicationSessionProvider identity="1:admin" isAdmin><Consumer /></ApplicationSessionProvider>);
   const old = Source.instances[0];
   const payload = 'run_live:{"sequence":7,"prev":3}';
   act(() => old.onmessage?.({ data: payload }));
   expect(screen.getByText('0:1')).toBeTruthy();
-  expect(bridge).toHaveBeenCalledTimes(1);
   view.rerender(<ApplicationSessionProvider identity="1:regular" isAdmin={false}><Consumer /></ApplicationSessionProvider>);
   expect(old.closed).toBe(true);
   expect(screen.getByText('0:0')).toBeTruthy();
@@ -49,10 +46,46 @@ it('replaces sensitive projections on identity/role change and rejects old conne
     Source.instances[1].onmessage?.({ data: payload });
     Source.instances[1].onmessage?.({ data: 'refresh' });
   });
-  expect(bridge).toHaveBeenCalledTimes(1);
   expect(screen.getByText('1:0')).toBeTruthy();
   view.rerender(<ApplicationSessionProvider identity="2:admin" isAdmin><Consumer /></ApplicationSessionProvider>);
   expect(Source.instances[1].closed).toBe(true);
   expect(screen.getByText('0:0')).toBeTruthy();
-  window.removeEventListener('manga-manager:run-push', bridge);
+});
+
+it('reports gaps once at the shared session and resets continuity after recovery', () => {
+  vi.stubGlobal('EventSource', Source);
+  const recover = vi.fn();
+  function Observer() { useSessionRecovery(recover); return null; }
+  render(<ApplicationSessionProvider identity="1:admin" isAdmin><Observer /></ApplicationSessionProvider>);
+  const source = Source.instances[0];
+  act(() => source.onopen?.());
+  act(() => source.onmessage?.({ data: 'run_live:{"sequence":11,"prev":0}' }));
+  act(() => source.onmessage?.({ data: 'run_live:{"sequence":99,"prev":11}' }));
+  expect(recover).not.toHaveBeenCalled();
+  act(() => source.onmessage?.({ data: 'run_live:{"sequence":102,"prev":101}' }));
+  expect(recover).toHaveBeenCalledTimes(1);
+  act(() => source.onopen?.());
+  expect(recover).toHaveBeenCalledTimes(2);
+  act(() => source.onmessage?.({ data: 'run_live:{"sequence":5,"prev":0}' }));
+  expect(recover).toHaveBeenCalledTimes(2);
+});
+
+it('notifies recovery when a closed connection is replaced', () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('EventSource', Source);
+  const recover = vi.fn();
+  function Observer() { useSessionRecovery(recover); return null; }
+  try {
+    render(<ApplicationSessionProvider identity="1:admin" isAdmin><Observer /></ApplicationSessionProvider>);
+    act(() => {
+      Source.instances[0].onopen?.();
+      Source.instances[0].readyState = Source.CLOSED;
+      Source.instances[0].onerror?.();
+      vi.advanceTimersByTime(1000);
+      Source.instances[1].onopen?.();
+    });
+    expect(Source.instances).toHaveLength(2);
+    expect(Source.instances[0].closed).toBe(true);
+    expect(recover).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
 });

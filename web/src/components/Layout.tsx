@@ -17,9 +17,9 @@ import { SidebarTaskBubble } from './SidebarTaskBubble';
 import { SidebarGroup, SidebarLink } from './layout/SidebarNav';
 import { UserMenu } from './layout/UserMenu';
 import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
-import { useTaskBubbles } from './layout/useTaskBubbles';
+import { useTaskBubbles } from '../features/task-observation/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
-import { useLibraryInvalidation, useLibraryRefresh, useSessionRunPush } from '../session/ApplicationSessionProvider';
+import { useLibraryInvalidation, useLibraryRefresh } from '../session/ApplicationSessionProvider';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -110,8 +110,8 @@ export default function Layout() {
     // { refreshTrigger, libraries } 会让所有子路由（含库页大量卡片）跟着重渲染。仅当二者真正变化时才换引用。
     const outletContext = useMemo(() => ({ refreshTrigger, libraries }), [refreshTrigger, libraries]);
 
-    // 全局任务进度气泡：状态、终态延时清理定时器与进度覆盖事件监听均封装在 useTaskBubbles 内。
-    const { entries: taskBubbleEntries, ingestRunSnapshot, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
+    // 任务气泡自行消费会话，持有终态延时清理与手动关闭状态。
+    const { entries: taskBubbleEntries, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
 
     // 文件夹浏览器状态与请求逻辑封装在 useDirectoryBrowser 内。
     const { browsing, setBrowsing, browseDirs, browseCurrent, browseParent, browseDrives, openDirectoryBrowser, navigateDirectoryBrowser } = useDirectoryBrowser();
@@ -285,10 +285,6 @@ export default function Layout() {
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
-
-    useSessionRunPush(frame => {
-        if (frame.run) ingestRunSnapshot(frame.run);
-    });
 
     useLayoutShortcuts({
         onOpenSearch: () => setIsSearchModalOpen(true),

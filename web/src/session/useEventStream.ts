@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react';
 export interface ServerEventsHandlers {
   /** 收到一条 SSE 消息时调用。 */
   onMessage: (data: string) => void;
+  onReconnect?: () => void;
 }
 
 // 指数退避：1s → 2s → 4s … 封顶 30s。封顶值不宜太大，否则服务重启后前端要等很久才恢复。
@@ -15,9 +16,12 @@ export function useEventStream(url: string, handlers: ServerEventsHandlers): voi
   // 用 ref 持有回调，避免它每次渲染变化都触发重连。
   const onMessageRef = useRef(handlers.onMessage);
   onMessageRef.current = handlers.onMessage;
+  const onReconnectRef = useRef(handlers.onReconnect);
+  onReconnectRef.current = handlers.onReconnect;
 
   useEffect(() => {
     let disposed = false;
+    let opened = false;
     let source: EventSource | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let retryDelay = INITIAL_RETRY_MS;
@@ -41,6 +45,8 @@ export function useEventStream(url: string, handlers: ServerEventsHandlers): voi
         if (disposed || source !== es) return;
         // 连上了就把退避重置，否则一次长时间离线会让后续每次断线都等满 30s。
         retryDelay = INITIAL_RETRY_MS;
+        if (opened) onReconnectRef.current?.();
+        opened = true;
       };
 
       es.onmessage = (event) => {
