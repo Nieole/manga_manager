@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 )
 
 // TestSmartCollectionCountMatchesListing 是主判据：对同一个用户，
@@ -64,8 +64,8 @@ func TestSmartCollectionCountMatchesListing(t *testing.T) {
 	}
 
 	alice := mkTestUser(t, store, "alice", database.RoleRegular)
-	if err := store.SetUserBooksReadState(ctx, alice.ID, all[0].bookIDs, true, time.Now()); err != nil {
-		t.Fatalf("SetUserBooksReadState: %v", err)
+	if _, err := reading.New(store, nil).MarkBooks(ctx, reading.MarkBooksInput{UserID: alice.ID, BookIDs: all[0].bookIDs, IsRead: true}); err != nil {
+		t.Fatalf("MarkBooks: %v", err)
 	}
 
 	completed := "completed"
@@ -145,8 +145,8 @@ func TestSmartCollectionCountIsPerUser(t *testing.T) {
 
 	alice := mkTestUser(t, store, "alice", database.RoleRegular)
 	bob := mkTestUser(t, store, "bob", database.RoleRegular)
-	if err := store.SetUserBooksReadState(ctx, alice.ID, []int64{bookID}, true, time.Now()); err != nil {
-		t.Fatalf("SetUserBooksReadState: %v", err)
+	if _, err := reading.New(store, nil).MarkBooks(ctx, reading.MarkBooksInput{UserID: alice.ID, BookIDs: []int64{bookID}, IsRead: true}); err != nil {
+		t.Fatalf("MarkBooks: %v", err)
 	}
 
 	completed := "completed"
