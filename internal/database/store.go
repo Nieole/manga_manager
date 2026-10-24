@@ -27,6 +27,8 @@ var schemaHandwrittenSQL string
 var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
+	MutateReadingPosition(context.Context, int64, int64, string, func(ReadingPositionState) ReadingPositionMutation) (ReadingPositionMutation, error)
+	LogUserReadingActivityAt(context.Context, int64, int64, int64, time.Time) error
 	Querier
 	LibraryRelocationProtection(context.Context, int64) (*LibraryRelocationProtection, error)
 	DeleteMissingSeries(context.Context, int64) error

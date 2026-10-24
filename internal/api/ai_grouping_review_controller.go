@@ -13,6 +13,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/organize"
 )
 
 // errAIGroupingCollectionPreempted 表示这条候选合集在本次加载与写入之间已被别人处理掉了。
@@ -677,10 +678,7 @@ func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database
 	// 候选合集名由 AI 给出，同样受「哪里都不许出现两个同名合集」约束：查重落在事务内的 SQL 上，
 	// 因此整批应用时先建的那几条也算数——同一批里两条同名候选，第二条就在这里被挡下。
 	// 撞名不是能重试的瞬时状态，用户得先改名或驳回这条候选，因此整批回滚。
-	switch _, err := q.CollectionNameExists(ctx, name); {
-	case err == nil:
-		return 0, errCollectionNameTaken
-	case !errors.Is(err, sql.ErrNoRows):
+	if err := organize.CheckCollectionName(ctx, q, name); err != nil {
 		return 0, err
 	}
 	created, err := q.CreateCollection(ctx, database.CreateCollectionParams{

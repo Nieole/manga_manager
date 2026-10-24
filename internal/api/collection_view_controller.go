@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
 )
 
 // CollectionView 是合集页左栏的一个列表项，手工合集与智能书架共用。
@@ -429,10 +430,7 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 	// collections.name 上没有唯一约束兜底，这道串行化就是这条不变量在固化入口的全部保障。
 	var createdID int64
 	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		switch _, err := q.CollectionNameExists(r.Context(), name); {
-		case err == nil:
-			return errCollectionNameTaken
-		case !errors.Is(err, sql.ErrNoRows):
+		if err := organize.CheckCollectionName(r.Context(), q, name); err != nil {
 			return err
 		}
 		created, err := q.CreateCollection(r.Context(), database.CreateCollectionParams{
@@ -498,16 +496,7 @@ func normalizeSmartSnapshotLimit(limit int) int {
 }
 
 func (c *Controller) collectionNameExists(ctx context.Context, name string) (bool, error) {
-	if strings.TrimSpace(name) == "" {
-		return false, nil
-	}
-	if _, err := c.store.CollectionNameExists(ctx, strings.TrimSpace(name)); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
+	return organize.CollectionNameExists(ctx, c.store, name)
 }
 
 func (c *Controller) getSmartFilterByID(r *http.Request, filterID int64) (SmartFilter, error) {

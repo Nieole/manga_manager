@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
 )
 
 // ============================================
@@ -38,45 +39,38 @@ type CollectionSeriesItem struct {
 	AddedAt    time.Time      `json:"added_at"`
 }
 
-// franchiseCollectionSourceType 是作品群合集在 collections.source_type 里的取值。
-const franchiseCollectionSourceType = "system_franchise"
+const franchiseCollectionSourceType = organize.FranchiseCollectionSourceType
 
-// errCollectionNameTaken 表示事务内查到了同名合集。它只在事务里产生——事务外的查重直接用
-// collectionNameExists——由建号、智能书架固化与 AI 分组应用三条写入路径共用，一律转成 409。
-var errCollectionNameTaken = errors.New("collection name already exists")
+var errCollectionNameTaken = organize.ErrCollectionNameTaken
 
-// derivedCollectionSourceType 判断这个来源的合集是否「推导出来、由重建流程持有」。
-// 只有作品群属于这一类：它由系列关系的连通分量推导，每次重建都按稳定键 upsert 并把
-// 不属于连通分量的成员删掉，人工改动一律被静默覆盖。smart_snapshot 与 ai_grouping
-// 是一次性固化的产物，落地后归用户所有、没有任何流程会回头覆盖，因此不在此列。
-func derivedCollectionSourceType(sourceType string) bool {
-	return sourceType == franchiseCollectionSourceType
+func derivedCollectionSourceType(source string) bool {
+	return organize.DerivedCollectionSourceType(source)
 }
 
-// writableCollection 载入合集并挡下对推导型合集的人工写入，是这条不变量的唯一执行点
-// ——把合集从列表里过滤掉只是收走了入口，直接调 API 仍然改得到。
-// 第二个返回值为 false 时响应已写出，调用方直接 return。
-func (c *Controller) writableCollection(w http.ResponseWriter, r *http.Request, id int64) (database.GetStaticCollectionViewRow, bool) {
-	view, err := c.store.GetStaticCollectionView(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Collection not found")
-			return view, false
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to load collection")
-		return view, false
+func collectionUseCaseError(w http.ResponseWriter, err error, fallback string) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, organize.ErrCollectionNameTaken):
+		status = http.StatusConflict
+	case errors.Is(err, organize.ErrCollectionNotFound), errors.Is(err, organize.ErrCollectionMemberNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, organize.ErrCollectionReadOnly):
+		status = http.StatusForbidden
+	case errors.Is(err, organize.ErrCollectionNameRequired), errors.Is(err, organize.ErrCollectionMembersRequired), errors.Is(err, organize.ErrCollectionTooManyMembers):
+		status = http.StatusBadRequest
 	}
-	if derivedCollectionSourceType(view.SourceType) {
-		// 403 而非 409：这不是可以重试的状态冲突，这个合集对人工写入永远关闭。
-		jsonError(w, http.StatusForbidden, "Franchise collections are derived from series relations and cannot be edited")
-		return view, false
+	if status != http.StatusInternalServerError {
+		fallback = err.Error()
 	}
-	return view, true
+	if errors.Is(err, organize.ErrCollectionNameTaken) {
+		fallback = "A collection with this name already exists"
+	}
+	jsonError(w, status, fallback)
 }
 
 // listCollections 返回可人工编辑的合集。作品群不在其中——见 ListCollectionsWithSeriesCount。
 func (c *Controller) listCollections(w http.ResponseWriter, r *http.Request) {
-	rows, err := c.store.ListCollectionsWithSeriesCount(r.Context())
+	rows, err := organize.NewCollections(c.store).List(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list collections")
 		return
@@ -117,42 +111,12 @@ func (c *Controller) createCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		jsonError(w, http.StatusBadRequest, "Name is required")
-		return
-	}
-
-	// 查重与插入放进同一个事务：store 的 DSN 带 _txlock=immediate，BeginTx 即取写锁，
-	// 因此两个并发建号请求会被串行化，不会各自读到「不存在」再各插一条同名合集。
-	// collections.name 上没有唯一约束兜底，这道串行化就是这条不变量在建号入口的全部保障。
-	var id int64
-	err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		switch _, err := q.CollectionNameExists(r.Context(), name); {
-		case err == nil:
-			return errCollectionNameTaken
-		case !errors.Is(err, sql.ErrNoRows):
-			return err
-		}
-		created, err := q.CreateSimpleCollection(r.Context(), database.CreateSimpleCollectionParams{
-			Name:        name,
-			Description: nullStringFromString(strings.TrimSpace(req.Description)),
-		})
-		if err != nil {
-			return err
-		}
-		id = created
-		return nil
-	})
-	if errors.Is(err, errCollectionNameTaken) {
-		jsonError(w, http.StatusConflict, "A collection with this name already exists")
-		return
-	}
+	id, err := organize.NewCollections(c.store).Create(r.Context(), req.Name, req.Description)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to create collection")
+		collectionUseCaseError(w, err, "Failed to create collection")
 		return
 	}
-	jsonResponse(w, http.StatusCreated, map[string]interface{}{"id": id, "name": name})
+	jsonResponse(w, http.StatusCreated, map[string]interface{}{"id": id, "name": strings.TrimSpace(req.Name)})
 }
 
 // deleteCollection 删除合集
@@ -162,18 +126,8 @@ func (c *Controller) deleteCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
-	if _, ok := c.writableCollection(w, r, id); !ok {
-		return
-	}
-	// 检查影响行数：不存在的资源返回 200 会让前端把「这个合集早就没了」当成删除成功，
-	// 列表刷新后它却还在（因为压根不是同一个 id），用户只会觉得功能时灵时不灵。
-	affected, err := c.store.DeleteCollection(r.Context(), id)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to delete collection")
-		return
-	}
-	if affected == 0 {
-		jsonError(w, http.StatusNotFound, "Collection not found")
+	if err := organize.NewCollections(c.store).Delete(r.Context(), id); err != nil {
+		collectionUseCaseError(w, err, "Failed to delete collection")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -191,43 +145,13 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
-	// collections.name 上没有数据库级唯一约束（重名由应用层判定），所以必须显式查一次；
-	// 同一次载入顺带挡下作品群这类推导型合集——它的名字会被重建的 upsert 覆盖回去。
-	// 与快照固化路径共用同一判定，保证「哪里都不许出现两个同名合集」。
-	current, ok := c.writableCollection(w, r, id)
-	if !ok {
-		return
-	}
 	var req UpdateCollectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	// 名称必填：PUT 请求缺 name 字段时不能直接写成空串（前端只想改描述时很自然就会这么发），
-	// 否则合集会在列表里变成一个没有名字的条目。
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		jsonError(w, http.StatusBadRequest, "Name is required")
-		return
-	}
-	if !strings.EqualFold(strings.TrimSpace(current.Name), name) {
-		conflict, err := c.collectionNameExists(r.Context(), name)
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to check collection name")
-			return
-		}
-		if conflict {
-			jsonError(w, http.StatusConflict, "A collection with this name already exists")
-			return
-		}
-	}
-
-	if err := c.store.UpdateCollectionDetails(r.Context(), database.UpdateCollectionDetailsParams{
-		Name:        name,
-		Description: nullStringFromString(strings.TrimSpace(req.Description)),
-		ID:          id,
-	}); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to update collection")
+	if err := organize.NewCollections(c.store).Update(r.Context(), id, req.Name, req.Description); err != nil {
+		collectionUseCaseError(w, err, "Failed to update collection")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "updated"})
@@ -241,7 +165,7 @@ func (c *Controller) getCollectionSeries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := c.store.ListCollectionSeries(r.Context(), id)
+	rows, err := organize.NewCollections(c.store).Members(r.Context(), id)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get collection series")
 		return
@@ -271,75 +195,33 @@ func (c *Controller) addSeriesToCollection(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
-	if _, ok := c.writableCollection(w, r, id); !ok {
-		return
-	}
 	var req AddSeriesToCollectionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.SeriesIDs) == 0 {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "series_ids is required")
 		return
 	}
-
-	// 数量上限：与智能合集快照口径一致，防止单个请求塞入任意多条。
-	if len(req.SeriesIDs) > maxCollectionBatchSize {
-		jsonError(w, http.StatusBadRequest, "Too many series in one request")
-		return
-	}
-
-	ctx := r.Context()
-	added := 0
-	// 整批放进一个事务：逐条独立写入时，中途失败会留下「加了一半」的合集，
-	// 而 added 计数又只统计「没报错」的次数——AddSeriesToCollection 用的是
-	// INSERT OR IGNORE，重复添加不报错也不插入，于是 added 把空操作也算成了成功。
-	err = c.store.ExecTx(ctx, func(q *database.Queries) error {
-		for _, sid := range req.SeriesIDs {
-			affected, err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
-				CollectionID: id,
-				SeriesID:     sid,
-			})
-			if err != nil {
-				return err
-			}
-			added += int(affected)
-		}
-		return nil
-	})
+	added, err := organize.NewCollections(c.store).AddMembers(r.Context(), id, req.SeriesIDs)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to add series to collection")
+		collectionUseCaseError(w, err, "Failed to add series to collection")
 		return
 	}
-
-	_ = c.store.TouchCollection(ctx, id)
-
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"added": added})
 }
 
 // removeSeriesFromCollection 从合集中移除系列
 func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.Request) {
-	collectionID, err := parseID(r, "collectionId")
+	id, err := parseID(r, "collectionId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
-	seriesID, err := parseID(r, "seriesId")
+	sid, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
 		return
 	}
-	if _, ok := c.writableCollection(w, r, collectionID); !ok {
-		return
-	}
-
-	affected, err := c.store.RemoveSeriesFromCollection(r.Context(), database.RemoveSeriesFromCollectionParams{
-		CollectionID: collectionID,
-		SeriesID:     seriesID,
-	})
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to remove series")
-		return
-	}
-	if affected == 0 {
-		jsonError(w, http.StatusNotFound, "Series is not in this collection")
+	if err := organize.NewCollections(c.store).RemoveMember(r.Context(), id, sid); err != nil {
+		collectionUseCaseError(w, err, "Failed to remove series")
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "removed"})
