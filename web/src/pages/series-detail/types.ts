@@ -77,6 +77,7 @@ export interface Book {
   summary?: NullString;
   page_count: number;
   last_read_page?: { Valid: boolean; Int64: number };
+  is_read?: boolean;
   last_read_at?: { Valid: boolean; Time: string };
   cover_path?: NullString;
   updated_at?: string;

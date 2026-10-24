@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS books (
     cover_locked BOOLEAN NOT NULL DEFAULT FALSE,
     last_read_page INTEGER,
     last_read_at DATETIME,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
     file_hash TEXT,
     quick_hash TEXT,
     path_fingerprint TEXT,

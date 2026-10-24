@@ -98,7 +98,7 @@ func (s *SqlStore) GetDashboardVolatileStats(ctx context.Context) (*DashboardVol
 	var stats DashboardVolatileStats
 	err := s.db.QueryRowContext(ctx, `
 		SELECT
-			(SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
+			(SELECT COUNT(*) FROM books WHERE is_read OR last_read_page > 0) AS read_books,
 			(SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= ?) AS active_days_7
 	`, DayKeyDaysAgo(7)).Scan(&stats.ReadBooks, &stats.ActiveDays7)
 	if err != nil {

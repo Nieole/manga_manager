@@ -247,7 +247,7 @@ func (s *SqlStore) GetUserPeriodStats(ctx context.Context, userID int64, year, m
 	// 与上面 date 同口径（本地墙钟日期），可走 idx_user_book_progress_user_time(user_id, last_read_at)。
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
-		 WHERE ubp.user_id = ? AND b.page_count > 0 AND ubp.last_read_page >= b.page_count
+		 WHERE ubp.user_id = ? AND (ubp.is_read OR (b.page_count > 0 AND ubp.last_read_page >= b.page_count))
 		   AND ubp.last_read_at IS NOT NULL AND ubp.last_read_at >= ? AND ubp.last_read_at < ?`,
 		userID, lowerBound, upperBound).Scan(&stats.BooksCompleted); err != nil {
 		return UserPeriodStats{}, err
