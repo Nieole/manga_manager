@@ -31,3 +31,9 @@
 - 已通过应用测试与 API 封面装配/独立控制/删库作用域/存储 IO 投影定向回归；原 private observer 取数测试迁为应用完整用例，IO 读投影夹具经公开运行句柄上报，不依赖观察者内部生命周期。
 - 合并集成 tip 前全量 API 的失败列表只有既有 `TestUpdateBookProgressThrottlesRepeatedWrites`，交阅读票处理；全量 Scanner 当次执行被 Application Control 拒绝，未改名/换路径或绕过系统策略。最后一项门禁待上下文修复与合并后复验，本票暂不置 done。
 - 全量 lint 曾为 `0 issues.`；生成契约重生成无 diff。后续最终门禁结果记录在本票后续验证中。
+
+### 最终验证
+
+- 上下文修复并合并集成 tip 后，`go test ./... -json -timeout 180s` 实际执行结束：除 API 包外全部通过，包含 `internal/application`、`internal/application/scanning`、`internal/scanner`（19.88 秒）与 `internal/database`。API 包唯一失败仍为 `TestUpdateBookProgressThrottlesRepeatedWrites`（包耗时 107.06 秒），没有本票新增失败。
+- 同版本全量 `golangci-lint run` 为 `0 issues.`；`gofmt -l ./cmd ./internal` 输出为空；`git diff --check` 通过；`go run ./cmd/tsgen` 后 `web/src/api/generated.ts` 无 diff。
+- 后续完整 Scanner 复验正常执行通过，替代上文那次受系统策略阻断的验证结果；没有改变工具路径、临时目录或系统策略。全量门禁因独立阅读回归仍未全绿，验收第七项留待集成处理后勾选。
