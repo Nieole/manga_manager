@@ -1,3 +1,4 @@
+import { useLibraryRefresh } from '../session/ApplicationSessionProvider';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
@@ -83,6 +84,7 @@ export default function Organize() {
   // 健康报告本身普通用户读得到，修复动作一律读不到：刮削与重扫是管理员写，重建文件身份与
   // KOReader 对账更在 /api/system/ 下（后端 isAdminOnlyPath）。按钮因此只对管理员渲染——
   // 留着它们，普通用户点一下换回一句泛化的失败提示，看着像系统坏了。
+  const catalogRefresh = useLibraryRefresh({ area: 'organize' });
   const { isAdmin } = useAuth();
   const { t, formatNumber } = useI18n();
   const navigate = useNavigate();
@@ -128,6 +130,11 @@ export default function Organize() {
     void fetchReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId]);
+
+  useEffect(() => {
+    if (catalogRefresh > 0) void fetchReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogRefresh]);
 
   useEffect(() => {
     const onVisible = () => {

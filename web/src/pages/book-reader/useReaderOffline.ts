@@ -42,6 +42,9 @@ export function useReaderOffline({
   getImageUrlForBook,
   t,
 }: UseReaderOfflineOptions) {
+  const viewScopeRef = useRef({ bookId });
+  if (viewScopeRef.current.bookId !== bookId) viewScopeRef.current = { bookId };
+  const viewScope = viewScopeRef.current;
   const offlineSupported = supportsOfflineReaderCache();
   // 下载是异步的，期间用户可能已经翻到别的书。收尾时拿它比一比，
   // 免得把上一本书的状态盖到当前这本上。
@@ -65,6 +68,7 @@ export function useReaderOffline({
   const offlineCacheError = bookId ? offlineCacheErrors[bookId] ?? null : null;
 
   const refreshOfflineStatus = useCallback(() => {
+    if (viewScopeRef.current !== viewScope) return;
     if (!bookId || !offlineSupported) {
       setOfflineStatus(null);
       setOfflineQueuedPage(null);
@@ -83,7 +87,7 @@ export function useReaderOffline({
         setOfflineStatus(null);
       });
     setOfflineQueuedPage(getQueuedOfflineProgress(bookId)?.page ?? null);
-  }, [bookId, offlineSupported]);
+  }, [bookId, offlineSupported, viewScope]);
 
   useEffect(() => {
     activeBookIdRef.current = bookId;
@@ -120,8 +124,8 @@ export function useReaderOffline({
   const queueProgress = useCallback((pageNumber: number, occurredAt?: string) => {
     if (!bookId) return;
     queueOfflineProgress(bookId, pageNumber, bookTitle || undefined, occurredAt);
-    setOfflineQueuedPage(pageNumber);
-  }, [bookId, bookTitle]);
+    if (viewScopeRef.current === viewScope) setOfflineQueuedPage(pageNumber);
+  }, [bookId, bookTitle, viewScope]);
 
   const cacheBookOffline = useCallback(() => {
     if (!bookId || pages.length === 0) return;

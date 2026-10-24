@@ -8,7 +8,6 @@ import type { Series } from '../types';
 interface UseLibraryCardActionsParams {
   toggleSelectSeries: (id: number) => void;
   patchSeries: (id: number, patch: Partial<Series>) => void;
-  refreshLoadedSeries: () => void;
   showError: (key: string) => void;
   showToast: (message: string, level: 'success' | 'error') => void;
   t: (key: string, params?: Record<string, unknown>) => string;
@@ -17,7 +16,6 @@ interface UseLibraryCardActionsParams {
 export function useLibraryCardActions({
   toggleSelectSeries,
   patchSeries,
-  refreshLoadedSeries,
   showError,
   showToast,
   t,
@@ -55,14 +53,13 @@ export function useLibraryCardActions({
       try {
         await apiClient.post(`/api/series/${series.id}/rescan?force=true`);
         showToast(t('home.seriesRescanQueued'), 'success');
-        window.setTimeout(refreshLoadedSeries, 3000);
       } catch (err) {
         showToast(`${t('home.seriesRescanFailed')}: ${getApiErrorMessage(err, t('home.seriesRescanFailed'))}`, 'error');
       } finally {
         setRescanningId(null);
       }
     },
-    [refreshLoadedSeries, showToast, t],
+    [showToast, t],
   );
 
   return {

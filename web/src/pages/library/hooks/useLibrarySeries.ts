@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLibraryInvalidation } from '../../../session/ApplicationSessionProvider';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
 import { type AxiosResponse } from 'axios';
 import {
@@ -80,6 +81,7 @@ export function useLibrarySeries({
   keyword = '',
   appendMode = false,
 }: UseLibrarySeriesParams): UseLibrarySeriesResult {
+  const invalidateLibrary = useLibraryInvalidation();
   const [allSeries, setAllSeries] = useState<Series[]>([]);
   const [totalSeries, setTotalSeries] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -230,10 +232,16 @@ export function useLibrarySeries({
     [libId, buildSearchQuery],
   );
 
-  // refresh on refreshTrigger / filter / page changes
+  const lastQuery = useRef({ query: '', refresh: refreshTrigger });
+
+  // Query changes fetch the selected page; consistency refreshes preserve all loaded pages.
   useEffect(() => {
     if (!enabled || !libId) return;
-    fetchPage(page);
+    const query = buildSearchQuery(page, '');
+    const sharedRefresh = lastQuery.current.query === query && lastQuery.current.refresh !== refreshTrigger;
+    lastQuery.current = { query, refresh: refreshTrigger };
+    if (sharedRefresh && appendMode && page > 1) refreshLoadedPages(page);
+    else fetchPage(page, sharedRefresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     enabled,
@@ -262,7 +270,8 @@ export function useLibrarySeries({
     if (!libId) return;
     if (appendMode && page > 1) refreshLoadedPages(page);
     else fetchPage(page, true);
-  }, [libId, appendMode, page, refreshLoadedPages, fetchPage]);
+    invalidateLibrary({ areas: ['collections', 'organize', 'stats', 'reading-lists'] });
+  }, [libId, appendMode, page, refreshLoadedPages, fetchPage, invalidateLibrary]);
 
   // retry：错误条的重试入口，非静默重取当前页（显示 loading 并清除错误）。
   const retry = useCallback(() => {
@@ -271,7 +280,8 @@ export function useLibrarySeries({
 
   const patchSeries = useCallback((id: number, partial: Partial<Series>) => {
     setAllSeries((prev) => prev.map((s) => (s.id === id ? { ...s, ...partial } : s)));
-  }, []);
+    invalidateLibrary({ areas: ['collections', 'organize', 'stats'] });
+  }, [invalidateLibrary]);
 
   return {
     allSeries,

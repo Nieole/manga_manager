@@ -28,6 +28,7 @@ export function useReaderProgressIndicator({
   queueOfflineReaderProgress,
 }: UseReaderProgressIndicatorOptions): UseReaderProgressIndicatorResult {
   const [status, setStatus] = useState<ProgressSyncStatus>('idle');
+  const viewGeneration = useRef(0);
   const inFlightRef = useRef(0);
   const lastFactTimeRef = useRef(0);
   const syncedTimerRef = useRef<number | null>(null);
@@ -48,6 +49,7 @@ export function useReaderProgressIndicator({
 
   useEffect(() => {
      
+    viewGeneration.current += 1;
     setStatus('idle');
     inFlightRef.current = 0;
     if (syncedTimerRef.current != null) {
@@ -55,6 +57,7 @@ export function useReaderProgressIndicator({
       syncedTimerRef.current = null;
     }
     return () => {
+      viewGeneration.current += 1;
       if (syncedTimerRef.current != null) {
         window.clearTimeout(syncedTimerRef.current);
         syncedTimerRef.current = null;
@@ -76,11 +79,13 @@ export function useReaderProgressIndicator({
       return;
     }
 
+    const generation = viewGeneration.current;
     inFlightRef.current += 1;
     setStatus('syncing');
 
     apiClient.post(`/api/books/${bookId}/progress`, { page: pageNumber, updated_at: occurredAt })
       .then(() => {
+        if (generation !== viewGeneration.current) return;
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
         if (inFlightRef.current === 0) {
           setStatus('synced');
@@ -94,9 +99,11 @@ export function useReaderProgressIndicator({
         }
       })
       .catch((err) => {
+        const networkFailure = !isAxiosError(err) || !err.response;
+        if (networkFailure) queueOfflineReaderProgress(pageNumber, occurredAt);
+        if (generation !== viewGeneration.current) return;
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
-        if (!isAxiosError(err) || !err.response) {
-          queueOfflineReaderProgress(pageNumber, occurredAt);
+        if (networkFailure) {
           setStatus('offline-queued');
         } else if (inFlightRef.current === 0) {
           setStatus('idle');

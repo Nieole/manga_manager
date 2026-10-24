@@ -26,6 +26,13 @@ interface UseSeriesEditParams {
 }
 
 export function useSeriesEdit({ seriesId, series, tags, authors, links, metadataVersion, reload, showToast, t }: UseSeriesEditParams) {
+  const activeScope = useRef({ seriesId });
+  if (activeScope.current.seriesId !== seriesId) activeScope.current = { seriesId };
+  const scope = activeScope.current;
+  useEffect(() => {
+    activeScope.current = scope;
+    return () => { if (activeScope.current === scope) activeScope.current = { seriesId: undefined }; };
+  }, [scope]);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<SeriesEditForm>({});
   const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
@@ -137,10 +144,13 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
         links: editForm.linksInput || [],
         expected_version: expectedVersion,
       });
+      if (activeScope.current !== scope) return;
       setHasConflict(false);
       await reload();
+      if (activeScope.current !== scope) return;
       setIsEditing(false);
     } catch (err) {
+      if (activeScope.current !== scope) return;
       // 409：编辑期间服务端被别的途径写过（刮削应用了提案、另一个标签页保存、另一个用户改了）。
       // 弹窗与用户敲进去的内容一律不动——保存没成功，输入就不该消失；把服务端给的最新版本记为
       // 新基线，用户看过提示后再点一次保存即以自己这份为准。
@@ -154,7 +164,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
       console.error('Failed to update metadata', err);
       showToast(`${t('series.toast.saveFailed')}: ${getApiErrorMessage(err, t('series.toast.saveFailed'))}`, 'error');
     }
-  }, [series, seriesId, editForm, lockedFields, reload, showToast, t]);
+  }, [series, seriesId, editForm, lockedFields, reload, showToast, t, scope]);
 
   return {
     isEditing,

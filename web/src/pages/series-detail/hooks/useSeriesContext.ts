@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
+import { useLibraryInvalidation, useLibraryRefresh } from '../../../session/ApplicationSessionProvider';
 import type {
   Author,
   Book,
@@ -16,7 +17,7 @@ import type {
 
 interface UseSeriesContextParams {
   seriesId: string | undefined;
-  refreshTrigger: number;
+  refreshTrigger?: number;
 }
 
 export interface SeriesContextState {
@@ -46,6 +47,15 @@ export interface SeriesContextState {
 }
 
 export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextParams): SeriesContextState {
+  const activeScope = useRef({ seriesId });
+  if (activeScope.current.seriesId !== seriesId) activeScope.current = { seriesId };
+  const scope = activeScope.current;
+  useEffect(() => {
+    activeScope.current = scope;
+    return () => { if (activeScope.current === scope) activeScope.current = { seriesId: undefined }; };
+  }, [scope]);
+  const sharedRefresh = useLibraryRefresh({ seriesId });
+  const invalidateLibrary = useLibraryInvalidation();
   const [loading, setLoading] = useState(true);
   const [series, setSeries] = useState<Series | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -70,14 +80,14 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
 
   const load = useCallback(
     async (silent: boolean) => {
-      if (!seriesId) return;
+      if (!seriesId || activeScope.current !== scope) return;
       const requestID = latestRequestIDRef.current + 1;
       latestRequestIDRef.current = requestID;
       if (!silent) setLoading(true);
       setError(null);
       try {
         const res = await apiClient.get<SeriesContextResponse>(`/api/series/${seriesId}/context`);
-        if (requestID !== latestRequestIDRef.current) return;
+        if (requestID !== latestRequestIDRef.current || activeScope.current !== scope) return;
         const data = res.data;
         setSeries(data.series);
         setBooks(Array.isArray(data.books) ? data.books : []);
@@ -91,18 +101,23 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
         setFailedTasks(Array.isArray(data.failed_tasks) ? data.failed_tasks : []);
         setContinueInfo(data.continue ?? null);
       } catch (err) {
-        if (requestID !== latestRequestIDRef.current) return;
+        if (requestID !== latestRequestIDRef.current || activeScope.current !== scope) return;
         console.error('Failed to load series context', err);
         setError(getApiErrorMessage(err, ''));
       } finally {
-        if (requestID === latestRequestIDRef.current) setLoading(false);
+        if (requestID === latestRequestIDRef.current && activeScope.current === scope) setLoading(false);
       }
     },
-    [seriesId],
+    [seriesId, scope],
   );
 
   // reload：写操作后的静默重取（不显示 loading）。
-  const reload = useCallback(() => load(true), [load]);
+  const reload = useCallback(async () => {
+    if (activeScope.current !== scope) return;
+    await load(true);
+    if (activeScope.current !== scope) return;
+    invalidateLibrary({ libraryId: series?.library_id ? String(series.library_id) : undefined, areas: ['catalog', 'collections', 'organize', 'stats', 'reading-lists'] });
+  }, [load, invalidateLibrary, series?.library_id, scope]);
 
   useEffect(() => {
     if (!seriesId) return;
@@ -128,7 +143,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
     // 同一系列的刷新（refreshTrigger 变化）保持静默，不闪加载态。
     void load(!switching);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesId, refreshTrigger]);
+  }, [seriesId, refreshTrigger, sharedRefresh]);
 
   // retry：主数据加载失败后的重试入口，非静默重取（显示 loading、清除错误）。
   const retry = useCallback(() => {

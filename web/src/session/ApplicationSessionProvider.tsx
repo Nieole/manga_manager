@@ -4,9 +4,15 @@ import { parseRunPush, trackRunPush } from '../utils/runPush';
 import { useEventStream } from './useEventStream';
 import { useAuth } from '../auth/AuthProvider';
 
+export type LibraryArea = 'catalog' | 'collections' | 'organize' | 'reviews' | 'stats' | 'reading-lists';
+export interface LibraryChange {
+  libraryId?: string;
+  seriesId?: string;
+  areas?: LibraryArea[];
+}
 interface Session {
-  refresh: number;
-  invalidateLibrary: () => void;
+  refresh: Record<string, number>;
+  invalidateLibrary: (change?: LibraryChange) => void;
   runs: Set<(frame: RunPush) => void>;
   recoveries: Set<() => void>;
 }
@@ -23,11 +29,27 @@ export function ApplicationSessionProvider({ identity, isAdmin, children }: { id
 }
 
 function SessionInstance({ isAdmin, children }: { isAdmin: boolean; children: ReactNode }) {
-  const [refresh, setRefresh] = useState(0);
+  const [refresh, setRefresh] = useState<Record<string, number>>({});
   const [runs] = useState(() => new Set<(frame: RunPush) => void>());
   const [recoveries] = useState(() => new Set<() => void>());
   const lastSequence = useRef<number | null>(null);
-  const invalidateLibrary = useCallback(() => setRefresh(value => value + 1), []);
+  const invalidateLibrary = useCallback((change?: LibraryChange) => setRefresh(value => {
+    const next = { ...value };
+    const keys = new Set<string>();
+    if (!change) keys.add('*');
+    else {
+      for (const area of change.areas ?? ['catalog']) {
+        if (area === 'catalog') {
+          keys.add('catalog-any');
+          if (change.libraryId) keys.add(`library:${change.libraryId}`);
+          if (change.seriesId) keys.add(`series:${change.seriesId}`);
+          if (!change.libraryId && !change.seriesId) keys.add('catalog');
+        } else keys.add(area);
+      }
+    }
+    keys.forEach(key => { next[key] = (next[key] ?? 0) + 1; });
+    return next;
+  }), []);
   const session = useMemo(() => ({ refresh, runs, recoveries, invalidateLibrary }), [refresh, runs, recoveries, invalidateLibrary]);
   useEventStream('/api/events', {
     onReconnect() {
@@ -46,8 +68,6 @@ function SessionInstance({ isAdmin, children }: { isAdmin: boolean; children: Re
       lastSequence.current = tracked.sequence;
       runs.forEach(listener => listener(frame));
       if (tracked.gap) recoveries.forEach(listener => listener());
-      // 未迁消费者的单向桥只转发同一条连接解码后的帧。
-      if (frame.run) window.dispatchEvent(new CustomEvent('manga-manager:run-snapshot', { detail: frame.run }));
     },
   });
   return <SessionContext.Provider value={session}>{children}</SessionContext.Provider>;
@@ -59,9 +79,25 @@ function useSession() {
   return session;
 }
 
-export function useLibraryInvalidation() { return useSession().invalidateLibrary; }
+const ignoreInvalidation = () => {};
+export function useLibraryInvalidation() { return useContext(SessionContext)?.invalidateLibrary ?? ignoreInvalidation; }
 
-export function useLibraryRefresh() { return useSession().refresh; }
+/** 只发布失效水位，查询结果和视图草稿始终由功能消费者持有。 */
+export function useLibraryRefresh(scope: { libraryId?: string; seriesId?: string; area?: LibraryArea } = {}) {
+  const versions = useContext(SessionContext)?.refresh ?? {};
+  const area = scope.area ?? 'catalog';
+  const keys = new Set(['*']);
+  if (area !== 'catalog') {
+    keys.add(area);
+    if (area !== 'reviews') keys.add('catalog-any');
+  } else {
+    keys.add('catalog');
+    if (scope.libraryId) keys.add(`library:${scope.libraryId}`);
+    if (scope.seriesId) keys.add(`series:${scope.seriesId}`);
+    if (!scope.libraryId && !scope.seriesId) keys.add('catalog-any');
+  }
+  return [...keys].reduce((total, key) => total + (versions[key] ?? 0), 0);
+}
 
 export function useSessionRunPush(onPush: (frame: RunPush) => void) {
   const { runs } = useSession();
