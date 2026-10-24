@@ -28,6 +28,8 @@ type Result struct {
 
 // Store exposes the atomic position operation and the independent activity projections.
 type Store interface {
+	MutateReadingPositions(context.Context, int64, []int64, string, func(int64, database.ReadingPositionState) database.ReadingPositionMutation) (map[int64]database.ReadingPositionMutation, error)
+	ListBooksBySeries(context.Context, int64) ([]database.Book, error)
 	MutateReadingPosition(context.Context, int64, int64, string, func(database.ReadingPositionState) database.ReadingPositionMutation) (database.ReadingPositionMutation, error)
 	LogReadingActivity(context.Context, database.LogReadingActivityParams) error
 	LogUserReadingActivityAt(context.Context, int64, int64, int64, time.Time) error

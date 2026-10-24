@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { apiClient } from '../../../api/client';
 import type { Series } from '../types';
+import { useReadStateMutation } from '../../../reading/useReadStateMutation';
 
 interface UseLibrarySelectionParams {
   allSeries: Series[];
@@ -103,25 +104,24 @@ export function useLibrarySelection({
     [selectedSeries, clearSelection, onChanged, onError],
   );
 
+  const { markSeries } = useReadStateMutation();
   const bulkProgress = useCallback(
     async (isRead: boolean) => {
       if (selectedSeries.length === 0) return;
       setBulkProgressUpdating(isRead ? 'read' : 'unread');
       try {
-        await apiClient.post('/api/series/bulk-progress', {
-          series_ids: selectedSeries,
-          is_read: isRead,
-        });
+        await markSeries(selectedSeries, isRead);
         clearSelection();
         onChanged();
       } catch (err) {
         console.error('Bulk progress failed', err);
+        onChanged();
         onError('home.bulkProgressFailed');
       } finally {
         setBulkProgressUpdating(null);
       }
     },
-    [selectedSeries, clearSelection, onChanged, onError],
+    [selectedSeries, clearSelection, onChanged, onError, markSeries],
   );
 
   return {

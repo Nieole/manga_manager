@@ -110,10 +110,12 @@ func TestSampleCandidateSeriesRespectsUserProgress(t *testing.T) {
 		bookIDs = append(bookIDs, id)
 	}
 	rows.Close()
-	if err := store.SetUserBooksReadState(ctx, user.ID, bookIDs, true, time.Now()); err != nil {
-		t.Fatalf("SetUserBooksReadState: %v", err)
+	at := time.Now()
+	for _, id := range bookIDs {
+		if err := store.SetUserBookProgress(ctx, user.ID, id, 99999, at); err != nil {
+			t.Fatal(err)
+		}
 	}
-
 	got, err := store.SampleCandidateSeriesForAI(ctx, user.ID, 20)
 	if err != nil {
 		t.Fatalf("SampleCandidateSeriesForAI: %v", err)

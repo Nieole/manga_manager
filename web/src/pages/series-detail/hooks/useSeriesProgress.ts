@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { apiClient } from '../../../api/client';
+import { useReadStateMutation } from '../../../reading/useReadStateMutation';
 
 interface UseSeriesProgressParams {
   reload: () => Promise<void>;
@@ -9,43 +9,40 @@ interface UseSeriesProgressParams {
 
 export function useSeriesProgress({ reload, showToast, t }: UseSeriesProgressParams) {
   const [busy, setBusy] = useState(false);
+  const { markBooks } = useReadStateMutation();
 
   const bulkUpdate = useCallback(
     async (isRead: boolean, bookIds: number[]) => {
       if (bookIds.length === 0) return;
       setBusy(true);
       try {
-        await apiClient.post('/api/books/bulk-progress', {
-          book_ids: bookIds,
-          is_read: isRead,
-        });
+        await markBooks(bookIds, isRead);
         await reload();
         showToast(t('series.toast.bulkProgressSuccess'), 'success');
       } catch (err) {
         console.error('Bulk progress update failed', err);
+        await reload().catch((refreshError) => console.error('Failed to refresh partial progress', refreshError));
         showToast(t('series.toast.actionFailed'), 'error');
       } finally {
         setBusy(false);
       }
     },
-    [reload, showToast, t],
+    [markBooks, reload, showToast, t],
   );
 
   const quickToggleBook = useCallback(
     async (bookId: number, makeRead: boolean) => {
       try {
-        await apiClient.post('/api/books/bulk-progress', {
-          book_ids: [bookId],
-          is_read: makeRead,
-        });
+        await markBooks([bookId], makeRead);
         await reload();
         showToast(t('series.toast.statusUpdated'), 'success');
       } catch (err) {
         console.error('Quick toggle failed', err);
+        await reload().catch((refreshError) => console.error('Failed to refresh partial progress', refreshError));
         showToast(t('series.toast.actionFailed'), 'error');
       }
     },
-    [reload, showToast, t],
+    [markBooks, reload, showToast, t],
   );
 
   return { busy, bulkUpdate, quickToggleBook };

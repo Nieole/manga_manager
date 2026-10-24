@@ -27,6 +27,7 @@ var schemaHandwrittenSQL string
 var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
+	MutateReadingPositions(context.Context, int64, []int64, string, func(int64, ReadingPositionState) ReadingPositionMutation) (map[int64]ReadingPositionMutation, error)
 	MutateReadingPosition(context.Context, int64, int64, string, func(ReadingPositionState) ReadingPositionMutation) (ReadingPositionMutation, error)
 	LogUserReadingActivityAt(context.Context, int64, int64, int64, time.Time) error
 	Querier
@@ -116,8 +117,6 @@ type Store interface {
 	DeleteExpiredSessions(ctx context.Context, now time.Time) error
 	// 每用户阅读进度（多用户阶段2）——见 user_progress.go。
 	SetUserBookProgress(ctx context.Context, userID, bookID, page int64, at time.Time) error
-	ClearUserBookProgress(ctx context.Context, userID, bookID int64) error
-	SetUserBooksReadState(ctx context.Context, userID int64, bookIDs []int64, isRead bool, at time.Time) error
 	GetUserBookProgress(ctx context.Context, userID, bookID int64) (UserBookProgress, bool, error)
 	GetUserBookProgressMap(ctx context.Context, userID int64, bookIDs []int64) (map[int64]UserBookProgress, error)
 	GetUserRecentReadAll(ctx context.Context, userID, limit int64) ([]GetRecentReadAllRow, error)

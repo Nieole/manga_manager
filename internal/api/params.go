@@ -31,16 +31,8 @@ const (
 	// 用于合集批量添加、阅读清单重排这类接受 ID 数组的端点。
 	maxCollectionBatchSize = 1000
 
-	// maxBulkReadStateBooks / maxBulkReadStateSeries 是批量标记读状态的两道上限。
-	//
-	// 单靠 1 MiB 的请求体上限挡不住这条路径：bulkUpdateSeriesProgress 收到的是**系列** id，
-	// 每个都会被展开成该系列的全部书，几十个 id 就能变成整库几万本。
-	// 而每本书都要写一次进度并刷新所属系列的聚合，全部在写锁下进行。
-	maxBulkReadStateBooks  = 20000
-	maxBulkReadStateSeries = 2000
-
 	// maxExternalTransferSeries 是外部库传输一次能选多少个系列。
-	// 与 maxBulkReadStateSeries 同构、同量级：这个端点收到的也是系列 id，
+	// 与阅读批量系列选择上限同量级：这个端点收到的也是系列 id，
 	// 每个都会被展开成整个系列的书，再逐本读盘拷贝到外接盘。
 	maxExternalTransferSeries = 2000
 )
