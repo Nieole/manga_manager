@@ -1,11 +1,8 @@
-/**
- * 本文件是应用外壳的后台任务气泡 hook，聚合任务进度气泡的状态、终态延时清理定时器、
- * 进度覆盖事件监听，以及 SSE 进度载荷的接入（ingest）与手动关闭/清理已完成的逻辑。
- * 维护时应关注：终态气泡的延时移除、message 与 message_code 的互斥、卸载时清空定时器。
- */
-
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { TaskBubbleEntry } from '../SidebarTaskBubble';
+import type { TaskBubbleEntry } from '../../components/SidebarTaskBubble';
+import { useSessionRecovery, useSessionRunPush } from '../../session/ApplicationSessionProvider';
+import { apiClient } from '../../api/client';
+import type { RunSnapshot } from '../../api/generated';
 import { isTerminalRunStatus } from '../../utils/runStatus';
 
 interface RunSnapshotPayload {
@@ -26,13 +23,18 @@ interface RunSnapshotPayload {
 
 export function useTaskBubbles() {
   const [entries, setEntries] = useState<Record<number, TaskBubbleEntry>>({});
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const revisions = useRef(new Map<number, number>());
+  const generation = useRef(0);
   const cleanupTimers = useRef<Map<number, number>>(new Map());
 
-  // ingestRunSnapshot 接入一帧运行快照（由 Layout 从推送帧里取出）：新增/更新对应气泡，并为终态气泡安排延时移除
+  // 新增或更新任务气泡，为终态安排延时移除
   //（完成 8s、其余终态 20s）；再次收到同一个任务会先取消旧的延时定时器。
   const ingestRunSnapshot = useCallback((progress: RunSnapshotPayload) => {
     if (progress.task_id === undefined) return;
     const key = progress.task_id;
+    revisions.current.set(key, (revisions.current.get(key) ?? 0) + 1);
     const entry: TaskBubbleEntry = {
       taskId: key,
       type: progress.type || '',
@@ -67,6 +69,7 @@ export function useTaskBubbles() {
   }, []);
 
   const dismiss = useCallback((key: number) => {
+    revisions.current.set(key, (revisions.current.get(key) ?? 0) + 1);
     setEntries((prev) => {
       if (!prev[key]) return prev;
       const next = { ...prev };
@@ -99,43 +102,30 @@ export function useTaskBubbles() {
     });
   }, []);
 
-  // 监听覆盖事件：乐观更新某个**已存在**气泡的进度/状态——气泡不在就整帧丢掉，这条路不新建气泡
-  // （新建只走 ingestRunSnapshot）。并在卸载时清空全部延时定时器。
-  // message 与 message_code 互斥：带了新 legacy message 的覆盖清掉 code。
+  useSessionRunPush(frame => {
+    if (frame.run) ingestRunSnapshot(frame.run);
+  });
+
+  useSessionRecovery(() => {
+    const recovery = ++generation.current;
+    for (const taskId of Object.keys(entriesRef.current).map(Number)) {
+      const revision = revisions.current.get(taskId);
+      void apiClient.get<RunSnapshot[]>(`/api/system/tasks?task_id=${taskId}&limit=1`).then(({ data }) => {
+        if (recovery !== generation.current || revision !== revisions.current.get(taskId) || !entriesRef.current[taskId]) return;
+        const run = Array.isArray(data) ? data.find(item => item.task_id === taskId) : undefined;
+        if (run) ingestRunSnapshot(run);
+      }).catch(error => console.warn('Failed to recover task bubble', error));
+    }
+  });
+
   useEffect(() => {
     const timers = cleanupTimers.current;
-    const handleOverride = (event: Event) => {
-      const customEvent = event as CustomEvent<RunSnapshotPayload>;
-      const detail = customEvent.detail;
-      if (detail?.task_id === undefined) return;
-      const key = detail.task_id;
-      setEntries((prev) => {
-        const existing = prev[key];
-        if (!existing) return prev;
-        return {
-          ...prev,
-          [key]: {
-            ...existing,
-            status: detail.status || existing.status,
-            message: detail.message || existing.message,
-            message_code: detail.message ? undefined : (detail.message_code ?? existing.message_code),
-            message_params: detail.message ? undefined : (detail.message_params ?? existing.message_params),
-            error: detail.error ?? existing.error,
-            current: detail.current ?? existing.current,
-            total: detail.total ?? existing.total,
-            type: detail.type || existing.type,
-            updatedAt: Date.now(),
-          },
-        };
-      });
-    };
-    window.addEventListener('manga-manager:run-snapshot-override', handleOverride as EventListener);
     return () => {
-      window.removeEventListener('manga-manager:run-snapshot-override', handleOverride as EventListener);
-      timers.forEach((timer) => clearTimeout(timer));
+      generation.current += 1;
+      timers.forEach(timer => clearTimeout(timer));
       timers.clear();
     };
   }, []);
 
-  return { entries, ingestRunSnapshot, dismiss, clearFinished };
+  return { entries, dismiss, clearFinished };
 }
