@@ -192,10 +192,7 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 		jsonError(w, http.StatusBadRequest, "series_ids is required")
 		return
 	}
-	// 每个系列 id 都会被展开成该系列的全部书，几十个 id 就能变成整库几万本。
-	// 全站唯一的闸门是 1 MiB 请求体上限，而它是明确按十万级 int64 id 设计的，
-	// 挡不住这条路径。批量标记读状态那边早有同款上限（maxBulkReadStateSeries），
-	// 这个端点是同构的形状，只是漏了。
+	// 传输会把系列展开为书，少量系列 id 也可能涉及大量读盘与复制。
 	if len(req.SeriesIDs) > maxExternalTransferSeries {
 		jsonError(w, http.StatusBadRequest, "Too many series in one request")
 		return

@@ -61,8 +61,11 @@ func TestRecentReadBookAgreesWhenTimestampsTie(t *testing.T) {
 		{
 			name: "每用户进度",
 			markRead: func(t *testing.T, ctx context.Context, store *SqlStore, userID int64, bookIDs []int64) {
-				if err := store.SetUserBooksReadState(ctx, userID, bookIDs, true, time.Now()); err != nil {
-					t.Fatalf("SetUserBooksReadState: %v", err)
+				at := time.Now()
+				for _, id := range bookIDs {
+					if err := store.SetUserBookProgress(ctx, userID, id, 20, at); err != nil {
+						t.Fatal(err)
+					}
 				}
 			},
 			rankedSide: func(t *testing.T, ctx context.Context, store *SqlStore, userID, libID int64) int64 {
