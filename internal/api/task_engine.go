@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"manga-manager/internal/application"
 	"manga-manager/internal/diskwork"
-	"manga-manager/internal/logger"
 	"manga-manager/internal/task"
 )
 
@@ -102,6 +102,7 @@ type taskEngine struct {
 
 	libraryIDs func(context.Context, TaskIdentity) ([]int64, error)
 	engine     *task.Engine
+	runs       *application.Runs
 	runStore   task.Store
 
 	// runBackground 与 now 是本层为**测试接缝**留下的两处间接。领域引擎在构造期就把它们收进去了，
@@ -181,6 +182,19 @@ func newTaskEngine(cfg taskEngineConfig) *taskEngine {
 			Interrupted: taskInterruptedMessageCode,
 		},
 	})
+	e.runs = application.NewRuns(e.engine, func(ctx context.Context, id task.Identity) error {
+		owner, err := e.runStore.EnsureTask(ctx, id)
+		if err != nil {
+			return err
+		}
+		identity := TaskIdentity{taskType: string(id.Type), scope: string(id.Scope), variant: TaskVariant(id.Variant)}
+		if id.Scope != task.ScopeSystem {
+			scopeID := id.ScopeID
+			identity.scopeID = &scopeID
+		}
+		e.rememberIdentity(owner.ID, identity)
+		return nil
+	})
 	return e
 }
 
@@ -242,7 +256,7 @@ func (e *taskEngine) clock() time.Time {
 // 键取自**运行声明**而不是运行行：它不落盘（ADR 0007），而队列放行那条路上的运行是从库里
 // 读回来的。取运行行上的话，排过队的那些任务体日志会静静地少掉任务键那一格。
 func decorateRunContext(ctx context.Context, run task.Run, spec task.RunSpec) context.Context {
-	return logger.WithRunID(logger.WithTaskKey(ctx, spec.Key), run.ID)
+	return application.DecorateRunContext(ctx, run, spec)
 }
 
 // publisher 把领域快照翻成对外的任务快照并交给 SSE。publish 为 nil 时整条通道不接。
@@ -594,14 +608,6 @@ func (e *taskEngine) clear(ctx context.Context, filters taskFilters) (int64, err
 	filters.Query = ""
 	filters.Limit = 0
 	return e.runStore.DeleteRuns(ctx, runFilterFrom(filters, task.OrderSequenceDesc))
-}
-
-// pruneHistory 按**分层保留**裁剪历史，返回各层清掉的行数。
-//
-// 它经领域引擎而不是直接问落盘端口：「活动态与排队中的运行永不被带走」是领域的不变量，
-// 而清理运行不清掉自己这一条，靠的正是裁剪发生在它自己那条运行还活着的时候（见 task.Engine.PruneHistory）。
-func (e *taskEngine) pruneHistory(ctx context.Context, policy task.RetentionPolicy) (task.PruneResult, error) {
-	return e.engine.PruneHistory(ctx, policy)
 }
 
 // setTaskDisabled 翻转人工禁用开关，**按任务 id 寻址**（规格关键决定 15：禁用作用在**任务**上）。

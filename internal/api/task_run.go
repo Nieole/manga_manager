@@ -10,7 +10,6 @@ package api
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 
 	"manga-manager/internal/runhandle"
@@ -176,14 +175,6 @@ func (e *taskEngine) Run(identity TaskIdentity, trigger task.Trigger, spec RunSp
 // 而被**合并**掉的那次发起，任务体根本不会执行，等在它身上就是永远等下去。
 func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec RunSpec, fn taskBody) (task.Launched, error) {
 	ctx := context.Background()
-	// 先把身份取出来（不存在就建一条）：投递首帧那一刻在领域引擎的临界区里，补不了身份，
-	// 而首帧要带着类型与作用域出去——它是任务在界面上诞生的那一帧。
-	owner, err := e.runStore.EnsureTask(ctx, identity.domain())
-	if err != nil {
-		return task.Launched{}, err
-	}
-	e.rememberIdentity(owner.ID, identity)
-
 	runSpec := task.RunSpec{
 		Identity:       identity.domain(),
 		ValidateAccess: spec.ValidateAccess,
@@ -212,7 +203,7 @@ func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec Run
 		runSpec.Limits = spec.Limits.domain()
 	}
 
-	launched, err := e.engine.Start(ctx, runSpec, func(runCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
+	launched, err := e.runs.Start(ctx, runSpec, func(runCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		result, err := fn(runCtx, handle)
 		return task.Result{Code: result.Code, Params: result.Params}, err
 	})
@@ -222,11 +213,6 @@ func (e *taskEngine) start(identity TaskIdentity, trigger task.Trigger, spec Run
 	// 而不是一个 500。
 	if errors.Is(err, task.ErrRunAlreadyActive) || errors.Is(err, task.ErrRunAlreadyQueued) {
 		return task.Launched{}, errTaskAlreadyRunning
-	}
-	// 被**停发**挡下的那次自动发起在这里留一行，且**只在这里留**：十七个启动点各写一句的话，
-	// 绝大多数不会写。它不是错误——挡下它的正是用户自己的设置，因此记 Info 不记 Warn。
-	if launched.Stalled != task.StallNone {
-		slog.Info("Automatic launch suppressed", "task_key", spec.Key, "trigger", trigger, "reason", launched.Stalled)
 	}
 	return launched, err
 }
