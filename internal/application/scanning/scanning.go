@@ -30,6 +30,7 @@ type Scanner interface {
 	ScanLibrary(context.Context, int64, string, bool, scanner.ScanObserver) error
 	ScanSeries(context.Context, int64, bool, scanner.ScanObserver) error
 	CleanupLibrary(context.Context, int64) error
+	QueueMissingCovers(context.Context, int64) (*scanner.CoverBatch, error)
 }
 
 // Effects are leaf capabilities; orchestration decides their timing and composition.
@@ -43,16 +44,17 @@ type Effects struct {
 
 // Service shares the application run entry and leaves filesystem event scheduling to scanner.
 type Service struct {
-	runs    *application.Runs
-	store   Store
-	scanner Scanner
-	config  func() config.Config
-	effects Effects
+	runs      *application.Runs
+	store     Store
+	scanner   Scanner
+	config    func() config.Config
+	effects   Effects
+	coverRuns *coverRunQueues
 }
 
 // New assembles the scan use cases before any run is admitted.
 func New(runs *application.Runs, store Store, scan Scanner, cfg func() config.Config, effects Effects) *Service {
-	return &Service{runs: runs, store: store, scanner: scan, config: cfg, effects: effects}
+	return &Service{runs: runs, store: store, scanner: scan, config: cfg, effects: effects, coverRuns: newCoverRunQueues()}
 }
 
 func (c *Service) requireAutomaticProcessing(ctx context.Context, libraryID int64) error {

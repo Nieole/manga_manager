@@ -1003,11 +1003,9 @@ func TestStorageIOCoverRateComesFromTheCoverRun(t *testing.T) {
 	coverProgress := seedTask(t, controller.taskEngine, taskSeed{
 		Key: "generate_covers_42", Identity: libraryTask("generate_covers", 42, variantSole), Total: 1,
 	})
-	coverObserver := newCoverRunObserver(coverProgress, "A")
-	coverObserver.begin()
-	coverObserver.Progress(scanner.CoverProgressReport{
-		Queued: 6, Generated: 6, OpenedArchives: 6, ThumbnailWriteMillis: 50,
-	})
+	coverProgress.Report(runhandle.Frame{Metrics: map[string]int64{
+		"queued_covers": 6, "generated_covers": 6, "opened_archives": 6, "thumbnail_write_ms": 50, "duration_ms": 1,
+	}})
 
 	scanRate, coverRate, thumbnailWriteMillis := controller.recentStorageIOTaskRates()
 	if scanRate <= 0 || coverRate <= 0 || thumbnailWriteMillis != 50 {
