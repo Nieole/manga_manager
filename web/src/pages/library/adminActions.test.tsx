@@ -17,6 +17,7 @@ import { messages as zhCN } from '../../i18n/locales/zh-CN';
 import { ToastProvider } from '../../components/ToastProvider';
 import { __resetScrapeProvidersCacheForTest } from '../../hooks/useScrapeProviders';
 import type { Series } from './types';
+import { ApplicationSessionScope } from '../../session/ApplicationSessionProvider';
 import LibraryPage from './index';
 
 const CARD_SERIES: Series = {
@@ -37,6 +38,7 @@ function AuthProbe() {
 }
 
 async function renderPage(role: 'admin' | 'regular') {
+  vi.stubGlobal('EventSource', class { close() {} });
   vi.spyOn(apiClient, 'get').mockImplementation(((url: string) => {
     if (url.startsWith('/api/auth/status')) {
       return Promise.resolve({
@@ -61,7 +63,7 @@ async function renderPage(role: 'admin' | 'regular') {
           <AuthProvider>
             <AuthProbe />
             <Routes>
-              <Route path="/library/:libId" element={<LibraryPage />} />
+              <Route path="/library/:libId" element={<ApplicationSessionScope><LibraryPage /></ApplicationSessionScope>} />
             </Routes>
           </AuthProvider>
         </MemoryRouter>
@@ -85,6 +87,7 @@ function action(name: string) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.localStorage.clear();
   __resetScrapeProvidersCacheForTest();
 });

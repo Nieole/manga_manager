@@ -73,11 +73,12 @@ interface HarnessProps {
   libId: string;
   page: number;
   appendMode: boolean;
+  refreshTrigger?: number;
 }
 
 function renderSeries(props: HarnessProps) {
   return renderHook(
-    ({ libId, page, appendMode }: HarnessProps) =>
+    ({ libId, page, appendMode, refreshTrigger = 0 }: HarnessProps) =>
       useLibrarySeries({
         libId,
         page,
@@ -90,7 +91,7 @@ function renderSeries(props: HarnessProps) {
         // name 支持游标分页，无限滚动的翻页会带上 cursor——正是前几屏难以重取的那条链路。
         sortByField: 'name',
         sortDir: 'asc',
-        refreshTrigger: 0,
+        refreshTrigger,
         enabled: true,
         appendMode,
       }),
@@ -191,4 +192,18 @@ describe('资料库列表刷新范围', () => {
     expect(idsOf(view.result.current.allSeries)).toEqual([1, 2, 3, 4, 5]);
     expect(readCountOf(view.result.current.allSeries, 3)).toBe(BOOKS_PER_SERIES);
   });
+});
+
+it('shared scan refresh updates every loaded page without resetting its cursor chain', async () => {
+  const view = renderSeries({ libId: 'shared-refresh', page: 1, appendMode: true });
+  await settle();
+  view.rerender({ libId: 'shared-refresh', page: 2, appendMode: true });
+  await settle();
+  markReadOnServer([1, 4]);
+  view.rerender({ libId: 'shared-refresh', page: 2, appendMode: true, refreshTrigger: 1 });
+  await settle();
+  expect(readCountOf(view.result.current.allSeries, 1)).toBe(BOOKS_PER_SERIES);
+  expect(readCountOf(view.result.current.allSeries, 4)).toBe(BOOKS_PER_SERIES);
+  expect(idsOf(view.result.current.allSeries)).toEqual([1, 2, 3, 4, 5, 6]);
+  expect(view.result.current.pageCursorMap[3]).toBe('cur-3');
 });

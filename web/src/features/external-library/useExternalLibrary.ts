@@ -1,19 +1,22 @@
-import { useCallback, useEffect, useState } from 'react';
-import { apiClient } from '../../../api/client';
-import { useLatestRequest } from '../../../hooks/useLatestRequest';
-import type { BrowseDirEntry, BrowseDrive } from '../../../components/layout/types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { apiClient } from '../../api/client';
+import { useLatestRequest } from '../../hooks/useLatestRequest';
+import type { BrowseDirEntry, BrowseDrive } from '../../components/layout/types';
 import {
   type ExternalSession,
   type ExternalSessionCreateResponse,
   type ExternalSeriesStatus,
-} from '../types';
+} from '../../pages/library/types';
+
+import { useLibraryInvalidation, useLibraryRefresh, useSessionRecovery, useSessionRunPush } from '../../session/ApplicationSessionProvider';
+import { isTerminalRunStatus } from '../../utils/runStatus';
+import type { RunSnapshot } from '../../api/generated';
 
 const RECENT_PATHS_KEY = 'manga_manager_recent_external_paths';
 const IGNORE_EXT_KEY = 'manga_manager_external_ignore_extension';
 
 interface UseExternalLibraryParams {
   libId: string | undefined;
-  refreshTrigger: number;
   allSeriesIds: number[];
   onError: (msg: string) => void;
 }
@@ -51,11 +54,19 @@ interface UseExternalLibraryResult {
 
 export function useExternalLibrary({
   libId,
-  refreshTrigger,
   allSeriesIds,
   onError,
 }: UseExternalLibraryParams): UseExternalLibraryResult {
+  const refreshTrigger = useLibraryRefresh({ libraryId: libId });
+  const invalidateLibrary = useLibraryInvalidation();
+  const currentScope = useRef({ libId });
+  if (currentScope.current.libId !== libId) currentScope.current = { libId };
+  const scope = currentScope.current;
+  const isCurrent = useCallback(() => currentScope.current === scope, [scope]);
+  const [coverageRevision, setCoverageRevision] = useState(0);
   const [externalSession, setExternalSession] = useState<ExternalSession | null>(null);
+  const activeSessionId = useRef(externalSession?.session_id);
+  activeSessionId.current = externalSession?.session_id;
   const [externalSeriesMap, setExternalSeriesMap] = useState<Record<number, ExternalSeriesStatus>>({});
   const [externalPath, setExternalPath] = useState('');
   const [externalIgnoreExtension, setExternalIgnoreExtensionState] = useState(false);
@@ -71,6 +82,17 @@ export function useExternalLibrary({
   const [externalBrowseParent, setExternalBrowseParent] = useState('');
   const [externalBrowseDrives, setExternalBrowseDrives] = useState<BrowseDrive[]>([]);
   const sessionRequest = useLatestRequest();
+  const coverageRequest = useLatestRequest();
+  const browserRequest = useLatestRequest();
+  useEffect(() => {
+    currentScope.current = scope;
+    return () => {
+      if (currentScope.current === scope) currentScope.current = { libId: undefined };
+      sessionRequest.invalidate();
+      coverageRequest.invalidate();
+      browserRequest.invalidate();
+    };
+  }, [scope, sessionRequest, coverageRequest, browserRequest]);
 
   // 1. 初始化：localStorage 读取
   useEffect(() => {
@@ -102,6 +124,8 @@ export function useExternalLibrary({
     setExternalSeriesMap({});
     setExternalScanTaskKey(null);
     setExternalTransferTaskKey(null);
+    setStartingExternalScan(false);
+    setStartingTransfer(false);
   }, [libId, sessionRequest]);
 
   const setExternalIgnoreExtension = useCallback((value: boolean) => {
@@ -127,8 +151,9 @@ export function useExternalLibrary({
           { params: { _ts: Date.now() } },
         ).then((res) => res.data),
         {
-          onSuccess: (data) => setExternalSession(data),
+          onSuccess: (data) => { if (isCurrent()) setExternalSession(data); },
           onError: (err) => {
+            if (!isCurrent()) return;
             console.error('Failed to fetch external session', err);
             setExternalSession(null);
             setExternalSeriesMap({});
@@ -137,7 +162,7 @@ export function useExternalLibrary({
       );
       return session ?? null;
     },
-    [libId, sessionRequest],
+    [libId, sessionRequest, isCurrent],
   );
 
   const requestSeriesStatus = useCallback(
@@ -159,18 +184,20 @@ export function useExternalLibrary({
         return;
       }
       try {
-        const items = await requestSeriesStatus(sid, ids);
+        const items = await coverageRequest.run(() => requestSeriesStatus(sid, ids));
+        if (!items || !isCurrent()) return;
         const next: Record<number, ExternalSeriesStatus> = {};
         items.forEach((item) => {
           next[item.series_id] = item;
         });
         setExternalSeriesMap(next);
       } catch (err) {
+        if (!isCurrent()) return;
         console.error('Failed to fetch external series coverage', err);
         setExternalSeriesMap({});
       }
     },
-    [libId, externalSession?.session_id, allSeriesIds, requestSeriesStatus],
+    [libId, externalSession?.session_id, allSeriesIds, requestSeriesStatus, coverageRequest, isCurrent],
   );
 
   // 把覆盖结果交回调用方而不写进 externalSeriesMap：那张表是当前页卡片的数据源，
@@ -181,9 +208,11 @@ export function useExternalLibrary({
       const sid = externalSession?.session_id;
       if (!libId || !sid) throw new Error('external library session unavailable');
       if (ids.length === 0) return [];
-      return requestSeriesStatus(sid, ids);
+      const items = await requestSeriesStatus(sid, ids);
+      if (!isCurrent() || activeSessionId.current !== sid) throw new Error('External library scope changed');
+      return items;
     },
-    [libId, externalSession?.session_id, requestSeriesStatus],
+    [libId, externalSession?.session_id, requestSeriesStatus, isCurrent],
   );
 
   const startExternalLibraryScan = useCallback(async () => {
@@ -200,60 +229,54 @@ export function useExternalLibrary({
           ignore_extension: externalIgnoreExtension,
         },
       );
+      if (!isCurrent()) return;
+      sessionRequest.invalidate();
+      coverageRequest.invalidate();
       setExternalSession(res.data.session);
       setExternalScanTaskKey(res.data.task_key);
       saveRecentExternalPath(externalPath.trim());
     } catch (err) {
+      if (!isCurrent()) return;
       console.error('Failed to start external scan', err);
       onError('home.external.scanStartFailed');
     } finally {
-      setStartingExternalScan(false);
+      if (isCurrent()) setStartingExternalScan(false);
     }
-  }, [libId, externalPath, externalIgnoreExtension, saveRecentExternalPath, onError]);
+  }, [libId, externalPath, externalIgnoreExtension, saveRecentExternalPath, onError, isCurrent, coverageRequest, sessionRequest]);
 
   const clearExternalSession = useCallback(async () => {
-    if (!libId || !externalSession?.session_id) {
-      setExternalSession(null);
-      setExternalSeriesMap({});
-      return;
-    }
-    try {
-      await apiClient.delete(
-        `/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}`,
-      );
-    } catch (err) {
-      console.warn('Failed to delete external session', err);
-    }
+    const sessionId = externalSession?.session_id;
+    currentScope.current = { libId };
+    sessionRequest.invalidate();
+    coverageRequest.invalidate();
     setExternalSession(null);
     setExternalSeriesMap({});
     setExternalScanTaskKey(null);
     setExternalTransferTaskKey(null);
-  }, [libId, externalSession?.session_id]);
+    setStartingExternalScan(false);
+    setStartingTransfer(false);
+    if (!libId || !sessionId) return;
+    try {
+      await apiClient.delete(`/api/libraries/${libId}/external-libraries/session/${sessionId}`);
+    } catch (err) {
+      console.warn('Failed to delete external session', err);
+    }
+  }, [libId, externalSession?.session_id, sessionRequest, coverageRequest]);
 
-  const openExternalDirectoryBrowser = useCallback(() => {
-    setExternalBrowsing(true);
-    apiClient
-      .get('/api/browse-dirs')
-      .then((res) => {
+  const browse = useCallback((path?: string) => {
+    void browserRequest.run(() => apiClient.get(path ? `/api/browse-dirs?path=${encodeURIComponent(path)}` : '/api/browse-dirs'), {
+      onSuccess: res => {
+        if (!isCurrent()) return;
         setExternalBrowseDirs(res.data.dirs || []);
         setExternalBrowseCurrent(res.data.current);
         setExternalBrowseParent(res.data.parent);
         setExternalBrowseDrives(res.data.drives || []);
-      })
-      .catch((err) => console.error('Failed to open external directory browser', err));
-  }, []);
-
-  const navigateExternalDirectoryBrowser = useCallback((path: string) => {
-    apiClient
-      .get(`/api/browse-dirs?path=${encodeURIComponent(path)}`)
-      .then((res) => {
-        setExternalBrowseDirs(res.data.dirs || []);
-        setExternalBrowseCurrent(res.data.current);
-        setExternalBrowseParent(res.data.parent);
-        setExternalBrowseDrives(res.data.drives || []);
-      })
-      .catch((err) => console.error('Failed to navigate external directory browser', err));
-  }, []);
+      },
+      onError: err => { if (isCurrent()) console.error('Failed to browse external directory', err); },
+    });
+  }, [browserRequest, isCurrent]);
+  const openExternalDirectoryBrowser = useCallback(() => { setExternalBrowsing(true); browse(); }, [browse]);
+  const navigateExternalDirectoryBrowser = browse;
 
   const closeExternalDirectoryBrowser = useCallback(() => setExternalBrowsing(false), []);
   const chooseCurrentExternalDirectory = useCallback(() => {
@@ -277,78 +300,69 @@ export function useExternalLibrary({
           `/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}/transfer`,
           { series_ids: seriesIds },
         );
+        if (!isCurrent() || activeSessionId.current !== externalSession.session_id) return;
         setExternalTransferTaskKey(res.data.task_key);
         onSuccess();
       } catch (err) {
+        if (!isCurrent()) return;
         console.error('Failed to start external transfer', err);
         onError('home.external.transferFailed');
       } finally {
-        setStartingTransfer(false);
+        if (isCurrent()) setStartingTransfer(false);
       }
     },
-    [libId, externalSession, onError],
+    [libId, externalSession, onError, isCurrent],
   );
 
-  // 3. 监听后台任务进度（来自 run-snapshot 事件）
+  const refreshSession = useCallback(async () => {
+    return fetchExternalSession(externalSession?.session_id);
+  }, [fetchExternalSession, externalSession?.session_id]);
+
+  const receiveRun = useCallback(async (run: RunSnapshot, alreadyRefreshed = false) => {
+    if (run.scope_id != null && String(run.scope_id) !== libId) return;
+    if (!externalSession?.session_id || run.params?.session_id !== externalSession.session_id || !isTerminalRunStatus(run.status)) return;
+    const scan = externalScanTaskKey !== null && run.type === 'scan_external_library';
+    const transfer = externalTransferTaskKey !== null && run.type === 'transfer_external_library';
+    if (!scan && !transfer) return;
+    if (scan) setExternalScanTaskKey(null);
+    if (transfer) setExternalTransferTaskKey(null);
+    if (!alreadyRefreshed) await refreshSession();
+    if (!isCurrent()) return;
+    setCoverageRevision(value => value + 1);
+    if (transfer) invalidateLibrary({ libraryId: libId, areas: ['catalog', 'collections', 'organize', 'stats'] });
+  }, [externalSession?.session_id, externalScanTaskKey, externalTransferTaskKey, refreshSession, invalidateLibrary, libId, isCurrent]);
+  useSessionRunPush(frame => { if (frame.run) void receiveRun(frame.run); });
+
+  const recover = useCallback(async () => {
+    if (!externalSession?.session_id) return;
+    const session = await refreshSession();
+    if (!isCurrent()) return;
+    if (!externalTransferTaskKey || !libId) {
+      if (session?.status === 'ready') setCoverageRevision(value => value + 1);
+      return;
+    }
+    try {
+      const { data } = await apiClient.get<RunSnapshot[]>(`/api/system/tasks?type=transfer_external_library&scope=library&scope_id=${libId}&limit=20`);
+      if (!isCurrent()) return;
+      const run = Array.isArray(data) ? data.find(item => item.params?.session_id === externalSession.session_id) : undefined;
+      if (run && isTerminalRunStatus(run.status)) await receiveRun(run, true);
+      else if (session?.status === 'ready') setCoverageRevision(value => value + 1);
+    } catch (err) { if (isCurrent()) console.warn('Failed to recover external transfer', err); }
+  }, [externalSession?.session_id, externalTransferTaskKey, libId, refreshSession, receiveRun, isCurrent]);
+  useSessionRecovery(() => { void recover(); });
+
   useEffect(() => {
-    const handler = (event: Event) => {
-      const customEvent = event as CustomEvent<{
-        type?: string;
-        status?: string;
-        params?: Record<string, string>;
-      }>;
-      const progress = customEvent.detail;
-      if (!progress || !externalSession?.session_id || !libId) return;
-      // 认这一帧属不属于本页那次扫描/传输：比的是任务类型加载荷里的会话 id，
-      // 而不是任务键——契约上不再有它（ADR 0007）。会话 id 由启动点作为重启入参落下，
-      // 因此每一帧运行快照都带着它。两个 taskKey 仍留着：它们说的是「这一步我发起过没有」。
-      const sameSession = progress.params?.session_id === externalSession.session_id;
-      const isScan = externalScanTaskKey !== null && sameSession && progress.type === 'scan_external_library';
-      const isTransfer =
-        externalTransferTaskKey !== null && sameSession && progress.type === 'transfer_external_library';
-      if (!isScan && !isTransfer) return;
-      if (progress.status !== 'completed' && progress.status !== 'failed') return;
-
-      fetchExternalSession(externalSession.session_id).then((session) => {
-        if (session?.status === 'ready') {
-          fetchExternalSeriesStatus(session.session_id);
-        }
-      });
-
-      if (isScan) setExternalScanTaskKey(null);
-      if (isTransfer) setExternalTransferTaskKey(null);
-    };
-    window.addEventListener('manga-manager:run-snapshot', handler as EventListener);
-    return () => window.removeEventListener('manga-manager:run-snapshot', handler as EventListener);
-  }, [
-    externalSession?.session_id,
-    externalScanTaskKey,
-    externalTransferTaskKey,
-    libId,
-    fetchExternalSession,
-    fetchExternalSeriesStatus,
-  ]);
-
-  // 4. 扫描中轮询
-  useEffect(() => {
-    if (!externalSession?.session_id || externalSession.status !== 'scanning') return;
-    const timer = window.setInterval(() => {
-      fetchExternalSession(externalSession.session_id).then((session) => {
-        if (!session) return;
-        if (session.status === 'ready') {
-          fetchExternalSeriesStatus(session.session_id);
-        }
-      });
-    }, 1500);
+    if (!externalSession?.session_id || (externalSession.status !== 'scanning' && !externalTransferTaskKey)) return;
+    const timer = window.setInterval(() => { void recover(); }, 1500);
     return () => window.clearInterval(timer);
-  }, [externalSession?.session_id, externalSession?.status, fetchExternalSession, fetchExternalSeriesStatus]);
+  }, [externalSession?.session_id, externalSession?.status, externalTransferTaskKey, recover]);
 
   // 5. allSeries 变化或 refresh：会话就绪时重拉系列覆盖
   useEffect(() => {
     if (!externalSession?.session_id || externalSession.status !== 'ready') return;
     fetchExternalSeriesStatus(externalSession.session_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [externalSession?.session_id, externalSession?.status, allSeriesIds.join(','), refreshTrigger]);
+  }, [externalSession?.session_id, externalSession?.status, allSeriesIds.join(','), refreshTrigger, coverageRevision]);
 
   return {
     externalSession,

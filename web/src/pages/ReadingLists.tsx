@@ -1,3 +1,4 @@
+import { useLibraryRefresh } from '../session/ApplicationSessionProvider';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient, getApiErrorMessage, isCancel } from '../api/client';
@@ -34,6 +35,7 @@ interface ReadingListItem {
 }
 
 export default function ReadingLists() {
+  const catalogRefresh = useLibraryRefresh({ area: 'reading-lists' });
   const { t } = useI18n();
   const { showToast } = useToast();
   // 阅读清单是站点级数据（表里没有 user_id），增删改与排序在后端一律要管理员；浏览与「继续阅读」
@@ -68,7 +70,7 @@ export default function ReadingLists() {
 
   useEffect(() => {
     queueMicrotask(loadLists);
-  }, []);
+  }, [catalogRefresh]);
 
   useEffect(() => {
     if (!selected) {
@@ -101,7 +103,7 @@ export default function ReadingLists() {
         },
       },
     );
-  }, [selected, itemsRequest, showToast, t]);
+  }, [selected, itemsRequest, showToast, t, catalogRefresh]);
 
   useEffect(() => {
     const query = seriesQuery.trim();

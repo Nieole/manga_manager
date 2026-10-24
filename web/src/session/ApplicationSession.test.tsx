@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { ApplicationSessionProvider, useLibraryRefresh, useSessionRunPush, useSessionRecovery } from './ApplicationSessionProvider';
+import { ApplicationSessionProvider, useLibraryRefresh, useSessionRunPush, useSessionRecovery, useLibraryInvalidation } from './ApplicationSessionProvider';
 
 class Source {
   static CLOSED = 2;
@@ -88,4 +88,19 @@ it('notifies recovery when a closed connection is replaced', () => {
     expect(Source.instances[0].closed).toBe(true);
     expect(recover).toHaveBeenCalledTimes(1);
   } finally { vi.useRealTimers(); }
+});
+
+it('invalidates the affected library without resetting unrelated view input', () => {
+  vi.stubGlobal('EventSource', Source);
+  function View({ id }: { id: string }) {
+    const version = useLibraryRefresh({ libraryId: id });
+    const invalidate = useLibraryInvalidation();
+    return <><output data-testid={id}>{version}</output><input aria-label={id} /><button onClick={() => invalidate({ libraryId: '1' })}>change{id}</button></>;
+  }
+  render(<ApplicationSessionProvider identity="1:regular" isAdmin={false}><View id="1" /><View id="2" /></ApplicationSessionProvider>);
+  fireEvent.change(screen.getByLabelText('1'), { target: { value: 'draft' } });
+  fireEvent.click(screen.getByText('change1'));
+  expect(screen.getByTestId('1').textContent).toBe('1');
+  expect(screen.getByTestId('2').textContent).toBe('0');
+  expect((screen.getByLabelText('1') as HTMLInputElement).value).toBe('draft');
 });

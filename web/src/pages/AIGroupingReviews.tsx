@@ -1,3 +1,4 @@
+import { useLibraryRefresh, useLibraryInvalidation } from '../session/ApplicationSessionProvider';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { useLatestRequest } from '../hooks/useLatestRequest';
@@ -95,13 +96,13 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
   const { showToast } = useToast();
 
   // When embedded, we don't have an outlet context, so we use defaults
-  let refreshTrigger = 0;
+  const refreshTrigger = useLibraryRefresh({ area: 'reviews' });
+  const invalidateLibrary = useLibraryInvalidation();
   let libraries: LibraryOption[] = [];
   try {
     if (!embedded) {
       // eslint-disable-next-line react-hooks/rules-of-hooks
-      const ctx = useOutletContext<{ refreshTrigger: number; libraries?: LibraryOption[] }>();
-      refreshTrigger = ctx?.refreshTrigger ?? 0;
+      const ctx = useOutletContext<{ libraries?: LibraryOption[] }>();
       libraries = ctx?.libraries ?? [];
     }
   } catch {
@@ -234,9 +235,9 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
   }, [libraryId, reviewsRequest, showToast, status, t]);
 
   useEffect(() => {
-    setMarkedActions({});
     void loadReviews(true);
   }, [libraryId, status, refreshTrigger, loadReviews]);
+  useEffect(() => setMarkedActions({}), [libraryId, status]);
 
   // 同理用 layout effect 挂哨兵：哨兵一进 DOM 就得被观察上。挂在 passive effect 里的话，
   // 从列表提交到观察器建立之间有一段没人盯着的空窗，这段时间里哨兵的可见性变化没人接得住。
@@ -299,6 +300,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
         try {
           await apiClient.post(`/api/ai-grouping/reviews/${id}/apply`);
           applied += 1;
+          invalidateLibrary({ areas: ['collections'] });
         } catch {
           failed += 1;
         }
@@ -334,6 +336,7 @@ export default function AIGroupingReviews({ embedded, onReviewChange }: AIGroupi
     try {
       const res = await apiClient.post(`/api/ai-grouping/reviews/${review.id}/collections/${collection.id}/${action}`);
       if (action === 'apply') {
+        invalidateLibrary({ areas: ['collections'] });
         showToast(t('aiGroupingReviews.toast.collectionApplied', { id: res.data.created_collection_id || '' }));
         patchCollection(review.id, collection.id, { status: 'applied', created_collection_id: res.data.created_collection_id });
       } else {

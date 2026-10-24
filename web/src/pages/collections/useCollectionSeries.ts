@@ -41,6 +41,7 @@ export interface UseCollectionSeriesResult {
   loading: boolean;
   open: (c: Collection) => void;
   loadMore: () => void;
+  refresh: (c: Collection) => void;
   clear: () => void;
   removeSeries: (seriesID: number) => void;
 }
@@ -66,12 +67,13 @@ export function useCollectionSeries(
     setItems(next);
   }, []);
 
-  const requestSmartPage = useCallback((c: Collection, offset: number, pageSize: number) => {
+  const requestSmartPage = useCallback((c: Collection, offset: number, pageSize: number, refreshLoaded = false) => {
+    const continuationSize = cursorRef.current?.pageSize ?? FALLBACK_PAGE_SIZE;
     const requestID = requestIDRef.current + 1;
     requestIDRef.current = requestID;
     setLoading(true);
     // 第一页不指定 limit，交给后端用这个书架配置的每页大小；往后翻沿用它回显的值。
-    const config = offset > 0 ? { params: { limit: pageSize, offset } } : undefined;
+    const config = offset > 0 || refreshLoaded ? { params: { limit: pageSize, offset } } : undefined;
     apiClient
       .get<SmartCollectionSeriesResponse>(`/api/collection-views/smart/${c.numeric_id}/series`, config)
       .then((res) => {
@@ -83,7 +85,7 @@ export function useCollectionSeries(
         applyItems(merged);
         // 追加请求一条新成员都没带回来时，把总数收敛到实际条数，免得「加载更多」永远消不掉。
         setTotal(offset > 0 && page.length === 0 ? merged.length : payload.total ?? merged.length);
-        const effectivePageSize = payload.limit && payload.limit > 0 ? payload.limit : pageSize;
+        const effectivePageSize = refreshLoaded ? continuationSize : payload.limit && payload.limit > 0 ? payload.limit : pageSize;
         cursorRef.current = { collection: c, nextOffset: offset + page.length, pageSize: effectivePageSize };
         if (payload.filter) onSmartFilterLoaded(c.view_id, payload.filter);
       })
@@ -124,6 +126,11 @@ export function useCollectionSeries(
     else requestManualSeries(c);
   }, [applyItems, requestSmartPage, requestManualSeries]);
 
+  const refresh = useCallback((c: Collection) => {
+    if (c.kind === 'smart') requestSmartPage(c, 0, Math.max(itemsRef.current.length, cursorRef.current?.pageSize ?? FALLBACK_PAGE_SIZE), true);
+    else requestManualSeries(c);
+  }, [requestSmartPage, requestManualSeries]);
+
   const loadMore = useCallback(() => {
     const cursor = cursorRef.current;
     if (!cursor || cursor.nextOffset <= 0) return;
@@ -154,6 +161,7 @@ export function useCollectionSeries(
     loading,
     open,
     loadMore,
+    refresh,
     clear,
     removeSeries,
   };
