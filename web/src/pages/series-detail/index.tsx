@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BookImage, List, Grid, FolderOpen, ArrowLeft } from 'lucide-react';
 import AddToCollectionModal from '../../components/AddToCollectionModal';
 import { useToast } from '../../components/ToastProvider';
@@ -45,13 +45,12 @@ export default function SeriesDetailPage() {
   const { t } = useI18n();
   const { seriesId } = useParams();
   const navigate = useNavigate();
-  const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
   const { showToast } = useToast();
   const scrapeProviders = useScrapeProviders();
 
   // 系列详情页把多个后端端点折叠为一个上下文：系列主体、书籍、标签、作者、关系、待审核元数据和继续阅读信息。
   // 页面组件只消费 ctx，避免各个子面板各自请求导致刷新顺序不一致或保存后局部状态过期。
-  const ctx = useSeriesContext({ seriesId, refreshTrigger });
+  const ctx = useSeriesContext({ seriesId });
   const { volumes, standaloneBooks, allBookIds } = useSeriesVolumes(ctx.books);
   const openVolumes = useSeriesOpenVolumes({ seriesId, knownVolumes: volumes.map((v) => v.name) });
 

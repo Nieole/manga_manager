@@ -5,6 +5,7 @@
  * 维护要点：与仪表盘概览互补——仪表盘留结构性概览与热力图，本页聚焦个人回顾。
  */
 
+import { useLibraryRefresh } from '../session/ApplicationSessionProvider';
 import { useEffect, useMemo, useState } from 'react';
 import { Flame, Clock, CalendarRange, BookCheck, Trophy, Loader2, BarChart3 } from 'lucide-react';
 import { apiClient, getApiErrorMessage } from '../api/client';
@@ -20,6 +21,7 @@ interface PeriodResponse { pages: number; read_seconds: number; active_days: num
 const cardClass = 'bg-komgaSurface border border-gray-800 rounded-2xl p-5';
 
 export default function Stats() {
+  const catalogRefresh = useLibraryRefresh({ area: 'stats' });
   const { t, formatNumber } = useI18n();
   const { showToast } = useToast();
 
@@ -54,7 +56,7 @@ export default function Stats() {
       if (!cancelled) showToast(getApiErrorMessage(err, t('stats.loadFailed')), 'error');
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [t, showToast]);
+  }, [t, showToast, catalogRefresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +67,7 @@ export default function Stats() {
       .catch((err) => { if (!cancelled) showToast(getApiErrorMessage(err, t('stats.loadFailed')), 'error'); })
       .finally(() => { if (!cancelled) setPeriodLoading(false); });
     return () => { cancelled = true; };
-  }, [year, month, t, showToast]);
+  }, [year, month, t, showToast, catalogRefresh]);
 
   const years = useMemo(() => Array.from({ length: 6 }, (_, i) => currentYear - i), [currentYear]);
   const maxTop = useMemo(() => Math.max(1, ...readingTime.top.map((b) => b.total_seconds)), [readingTime.top]);

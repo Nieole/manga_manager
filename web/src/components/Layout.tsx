@@ -19,7 +19,7 @@ import { UserMenu } from './layout/UserMenu';
 import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
 import { useTaskBubbles } from '../features/task-observation/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
-import { useLibraryInvalidation, useLibraryRefresh } from '../session/ApplicationSessionProvider';
+import { useLibraryInvalidation } from '../session/ApplicationSessionProvider';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -102,13 +102,8 @@ export default function Layout() {
     const [editLibId, setEditLibId] = useState("");
     const editForm = useLibraryForm(EMPTY_LIBRARY_FORM);
 
-    // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
-    const refreshTrigger = useLibraryRefresh();
     const invalidateLibrary = useLibraryInvalidation();
-
-    // 稳定化 Outlet context 对象：Layout 在扫描期间会因 SSE 任务进度状态高频重渲染，若每次渲染都新建
-    // { refreshTrigger, libraries } 会让所有子路由（含库页大量卡片）跟着重渲染。仅当二者真正变化时才换引用。
-    const outletContext = useMemo(() => ({ refreshTrigger, libraries }), [refreshTrigger, libraries]);
+    const outletContext = useMemo(() => ({ libraries }), [libraries]);
 
     // 任务气泡自行消费会话，持有终态延时清理与手动关闭状态。
     const { entries: taskBubbleEntries, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
@@ -305,7 +300,7 @@ export default function Layout() {
             addForm.reset(EMPTY_LIBRARY_FORM);
             saveRecentLibraryPath(addForm.values.path);
             fetchLibraries();
-            // 只有新增会拨 refreshTrigger：新库需要让各处的列表重新拉一遍；
+            // 新库需要让各处的列表重新拉一遍；
             // 编辑改的是已有库的配置，不涉及集合变化。
             invalidateLibrary();
         } catch (error) {

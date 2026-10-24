@@ -4,9 +4,10 @@
  * 维护时应关注状态与各子组件的受控同步、操作后刷新，以及手工/智能书架的行为差异。
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiClient, getApiErrorMessage } from '../../api/client';
+import { useLibraryRefresh } from '../../session/ApplicationSessionProvider';
 import { useLatestRequest } from '../../hooks/useLatestRequest';
 import { FolderHeart, Plus } from 'lucide-react';
 import { useAuth } from '../../auth/AuthProvider';
@@ -26,6 +27,7 @@ import { SmartEditModal } from './SmartEditModal';
 import { SnapshotModal } from './SnapshotModal';
 
 export default function Collections() {
+  const catalogRefresh = useLibraryRefresh({ area: 'collections' });
   const { t } = useI18n();
   const { showToast } = useToast();
   // 合集与智能书架是站点级数据（表里没有 user_id），新建、改名、删除、快照与成员增删在后端
@@ -65,18 +67,22 @@ export default function Collections() {
   const [kindTab, setKindTab] = useState<'all' | 'manual' | 'smart'>('all');
   const navigate = useNavigate();
   const snapshotPreviewRequest = useLatestRequest();
+  const collectionsRequest = useLatestRequest();
 
   const fetchCollections = () => {
-    apiClient.get('/api/collection-views').then(res => {
-      setCollections((res.data || []).map((item: Collection) => ({
-        ...item,
-        id: item.numeric_id,
-      })));
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    void collectionsRequest.run(() => apiClient.get<Collection[]>('/api/collection-views'), {
+      onSuccess: res => {
+        const next = (res.data || []).map(item => ({ ...item, id: item.numeric_id }));
+        setCollections(next);
+        setSelected(current => {
+          if (!current) return current;
+          const updated = next.find(item => item.view_id === current.view_id);
+          return updated ? { ...updated, smart_filter: current.smart_filter } : current;
+        });
+      },
+      onSettled: () => setLoading(false),
+    });
   };
-
-  useEffect(() => { fetchCollections(); }, []);
 
   // 成员响应里回显的筛选定义比左栏列表新（用户可能刚在别处改过），认准是当前选中的那一个才回灌。
   const applySmartFilter = useCallback((viewID: string, filter: SmartFilter) => {
@@ -84,6 +90,15 @@ export default function Collections() {
   }, []);
 
   const series = useCollectionSeries(applySmartFilter);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const refreshMembers = series.refresh;
+  useEffect(() => {
+    fetchCollections();
+    if (selectedRef.current) refreshMembers(selectedRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogRefresh, refreshMembers]);
+  useEffect(() => () => collectionsRequest.invalidate(), [collectionsRequest]);
 
   const selectCollection = (c: Collection) => {
     setSelected(c);
