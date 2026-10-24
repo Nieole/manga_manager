@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -16,8 +16,8 @@
 - [x] 复用现有 SQLite、事务与数据身份，只接受本功能所需的数据能力；不反向依赖请求控制或应用总对象。
 - [x] 现有 OPDS、Mihon 及站内链接继续访问相同合集身份，现有界面交互与授权保持兼容。
 - [x] 保留尚未迁移来源的兼容接入，名称与所有权只建立一份权威规则；不要求先搬动其他编排功能才能交付本票。
-- [ ] 通过完整用例和真实 SQLite 验证名称冲突、来源可编辑性、成员变更、事务失败、协议身份与普通用户授权；规则测试无需整个 Controller。
-- [ ] 删除本票替代的人工规则副本，完成相关后端、前端及必要生成检查。
+- [x] 通过完整用例和真实 SQLite 验证名称冲突、来源可编辑性、成员变更、事务失败、协议身份与普通用户授权；规则测试无需整个 Controller。
+- [x] 删除本票替代的人工规则副本，完成相关后端、前端及必要生成检查。
 
 
 ## 实施与验证
@@ -29,3 +29,7 @@
 通过（Go 1.26.10）：`go test ./internal/organize ./internal/database`、`golangci-lint run ./internal/organize/...`（0 issues）、`gofmt -l ./cmd ./internal`（无输出）、`git diff --check`。
 
 全量 `go test ./...` 及 API/协议/授权测试受 Windows Application Control 拦截 gcc，尚未完成行为验证。全量 lint 同因 cgo preprocessing failed 无法完成，不能把其尾部 0 issues 当成成功。日志：`C:/Users/saber/.codex/tmp/architecture-deepening/collections-go-test.log`。本票无 SQL、响应契约和前端实现变更，无生成变更；当前保留 ready-for-agent，待环境恢复完成余下门禁后再标记 done。
+
+## 集成验收
+
+09 遗留的无引用 API 声明已随 18 移除，集成全量 lint 为 0 issues。集成分支的 organize、Collections/OPDS/Mihon 路由、身份与授权回归通过（API 8.894s），补齐先前受阻的相关验证；无前端或生成契约变更。全部验收项满足。

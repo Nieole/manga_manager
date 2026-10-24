@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | 01 | `c630bd7` | `6ddeb64` | reading/database 真实 SQLite 测试及定向 lint、前端测试构建 lint 通过；集成最小回归通过。HTTP/全量门禁受环境阻碍，票未关闭。 |
 | 03 | `905414b` | `52aa2a2` | reading/database 全包、清除拒旧 HTTP 回归及前端最小回归通过；前端完整测试构建 lint 与局部 Go lint 通过。等待全量验收。 |
-| 09 | `aac6601` | `a41f201` | 人工合集真实 SQLite 测试、organize lint、全仓 gofmt 通过。API/全量门禁受环境阻碍，票未关闭。 |
+| 09 | `aac6601` | `a41f201` | 人工合集真实 SQLite 测试、organize lint、全仓 gofmt 通过。相关 API/协议/授权回归与全量 lint 已补验通过，票已关闭。 |
 | 14 | `1252c8f` | `b17df4e` | 前端全量 869 测试、构建与 lint 通过；集成后 8 项会话/路由回归通过。后端 SSE 权限回归已在集成分支补验通过，票已关闭。 |
 | 15 | `f282819` | `9658dac` | 全前端 876 测试、build/lint 通过，合入后 25 项会话及消费者回归通过；票已关闭。 |
 | 17 | `b926ad6` | `1aa92c5` | application/task/taskstore 真实 SQLite 测试与局部 lint 通过，合入后测试通过。API/全量门禁受环境阻碍，票未关闭。 |
