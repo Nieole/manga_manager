@@ -100,14 +100,13 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		MinProgress:     parseOptionalFloat(query.Get("minProgress")),
 		MaxProgress:     parseOptionalFloat(query.Get("maxProgress")),
 		AddedWithinDays: parseNonNegativeInt(query.Get("addedWithinDays")),
-		UserID:          c.currentUserID(r),
 	}
 
 	// 游标只是一条快捷路径。客户端手里的游标过期或无效（改排序、分享出去的旧链接、前进后退）
 	// 是可预期的正常输入：忽略它按 page 走下面的 offset 分页，用户照常看到这一页，并顺带拿回
 	// 一个属于当前排序的新游标。只有服务端自己出问题才失败。
 	if cursor != "" {
-		series, nextCursor, hasMore, err := c.store.SearchSeriesCursor(ctx, libID, filters, int32(limit), sortBy, cursor)
+		series, nextCursor, hasMore, err := reading.NewCatalogueQueries(c.store).SearchCursor(ctx, c.currentUserID(r), libID, filters, int32(limit), sortBy, cursor)
 		switch {
 		case err == nil:
 			if series == nil {
@@ -131,7 +130,7 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	series, total, err := c.store.SearchSeriesPaged(ctx, libID, filters, int32(limit), int32(offset), sortBy)
+	series, total, err := reading.NewCatalogueQueries(c.store).SearchPaged(ctx, c.currentUserID(r), libID, filters, int32(limit), int32(offset), sortBy)
 	if err != nil {
 		slog.Error("SearchSeriesPaged Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
@@ -174,16 +173,7 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 	limit := int64(queryLimit(r, "limit", 10, maxSeriesPageLimit))
 
 	ctx := r.Context()
-	var items []database.GetRecentReadSeriesRow
-	if uid := c.currentUserID(r); uid > 0 {
-		items, err = c.store.GetUserRecentReadSeries(ctx, uid, libID, limit)
-	} else {
-		items, err = c.store.GetRecentReadSeries(ctx, database.GetRecentReadSeriesParams{
-			LibraryID:   libID,
-			LibraryID_2: libID,
-			Limit:       limit,
-		})
-	}
+	items, err := reading.NewCatalogueQueries(c.store).RecentSeries(ctx, c.currentUserID(r), libID, limit)
 	if err != nil {
 		slog.Error("GetRecentReadSeries Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent read series")
@@ -408,17 +398,8 @@ type SeriesContextResponse struct {
 	MetadataVersion string `json:"metadata_version"`
 }
 
-// SeriesContinue 描述用户在某系列内的续读位置，用于资源库 / 详情页 CTA。
-type SeriesContinue struct {
-	NextUnreadBookID int64      `json:"next_unread_book_id,omitempty"`
-	LastReadBookID   int64      `json:"last_read_book_id,omitempty"`
-	LastReadPage     int64      `json:"last_read_page,omitempty"`
-	LastReadAt       *time.Time `json:"last_read_at,omitempty"`
-	TotalBooks       int        `json:"total_books"`
-	ReadBooks        int        `json:"read_books"`
-	TotalPages       int64      `json:"total_pages"`
-	ReadPages        int64      `json:"read_pages"`
-}
+// SeriesContinue is the shared subject reading summary exposed over HTTP.
+type SeriesContinue = reading.Continue
 
 type SeriesVolumeSummary struct {
 	Name        string          `json:"name"`
@@ -461,17 +442,16 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 	// 书籍列表是这个响应的主干，也是「继续阅读」落点的计算依据。
 	// 查询失败时返回 200 + 空系列会让前端把「数据库暂时不可用」显示成「这个系列没有书」，
 	// 并据此算出错误的续读位置；与同文件 getSeriesContinueEndpoint 的口径统一为 500。
-	books, err := c.store.ListBooksBySeries(ctx, seriesID)
+	view, err := reading.NewQueries(c.store).Series(ctx, c.currentUserID(r), seriesID)
 	if err != nil {
 		slog.Error("Failed to fetch books for context", "series_id", seriesID, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to load series context")
 		return
 	}
+	books := view.Books
 	if books == nil {
 		books = []database.Book{}
 	}
-	sortBooksForReading(books)
-	c.overlayUserProgress(ctx, c.currentUserID(r), books)
 
 	// 3. 标签
 	tags, err := c.store.GetTagsForSeries(ctx, seriesID)
@@ -538,7 +518,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		MetadataSummary:   summarizeSeriesMetadata(metadataReview),
 		FailedTasks:       failedTasks,
 		FailedTaskSummary: summarizeFailedTasks(failedTasks),
-		Continue:          buildSeriesContinue(books),
+		Continue:          view.Continue,
 		MetadataVersion:   seriesmeta.Version(series, tags, authors, links),
 	})
 }
@@ -556,52 +536,13 @@ func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	books, err := c.store.ListBooksBySeries(ctx, seriesID)
+	view, err := reading.NewQueries(c.store).Series(ctx, c.currentUserID(r), seriesID)
 	if err != nil {
 		slog.Error("Failed to fetch books for continue", "series_id", seriesID, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to compute continue position")
 		return
 	}
-	sortBooksForReading(books)
-	c.overlayUserProgress(ctx, c.currentUserID(r), books)
-	jsonResponse(w, http.StatusOK, buildSeriesContinue(books))
-}
-
-// buildSeriesContinue 假设 books 已按阅读顺序排序。
-// 规则：
-//   - next_unread_book_id：第一本未完成的书（last_read_page < page_count，含完全未读）。
-//   - last_read_book_id：last_read_at 最大的书，用作"上次读到这里"。
-//   - 全部读完时 next_unread 为 0；用户可前端落到 first 或 last。
-func buildSeriesContinue(books []database.Book) SeriesContinue {
-	out := SeriesContinue{TotalBooks: len(books)}
-	var latestAt *time.Time
-	for i := range books {
-		book := books[i]
-		out.TotalPages += book.PageCount
-		state := reading.InspectBook(book)
-		readPages := state.ReadPages
-		out.ReadPages += readPages
-		isFinished := state.Completed
-		if isFinished {
-			out.ReadBooks++
-		}
-		if out.NextUnreadBookID == 0 && !isFinished {
-			out.NextUnreadBookID = book.ID
-		}
-		if book.LastReadAt.Valid {
-			at := book.LastReadAt.Time
-			if latestAt == nil || at.After(*latestAt) {
-				captured := at
-				latestAt = &captured
-				out.LastReadBookID = book.ID
-				out.LastReadPage = readPages
-			}
-		}
-	}
-	if latestAt != nil {
-		out.LastReadAt = latestAt
-	}
-	return out
+	jsonResponse(w, http.StatusOK, view.Continue)
 }
 
 func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []SeriesVolumeSummary {
