@@ -105,6 +105,10 @@ func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, 
 		provider.requestedKeys = append(provider.requestedKeys, name)
 		return provider
 	}
+	c.assembleIntelligenceUseCases()
+	for _, scope := range scrapeScopes {
+		rememberTaskKey(scope.key, TaskIdentity{taskType: "scrape", scope: scope.scope, scopeID: scope.scopeID, variant: scope.variant})
+	}
 	return c, snapshots
 }
 
@@ -301,6 +305,9 @@ func TestScrapeRetryReadsProviderFromTaskParams(t *testing.T) {
 			entry, ok := c.buildTaskDispatch()[taskDispatchKey{Type: "scrape", Variant: tc.variant}]
 			if !ok {
 				t.Fatalf("注册表里没有 scrape/%q 的重启函数 —— 这条作用域的重试按钮点下去是 400", tc.variant)
+			}
+			if entry.Resumable {
+				t.Fatal("paid scraping registered for unattended resume")
 			}
 			if err := entry.Relaunch(context.Background(), done, task.TriggerManual); err != nil {
 				t.Fatalf("重试刮削失败: %v", err)

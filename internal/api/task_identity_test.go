@@ -70,6 +70,7 @@ func TestAIGroupingDeclaresItsLibraryScope(t *testing.T) {
 		store:      &externalTaskStore{lib: database.Library{ID: libraryID, Name: "Library C"}},
 	}
 
+	c.assembleIntelligenceUseCases()
 	if err := c.launchAIGroupingTask(libraryID, "zh-CN", task.TriggerManual); err != nil {
 		t.Fatalf("启动 AI 分组失败: %v", err)
 	}

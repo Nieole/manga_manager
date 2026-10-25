@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"strings"
 
+	"manga-manager/internal/application/intelligence"
 	"manga-manager/internal/application/scanning"
-	"manga-manager/internal/metadata"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
 )
@@ -82,18 +82,6 @@ func writeTaskLaunchError(w http.ResponseWriter, err error, conflict, failure st
 	jsonError(w, http.StatusInternalServerError, failure)
 }
 
-// libraryScopeName 取资料库在界面上的显示名，取不到返回空串。
-//
-// 读不到库名不是启动失败：任务声明的其余部分不依赖它，而 claimTaskSlot 对空串本就无操作。
-// 为一次读库失败挡下整个任务，用户失去的是任务本身，换来的只是一个标签。
-func (c *Controller) libraryScopeName(libraryID int64) string {
-	lib, err := c.store.GetLibrary(context.Background(), libraryID)
-	if err != nil {
-		return ""
-	}
-	return lib.Name
-}
-
 // taskParam 读一个**任务参数**，缺了给空串。**重启函数**靠它读回原始入参：一个任务重试时
 // 除了作用域就只剩这些参数，读丢了不会有编译错误，后果是重试静默换了跑法（换成默认刮削源、
 // 换个语种、丢掉发起理由）。
@@ -123,7 +111,7 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 	forceParam := func(run RunSnapshot) bool {
 		return taskParam(run, "force") == "true"
 	}
-	return map[taskDispatchKey]taskDispatch{
+	dispatch := map[taskDispatchKey]taskDispatch{
 		{Type: "scan_library", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
 			id, err := libraryID(run)
 			if err != nil {
@@ -170,27 +158,6 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 		{Type: "cleanup_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchCleanupThumbnailsTask(trigger)
 		}},
-		// 刮削两个变体都不可续跑：它们要调外部源，有的按次计费。
-		{Type: "scrape", Variant: variantScrapeAllLibraries}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			return c.launchBatchScrapeAllSeriesTask(ctx, taskParam(run, "provider"), trigger)
-		}},
-		{Type: "scrape", Variant: variantScrapeOneLibrary}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			return c.launchLibraryScrapeTask(ctx, id, taskParam(run, "provider"), trigger)
-		}},
-		// 不可续跑：它调 LLM，那是花钱的。
-		{Type: "ai_grouping", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			// locale 优先取任务持久化的原始值，其次取本次重试请求的语言（ctx 注入），最后回退 zh-CN。
-			locale := firstNonEmptyTaskValue(taskParam(run, "locale"), metadata.LocaleFromContext(ctx))
-			return c.launchAIGroupingTask(id, firstNonEmptyTaskValue(locale, "zh-CN"), trigger)
-		}},
 		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
 			return c.launchRebuildBookHashesTask(trigger)
 		}},
@@ -208,6 +175,10 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 			return c.launchRefreshKOReaderMatchingTask(trigger)
 		}},
 	}
+	for _, definition := range intelligence.Restarts() {
+		dispatch[taskDispatchKey{Type: string(definition.Type), Variant: TaskVariant(definition.Variant)}] = taskDispatch{Resumable: definition.Resumable, Relaunch: c.restartIntelligenceRun}
+	}
+	return dispatch
 }
 
 // ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----

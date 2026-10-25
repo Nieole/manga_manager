@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"manga-manager/internal/application/diskjobs"
+	"manga-manager/internal/application/intelligence"
 	"manga-manager/internal/application/relocating"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
@@ -63,6 +64,7 @@ type Controller struct {
 	koreader       *koreader.Service
 	external       *external.Manager
 	diskJobs       *diskjobs.Service
+	intelligence   *intelligence.Service
 	proposals      *proposal.Service
 	relocation     *relocation.Service
 	configPath     string
@@ -397,6 +399,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.taskEngine.dispatch = c.buildTaskDispatch()
 	c.assembleScanUseCases()
 	c.assembleDiskUseCases()
+	c.assembleIntelligenceUseCases()
 	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
 		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
 		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },
