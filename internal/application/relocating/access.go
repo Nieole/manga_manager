@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 
+	"manga-manager/internal/application"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/task"
@@ -153,11 +154,7 @@ func (c *Service) acquireOperation(ctx context.Context, op relocation.Relocation
 	}, nil
 }
 
-func relocationPathsIntersect(a, b string) bool {
-	_, inside := relocation.MapPath(a, a, b)
-	_, contains := relocation.MapPath(b, b, a)
-	return inside == nil || contains == nil
-}
+func relocationPathsIntersect(a, b string) bool { return application.PathsIntersect(a, b) }
 
 // GuardRoot holds the topology boundary while a library root is created or changed.
 func (c *Service) GuardRoot(path string) (func(), error) {

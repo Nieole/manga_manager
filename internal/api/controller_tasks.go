@@ -111,8 +111,8 @@ func taskParam(run RunSnapshot, key string) string {
 // **可续跑白名单**（规格关键决定 7）：资料库扫描、系列扫描、封面生成、重建缩略图、清理缩略图、
 // 书哈希重建与低优先级回填、文件身份重建、KOReader 进度对账与匹配刷新。
 //
-// **不可续跑**的那几个（清理资料库、外部库扫描与传输、ComicInfo 回写、刮削、AI 分组）
-// 各自的理由都写在它那一行上：要么改磁盘内容、要么花钱。它们照样可重试——那是用户按下的那一下。
+// 清理资料库、刮削与 AI 分组支持手动重试，不支持自动续跑，原因随注册项声明。
+// 外部库扫描、传输与 ComicInfo 回写没有重启函数；不从历史运行重建内存会话或传输计划。
 func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 	libraryID := func(run RunSnapshot) (int64, error) {
 		if run.ScopeID == nil {

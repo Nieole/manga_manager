@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/taskcontrol"
 )
 
 // Store 是本包真正需要的那三个查询。
@@ -371,7 +372,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, task TaskHa
 
 	paths := make([]string, 0)
 	err = filepath.WalkDir(externalPath, func(path string, d os.DirEntry, walkErr error) error {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := taskcontrol.Wait(ctx); ctxErr != nil {
 			return ctxErr // 响应取消：中止外部盘遍历
 		}
 		if walkErr != nil {
@@ -396,7 +397,7 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, task TaskHa
 	unmatchedFiles := 0
 	total := len(paths)
 	for index, path := range paths {
-		if ctxErr := ctx.Err(); ctxErr != nil {
+		if ctxErr := taskcontrol.Wait(ctx); ctxErr != nil {
 			m.setFailure(sessionID, ctxErr) // 响应取消：中止匹配循环
 			return SessionSnapshot{}, ctxErr
 		}
