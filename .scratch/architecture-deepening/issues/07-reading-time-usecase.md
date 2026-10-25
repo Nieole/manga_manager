@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 在线阅读位置的完整用例
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -27,4 +27,10 @@
 - 红绿证据：首个 public 用例测试因缺失 RecordTime/TimeReport 编译失败，新增用例后通过；真实关闭数据库的 HTTP 回归先发现旧处理返回 200，迁移后返回 500。真实 SQLite 触发器确认活动失败回滚本次时长、保留已保存位置，另覆盖主体隔离、累计、日期与秒数上限。
 - 前端沿用现有 hook，以消费者边界验证可见性、90 秒空闲停止、输入恢复、心跳、切书/卸载结算、隐藏/pagehide beacon、异步旧书失败与丢失响应不回填/不重传；无须改写已正确的计时逻辑。
 - 门禁通过：Go 1.26.10 `go test ./...`；`gofmt -l ./cmd ./internal` 空输出；独立缓存 `golangci-lint run --allow-parallel-runners` 为 `0 issues.`；前端全量 93 文件/907 测试、`npm run build`、`npm run lint`；`go run ./cmd/tsgen` 无生成漂移；`git diff --check`。
-- 首轮全量 Go 仅扫描器 `TestScanAccountsArchiveFailuresAndKeepsScanning/归档打不开` 的 TempDir 清理报告目录非空；复跑完整 `go test ./...` 已通过。没有修改扫描器或绕过系统执行限制。
+- 首轮全量 Go 仅扫描器 `TestScanAccountsArchiveFailuresAndKeepsScanning/归档打不开` 的 TempDir 清理报告目录非空；复跑完整 `go test ./...` 已通过。未绕过系统执行限制。
+公共 fixture 修复（独立 test 提交）：
+
+- 多树重复出现的清理失败已定位：`TestScanAccountsArchiveFailuresAndKeepsScanning` 创建无应用发起方的 standalone Scanner，`CoverBatch.attach` 以后台上下文自行排空封面；fixture 没有在 `newSlowDiskTestConfig` 的缓存临时目录删除和 store 关闭前等待 `selfDrained`。
+- 在 NewScanner 与缓存 TempDir 创建后注册 LIFO `t.Cleanup`，以独立 5 秒上下文等待现有 `waitForCoverQueue`；超时明确报告失败。只修该公共 fixture，不修改生产扫描/封面生命周期，不新增调用镜像测试。
+- 红色证据为多个工作树的同一 TempDir 目录非空失败；修复后原测试 `go test ./internal/scanner -run TestScanAccountsArchiveFailuresAndKeepsScanning -count=1` 与完整 `go test ./internal/scanner -count=1` 通过，格式空输出与 lint `0 issues.`。
+- 生产资源停止契约由票 21/24 继续核验；这次 fixture 修复不构成相关生产生命周期完成证据。
