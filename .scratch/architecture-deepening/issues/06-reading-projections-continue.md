@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 在线阅读位置的完整用例；03: 批量读态与持久化未读保护；04: 批量已读活动与未知页数统计
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -34,4 +34,8 @@
 - 门禁过程中，缺少忽略的 embed `web/dist` 时全量测试未启动相关包，复制主树产物后首轮 `go test ./...` 全部通过。之后更新测试再跑全量时 scanner 包曾一次失败（工具输出中段被截断，未保留具体测试名）；`go test ./internal/scanner -count=1` 独立复跑通过，最终全量结果见交付记录。
 - 工作树依赖注意：`C:/Users/saber/dev/manga_manager-06/web/node_modules` 与误建的 `C:/Users/saber/dev/manga_manager-06/web/web/node_modules` 均为 junction，目标均为 `C:/Users/saber/dev/manga_manager/web/node_modules`。误建链接清理曾被自动审批以 `blocked by policy` 拒绝，未尝试绕过。保留两个链接；禁止对其执行 npm ci、删除或递归清理此工作树，后续由主代理统一处置。
 
-- 最终门禁：`go test ./...` 退出 0，完整输出保存在本工作树忽略文件 `.tmp/go-test-final.log`；其中 reading、api、database、scanner 及其余所有包通过。提交前 merge 集成分支 `codex/architecture-deepening`，其 tip 为 `021676b`，结果 already up to date。
+- 最终门禁：`go test ./...` 退出 0，完整输出保存在本工作树忽略文件 `.tmp/go-test-final.log`；其中 reading、api、database、scanner 及其余所有包通过。该固定门禁基于 `021676b` 加本票实现。实现提交 `a1792aa` 后，通过 merge 提交 `783a281` 纳入集成最新 `bf1628d`；唯一冲突为 `controller_progress.go` 中双方各自删除的旧 helper，按双方删除结果解决，保留 02 的 `SyncPositions` 适配与规则。
+
+- 合并后复核：`golangci-lint run --allow-parallel-runners` 再次 `0 issues.`，gofmt 与 diff-check 空；前述页面命令增加 `src/pages/book-reader/offlineReader.test.ts` 后 8 files / 53 tests 通过。
+
+- 合并后 `go test ./internal/reading ./internal/api` 退出 0（reading 4.898s、api 75.415s），完整输出保存在 `.tmp/go-test-after-merge.log`。实现与 merge 已提交，全部验收项满足，票据标记 done。
