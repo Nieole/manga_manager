@@ -4,7 +4,7 @@
 
 **Blocked by:** 03: 批量读态与持久化未读保护
 
-**Status:** done
+**Status:** ready-for-agent
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -35,3 +35,7 @@
 - 前端 `npm run test`：92 文件 / 893 测试通过；`npm run build`、`npm run lint` 通过。新增真实书卡/卷显示及统一读态回归，不显示或操作哨兵位置。
 - PowerShell `sqlc generate` exit 0；再次生成的 models/query/querier 哈希一致；query.sql 仅 ASCII。`go run ./cmd/tsgen` 成功，generated.ts 无漂移。
 - 首轮全量测试曾因旧集成版本 scanner 的 TempDir 清理竞态失败（`go-04.log`）；合并最新封面交接实现后，上述最终完整全量已通过。未改编译器或绕过应用控制策略。
+
+## 同刻兼容操作回归
+
+20 全量 API 发现同一时钟刻度内兼容输入 read→unread 被拒绝；固定时钟真实 SQLite 已在按书/系列、用户/匿名四种主体组合复现。04 正在修复并覆盖跨位置/标记的连续操作。恢复本票为待验，待修复合入及补验后关闭。
