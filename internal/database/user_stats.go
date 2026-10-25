@@ -166,22 +166,27 @@ func (s *SqlStore) AddUserBookReadingTime(ctx context.Context, userID, bookID, s
 		return nil
 	}
 	return s.ExecTx(ctx, func(q *Queries) error {
-		if _, err := q.db.ExecContext(ctx,
-			`INSERT INTO user_book_reading_time (user_id, book_id, total_seconds, updated_at)
+		return q.AccumulateReadingTime(ctx, userID, bookID, seconds, TodayDayKey())
+	})
+}
+
+// AccumulateReadingTime writes the lifetime and daily counters on the caller's transaction.
+func (q *Queries) AccumulateReadingTime(ctx context.Context, userID, bookID, seconds int64, day string) error {
+	if _, err := q.db.ExecContext(ctx,
+		`INSERT INTO user_book_reading_time (user_id, book_id, total_seconds, updated_at)
 			 VALUES (?, ?, ?, CURRENT_TIMESTAMP)
 			 ON CONFLICT(user_id, book_id) DO UPDATE SET
 			   total_seconds = total_seconds + excluded.total_seconds, updated_at = CURRENT_TIMESTAMP`,
-			userID, bookID, seconds); err != nil {
-			return err
-		}
-		_, err := q.db.ExecContext(ctx,
-			`INSERT INTO user_reading_activity (user_id, book_id, date, pages_read, read_seconds)
+		userID, bookID, seconds); err != nil {
+		return err
+	}
+	_, err := q.db.ExecContext(ctx,
+		`INSERT INTO user_reading_activity (user_id, book_id, date, pages_read, read_seconds)
 			 VALUES (?, ?, ?, 0, ?)
 			 ON CONFLICT(user_id, book_id, date) DO UPDATE SET
 			   read_seconds = read_seconds + excluded.read_seconds`,
-			userID, bookID, TodayDayKey(), seconds)
-		return err
-	})
+		userID, bookID, day, seconds)
+	return err
 }
 
 // GetUserTotalReadingTime 返回某用户累计的活跃阅读秒数。
