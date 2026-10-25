@@ -179,19 +179,19 @@ describe('syncQueuedOfflineProgress', () => {
     expect(remaining().sort()).toEqual(['42', '43']);
   });
 
-  it.each(['bulk', 'fallback'])('keeps newer queued facts when a late %s response confirms the old fact', async (transport) => {
+  it.each(['bulk', 'fallback', 'bulk-failure', 'fallback-failure'])('keeps newer queued facts when a late %s response confirms the old fact', async (transport) => {
     queueOfflineProgress('42', 5, 'Book', '2026-10-20T10:00:00Z');
     let finish!: (value: unknown) => void;
     const late = new Promise((resolve) => { finish = resolve; });
     const fetchMock = vi.fn();
-    if (transport === 'fallback') fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
+    if (transport.startsWith('fallback')) fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
     fetchMock.mockReturnValueOnce(late);
     vi.stubGlobal('fetch', fetchMock);
     const syncing = syncQueuedOfflineProgress();
-    if (transport === 'fallback') await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    if (transport.startsWith('fallback')) await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     queueOfflineProgress('42', 9, 'Book', '2026-10-20T11:00:00Z');
     queueOfflineProgress('43', 3, 'Other', '2026-10-20T11:30:00Z');
-    finish({ ok: true, json: async () => ({ results: [{ book_id: 42, status: 'updated' }] }) });
+    finish({ ok: !transport.endsWith('failure'), json: async () => ({ results: [{ book_id: 42, status: 'updated' }] }) });
     const result = await syncing;
     expect(getQueuedOfflineProgress('42')?.page).toBe(9);
     expect(getQueuedOfflineProgress('43')?.page).toBe(3);
