@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log/slog"
+
 	"net/http"
 	"strings"
 	"time"
@@ -91,9 +91,6 @@ type ReadingTimeRequest struct {
 	Seconds int64 `json:"seconds"`
 }
 
-// maxReadingTimeReportSeconds 单次上报封顶（防异常/伪造把时长刷爆）。心跳间隔约 30-60s，正常远小于此。
-const maxReadingTimeReportSeconds = 3600
-
 // addBookReadingTime 累加当前用户在某书的活跃阅读秒数。经 navigator.sendBeacon 上报（CSRF 豁免，见 isCsrfExempt），
 // 仍要求有效会话；未登录（首启/单用户）静默接受不落库。
 func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) {
@@ -108,21 +105,7 @@ func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if uid == 0 || req.Seconds <= 0 {
-		jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
-		return
-	}
-	if req.Seconds > maxReadingTimeReportSeconds {
-		req.Seconds = maxReadingTimeReportSeconds
-	}
-	// 书可能在阅读期间被删除（管理员删/重扫）——此时 FK 会让写入失败。存在性缺失即静默接受（尽力而为的统计，
-	// 且前端为 sendBeacon/心跳的 fire-and-forget），避免每次心跳刷 500 与错误日志。
-	if _, err := c.store.GetBook(r.Context(), bookID); err != nil {
-		jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
-		return
-	}
-	if err := c.store.AddUserBookReadingTime(r.Context(), uid, bookID, req.Seconds); err != nil {
-		slog.Error("Failed to record reading time", "user_id", uid, "book_id", bookID, "error", err)
+	if err := reading.New(c.store, nil).RecordTime(r.Context(), reading.TimeReport{UserID: uid, BookID: bookID, Seconds: req.Seconds}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to record reading time")
 		return
 	}
