@@ -319,7 +319,7 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 		t.Fatal(err)
 	}
 	manager := config.NewManager(freshConfig)
-	fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, filepath.Join(root, "config.yaml"), controllerCacheSizes{imageBytes: 8192, page: 8, bookPageSource: 8, progressWrite: 8})
+	fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, filepath.Join(root, "config.yaml"), controllerCacheSizes{imageBytes: 8192, page: 8, bookPageSource: 8})
 	t.Cleanup(fresh.Close)
 	gotPlan, err := fresh.relocation.Get(ctx, plan.ID)
 	if err != nil || gotPlan.Protection == nil || gotPlan.Protection.ScanMode != "watch" || gotPlan.Protection.ScanInterval != 17 || gotPlan.Protection.ScanFormats != "cbz" {

@@ -86,12 +86,6 @@ type UpdateProgressRequest struct {
 	FactID    string     `json:"fact_id,omitempty"`
 }
 
-type cachedProgressWrite struct {
-	userID    int64
-	page      int64
-	updatedAt time.Time
-}
-
 // clampPageToBook 把用户报上来的页码夹进这本书的合法范围。page_count 为 0 表示页数未知
 // （快速扫描不开归档，首扫即得 0），此时只保证下界，不把页码夹成 1。
 func clampPageToBook(page, pageCount int64) int64 {
@@ -175,18 +169,6 @@ func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// logReadingActivity 记录当日阅读活动：全局表始终写（向后兼容 / uid==0），uid>0 时同时写每用户表（供热力图/连续天数/回顾）。
-func (c *Controller) logReadingActivity(ctx context.Context, uid, bookID, pages int64) {
-	if err := c.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: bookID, PagesRead: pages, Date: database.ActivityDayKey(time.Now())}); err != nil {
-		slog.Error("Failed to log reading activity", "book_id", bookID, "error", err)
-	}
-	if uid > 0 {
-		if err := c.store.LogUserReadingActivity(ctx, uid, bookID, pages); err != nil {
-			slog.Error("Failed to log per-user reading activity", "user_id", uid, "book_id", bookID, "error", err)
-		}
-	}
-}
-
 // overlayUserProgress 用当前用户的每用户进度覆盖一组书的 LastReadPage/LastReadAt。
 // uid==0（旧全局路径 / 首启 / 单元测试）时不改动，保留 books 自带的全局列；uid>0 时按用户隔离：
 // 有每用户记录则覆盖，无记录则清零，避免看到他人或全局遗留的进度。
@@ -237,24 +219,11 @@ func (c *Controller) overlayUserProgressOne(ctx context.Context, uid int64, book
 	}
 }
 
-// bookProgressFor 返回某用户对某书的既有进度页与时间戳；uid==0 时退回该书的全局 books 列（旧行为）。
-func (c *Controller) bookProgressFor(ctx context.Context, uid int64, book database.Book) (int64, sql.NullTime) {
-	if uid > 0 {
-		if p, found, err := c.store.GetUserBookProgress(ctx, uid, book.ID); err == nil && found {
-			return p.LastReadPage.Int64, p.LastReadAt
-		}
-		return 0, sql.NullTime{}
-	}
-	if book.LastReadPage.Valid {
-		return book.LastReadPage.Int64, book.LastReadAt
-	}
-	return 0, book.LastReadAt
-}
-
 type BulkSyncProgressItem struct {
 	BookID    int64      `json:"book_id"`
 	Page      int64      `json:"page"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	FactID    string     `json:"fact_id,omitempty"`
 }
 
 type BulkSyncProgressRequest struct {
@@ -268,121 +237,28 @@ type BulkSyncProgressResultItem struct {
 	Message string `json:"message,omitempty"`
 }
 
-// bulkSyncBookProgress 接受多本书的离线进度并按 updated_at 解决冲突。
-// 离线 / 在线恢复时 useReaderOffline 调用，避免逐条 POST 的峰值写入。
+// bulkSyncBookProgress translates the ordered offline reports into the reading use case.
 func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	var req BulkSyncProgressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if len(req.Items) == 0 {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{
-			"updated": 0,
-			"results": []BulkSyncProgressResultItem{},
-		})
-		return
-	}
-
-	uid := c.currentUserID(r)
-	results := make([]BulkSyncProgressResultItem, 0, len(req.Items))
-	updatedCount := 0
-
+	positions := make([]reading.Position, 0, len(req.Items))
 	for _, item := range req.Items {
-		if item.BookID <= 0 {
-			results = append(results, BulkSyncProgressResultItem{
-				BookID:  item.BookID,
-				Status:  "invalid",
-				Message: "book_id is required",
-			})
-			continue
-		}
-
-		book, err := c.store.GetBook(ctx, item.BookID)
-		if err != nil {
-			results = append(results, BulkSyncProgressResultItem{
-				BookID: item.BookID,
-				Status: "not_found",
-			})
-			continue
-		}
-
-		validPage := clampPageToBook(item.Page, book.PageCount)
-
-		// updated_at 冲突解决：若客户端时间戳 < 数据库 last_read_at，认为本地数据已陈旧，跳过。
-		// 没有 updated_at 时按顺序覆盖（与单本 updateBookProgress 行为一致）。取当前用户的既有进度做冲突解决。
-		previousPage, previousAt := c.bookProgressFor(ctx, uid, book)
-		if item.UpdatedAt != nil && previousAt.Valid && item.UpdatedAt.Before(previousAt.Time) {
-			results = append(results, BulkSyncProgressResultItem{
-				BookID:  item.BookID,
-				Status:  "skipped_stale",
-				Page:    previousPage,
-				Message: "server has newer progress",
-			})
-			continue
-		}
-
-		// 与单本端点对齐的相同页节流。
-		if previousAt.Valid && previousPage == validPage {
-			results = append(results, BulkSyncProgressResultItem{
-				BookID: item.BookID,
-				Status: "skipped_unchanged",
-				Page:   validPage,
-			})
-			continue
-		}
-
-		readAt := time.Now()
-		if item.UpdatedAt != nil {
-			readAt = *item.UpdatedAt
-		}
-		var writeErr error
-		if uid > 0 {
-			writeErr = c.store.SetUserBookProgress(ctx, uid, item.BookID, validPage, readAt)
-		} else {
-			writeErr = c.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
-				LastReadPage: sql.NullInt64{Int64: validPage, Valid: true},
-				LastReadAt:   sql.NullTime{Time: readAt, Valid: true},
-				ID:           item.BookID,
-			})
-		}
-		if writeErr != nil {
-			slog.Error("bulk sync progress update failed", "book_id", item.BookID, "error", writeErr)
-			results = append(results, BulkSyncProgressResultItem{
-				BookID:  item.BookID,
-				Status:  "invalid",
-				Message: "update failed",
-			})
-			continue
-		}
-		updatedCount++
-
-		if c.progressWriteCache != nil {
-			c.progressWriteCache.Add(item.BookID, cachedProgressWrite{userID: uid, page: validPage, updatedAt: time.Now()})
-		}
-
-		// 仅前进的页码记录活动，与单本接口策略一致。全局 + 每用户双写。
-		if validPage > previousPage || previousPage == 0 {
-			c.logReadingActivity(ctx, uid, item.BookID, validPage)
-		}
-
-		results = append(results, BulkSyncProgressResultItem{
-			BookID: item.BookID,
-			Status: "updated",
-			Page:   validPage,
-		})
+		positions = append(positions, reading.Position{UserID: c.currentUserID(r), BookID: item.BookID, Page: item.Page, OccurredAt: item.UpdatedAt, FactID: item.FactID})
 	}
-
-	if updatedCount > 0 {
-		c.invalidateVolatileStatsCache("bulk_progress_sync")
+	service := reading.New(c.store, func() { c.invalidateVolatileStatsCache("bulk_progress_sync") })
+	synced := service.SyncPositions(r.Context(), positions)
+	results := make([]BulkSyncProgressResultItem, 0, len(synced))
+	updated := 0
+	for _, item := range synced {
+		if item.Status == "updated" {
+			updated++
+		}
+		results = append(results, BulkSyncProgressResultItem{BookID: item.BookID, Status: item.Status, Page: item.Page, Message: item.Message})
 	}
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"updated": updatedCount,
-		"results": results,
-	})
+	jsonResponse(w, http.StatusOK, map[string]interface{}{"updated": updated, "results": results})
 }
 
 type UpsertReadingBookmarkRequest struct {
