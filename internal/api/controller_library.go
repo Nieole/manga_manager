@@ -145,12 +145,12 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
 
 	ctx := r.Context()
-	c.relocationTopology.mu.Lock()
-	defer c.relocationTopology.mu.Unlock()
-	if c.relocationRootConflicts(req.Path) {
+	releaseRoot, rootErr := c.moves.GuardRoot(req.Path)
+	if rootErr != nil {
 		writeLibraryUnavailable(w)
 		return
 	}
+	defer releaseRoot()
 	if issues := c.validateLibraryRequest(ctx, requestLocale(r), nil, req); len(issues) > 0 {
 		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
 			"error":      "Library validation failed",
@@ -214,12 +214,12 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Name and Path are required")
 		return
 	}
-	c.relocationTopology.mu.Lock()
-	defer c.relocationTopology.mu.Unlock()
-	if c.relocationRootConflicts(req.Path) {
+	releaseRoot, rootErr := c.moves.GuardRoot(req.Path)
+	if rootErr != nil {
 		writeLibraryUnavailable(w)
 		return
 	}
+	defer releaseRoot()
 	release, ok := c.guardLibraryRead(w, libraryID)
 	if !ok {
 		return

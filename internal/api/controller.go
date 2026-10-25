@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"manga-manager/internal/application/relocating"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -55,16 +56,16 @@ type Controller struct {
 	config  *config.Manager
 	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
 	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**运行句柄**。
-	diskWork           *diskwork.Runner
-	koreader           *koreader.Service
-	external           *external.Manager
-	proposals          *proposal.Service
-	relocation         *relocation.Service
-	configPath         string
-	scans              *scanning.Service
-	watcher            *scanner.FileWatcher
-	watcherInitErr     error
-	relocationTopology relocationTopology
+	diskWork       *diskwork.Runner
+	koreader       *koreader.Service
+	external       *external.Manager
+	proposals      *proposal.Service
+	relocation     *relocation.Service
+	configPath     string
+	scans          *scanning.Service
+	watcher        *scanner.FileWatcher
+	watcherInitErr error
+	moves          *relocating.Service
 
 	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
 	sse *sseBroker
@@ -396,17 +397,9 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
 		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },
 	})
-	c.relocation.Acquire = c.acquireLibraryExclusive
-	c.relocation.AcquireOperation = c.acquireRelocationAccess
-	c.relocation.Effects = c.relocationEffects
-	c.relocation.RestoreEffects = c.restorationEffects
-	c.relocation.ConfigPath = c.configPath
-	c.relocation.ApplyConfig = runtimecfg.Apply
-	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
-		panic(fmt.Errorf("initialize relocation plans: %w", err))
-	}
-	if err := c.relocation.Recover(context.Background()); err != nil {
-		panic(fmt.Errorf("recover library relocation: %w", err))
+	c.assembleRelocationUseCases()
+	if err := c.moves.Recover(context.Background()); err != nil {
+		panic(fmt.Errorf("initialize library relocation: %w", err))
 	}
 
 	c.config.SetAfterUpdate(c.configUpdated)
