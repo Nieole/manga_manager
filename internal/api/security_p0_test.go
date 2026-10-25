@@ -241,7 +241,7 @@ func TestAuthGateRoles(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	for _, path := range []string{"/api/libraries/1/external-libraries/session", "/api/libraries/1/external-libraries/session/s/transfer", "/api/series/1/comicinfo"} {
+	for _, path := range []string{"/api/libraries/1/external-libraries/session", "/api/libraries/1/external-libraries/session/s/transfer", "/api/series/1/comicinfo", "/api/system/batch-scrape", "/api/libraries/1/scrape", "/api/libraries/1/ai-grouping"} {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, bytes.NewReader([]byte(`{}`)))
 		req.Header.Set("X-CSRF-Token", regCSRF)
 		req.Header.Set("Content-Type", "application/json")

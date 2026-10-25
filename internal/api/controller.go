@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"manga-manager/internal/application/diskjobs"
+	"manga-manager/internal/application/intelligence"
 	"manga-manager/internal/application/relocating"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
@@ -40,7 +41,6 @@ import (
 	"manga-manager/internal/taskstore"
 
 	"github.com/go-chi/chi/v5"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -51,8 +51,7 @@ type Controller struct {
 	imageCache *imageMemoryCache
 	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
 	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
-	pageArchive        *pageArchiveCache
-	progressWriteCache *lru.Cache[int64, cachedProgressWrite]
+	pageArchive *pageArchiveCache
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
 	stats   *statsCache
 	scanner *scanner.Scanner
@@ -63,6 +62,7 @@ type Controller struct {
 	koreader       *koreader.Service
 	external       *external.Manager
 	diskJobs       *diskjobs.Service
+	intelligence   *intelligence.Service
 	proposals      *proposal.Service
 	relocation     *relocation.Service
 	configPath     string
@@ -336,11 +336,10 @@ type controllerCacheSizes struct {
 	imageBytes     int64
 	page           int
 	bookPageSource int
-	progressWrite  int
 }
 
 func defaultControllerCacheSizes() controllerCacheSizes {
-	return controllerCacheSizes{imageBytes: defaultImageCacheBytes, page: 128, bookPageSource: 512, progressWrite: 2048}
+	return controllerCacheSizes{imageBytes: defaultImageCacheBytes, page: 128, bookPageSource: 512}
 }
 
 // newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
@@ -350,24 +349,22 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 // 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
 func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
 	cache := newImageMemoryCache(sizes.imageBytes)
-	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
 	c := &Controller{
-		store:              store,
-		stats:              newStatsCache(),
-		imageCache:         cache,
-		pageArchive:        newPageArchiveCache(sizes.bookPageSource, sizes.page),
-		progressWriteCache: progressWriteCache,
-		scanner:            scan,
-		config:             cfg,
-		external:           external.NewManager(store, 30*time.Minute),
-		proposals:          proposal.NewService(proposalDB{Store: store}),
-		relocation:         relocation.NewService(store, cfg),
-		configPath:         cfgPath,
-		sse:                newSSEBroker(),
-		recommendations:    newRecommendationCache(24 * time.Hour),
-		rebuildThumbAgg:    newRebuildThumbAggregator(),
-		openPath:           openPathInDefaultFileManager,
-		auth:               newAuthState(),
+		store:           store,
+		stats:           newStatsCache(),
+		imageCache:      cache,
+		pageArchive:     newPageArchiveCache(sizes.bookPageSource, sizes.page),
+		scanner:         scan,
+		config:          cfg,
+		external:        external.NewManager(store, 30*time.Minute),
+		proposals:       proposal.NewService(proposalDB{Store: store}),
+		relocation:      relocation.NewService(store, cfg),
+		configPath:      cfgPath,
+		sse:             newSSEBroker(),
+		recommendations: newRecommendationCache(24 * time.Hour),
+		rebuildThumbAgg: newRebuildThumbAggregator(),
+		openPath:        openPathInDefaultFileManager,
+		auth:            newAuthState(),
 	}
 
 	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
@@ -397,6 +394,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.taskEngine.dispatch = c.buildTaskDispatch()
 	c.assembleScanUseCases()
 	c.assembleDiskUseCases()
+	c.assembleIntelligenceUseCases()
 	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
 		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
 		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },
