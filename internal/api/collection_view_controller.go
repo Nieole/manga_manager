@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"manga-manager/internal/database"
@@ -16,22 +15,7 @@ import (
 
 // CollectionView 是合集页左栏的一个列表项，手工合集与智能书架共用。
 // 两者的差异全部收在 SmartFilter 里：它只在智能书架上出现，手工合集的 JSON 一个筛选字段都不多带。
-type CollectionView struct {
-	ViewID         string       `json:"view_id"`
-	NumericID      int64        `json:"numeric_id"`
-	Kind           string       `json:"kind"`
-	Name           string       `json:"name"`
-	Description    string       `json:"description"`
-	LibraryID      *int64       `json:"library_id,omitempty"`
-	LibraryName    string       `json:"library_name,omitempty"`
-	SeriesCount    int          `json:"series_count"`
-	SourceType     string       `json:"source_type"`
-	SourceReviewID *int64       `json:"source_review_id,omitempty"`
-	SortOrder      int          `json:"sort_order"`
-	CreatedAt      time.Time    `json:"created_at"`
-	UpdatedAt      time.Time    `json:"updated_at"`
-	SmartFilter    *SmartFilter `json:"smart_filter,omitempty"`
-}
+type CollectionView = organize.CollectionView
 
 type snapshotSmartCollectionRequest struct {
 	Name        string `json:"name"`
@@ -77,17 +61,8 @@ type collectionSeriesListItem struct {
 	CoverPath  string
 }
 
-const (
-	// 智能书架成员端点的每页条数上下限，与书架配置里的 page_size 是两回事：
-	// 后者只是「这个书架默认一页装几个」，前者是端点自己对单次响应体量的保护。
-	defaultSmartCollectionPageLimit = 30
-	maxSmartCollectionPageLimit     = 100
-
-	defaultSmartSnapshotLimit        = 1000
-	maxSmartSnapshotLimit            = 1000
-	defaultSmartSnapshotPreviewLimit = 12
-	maxSmartSnapshotPreviewLimit     = 50
-)
+const defaultSmartCollectionPageLimit = organize.DefaultSmartCollectionPageLimit
+const maxSmartCollectionPageLimit = organize.MaxSmartCollectionPageLimit
 
 func (c *Controller) listCollectionViews(w http.ResponseWriter, r *http.Request) {
 	items, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
@@ -98,73 +73,8 @@ func (c *Controller) listCollectionViews(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, items)
 }
 
-// loadCollectionViews 汇总静态合集与智能书架。
-//
-// 智能书架的系列数必须用 CountSmartCollectionSeries 算——与列表本身用的同一份查询，
-// 不得另写一套内联 SQL，否则计数与列表口径会分家，用户会看到
-// 「书架上写着 N 个系列，点进去却是另一个数」。
-//
-// 代价是每个智能书架一次计数查询；智能书架数量是个位数量级，且每次计数都走索引，可接受。
 func (c *Controller) loadCollectionViews(ctx context.Context, userID int64) ([]CollectionView, error) {
-	rows, err := c.store.ListCollectionViews(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// 只在确有智能书架时才去取筛选定义。
-	smartFilters := make(map[int64]database.SmartFilter)
-	for _, row := range rows {
-		if row.Kind == "smart" {
-			filters, ferr := c.store.ListSmartFilters(ctx)
-			if ferr != nil {
-				return nil, ferr
-			}
-			for _, f := range filters {
-				smartFilters[f.ID] = f
-			}
-			break
-		}
-	}
-
-	items := make([]CollectionView, 0, len(rows))
-	for _, row := range rows {
-		viewID, _ := row.ViewID.(string)
-		item := CollectionView{
-			ViewID:      viewID,
-			NumericID:   row.ID,
-			Kind:        row.Kind,
-			Name:        row.Name,
-			Description: row.Description,
-			LibraryName: row.LibraryName,
-			SeriesCount: int(row.SeriesCount),
-			SourceType:  row.SourceType,
-			SortOrder:   int(row.SortOrder),
-			CreatedAt:   row.CreatedAt.Time,
-			UpdatedAt:   row.UpdatedAt.Time,
-		}
-		if row.Kind == "smart" {
-			if raw, ok := smartFilters[row.ID]; ok {
-				filter := smartFilterFromDB(raw)
-				count, cerr := c.store.CountSmartCollectionSeries(ctx, smartCollectionFilterFrom(filter, userID))
-				if cerr != nil {
-					return nil, cerr
-				}
-				item.SeriesCount = count
-				// 左栏靠这份定义渲染筛选芯片；description 里那串拼接文本不是给界面读的。
-				item.SmartFilter = &filter
-			}
-		}
-		if row.LibraryID.Valid {
-			value := row.LibraryID.Int64
-			item.LibraryID = &value
-		}
-		if row.SourceReviewID.Valid {
-			value := row.SourceReviewID.Int64
-			item.SourceReviewID = &value
-		}
-		items = append(items, item)
-	}
-	return items, nil
+	return organize.NewSmartCollections(c.store).Views(ctx, userID)
 }
 
 func (c *Controller) loadStaticCollectionSeries(ctx context.Context, collectionID int64, limit, offset int) (CollectionView, []collectionSeriesListItem, int, error) {
@@ -225,291 +135,78 @@ func (c *Controller) loadStaticCollectionSeries(ctx context.Context, collectionI
 }
 
 func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter SmartFilter, limit, offset int, userID int64) ([]database.SearchSeriesPagedRow, int, error) {
-	if limit <= 0 {
-		limit = filter.PageSize
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return c.store.SearchSmartCollectionSeries(ctx, smartCollectionFilterFrom(filter, userID), limit, offset)
+	page, err := organize.NewSmartCollections(c.store).Members(ctx, filter.ID, userID, limit, offset)
+	return page.Items, page.Total, err
 }
-
-// smartCollectionFilterFrom 把 API 层的 SmartFilter 转成数据层的查询条件。
-// 「书架列表的计数」与「书架详情的列表」必须共用这一个构造，两处各写一份会导致口径分歧。
-func smartCollectionFilterFrom(filter SmartFilter, userID int64) database.SmartCollectionFilter {
-	return database.SmartCollectionFilter{
-		UserID:          userID,
-		LibraryID:       filter.LibraryID,
-		ActiveLetter:    stringValue(filter.ActiveLetter),
-		ActiveStatus:    stringValue(filter.ActiveStatus),
-		ActiveTag:       stringValue(filter.ActiveTag),
-		ActiveAuthor:    stringValue(filter.ActiveAuthor),
-		MinRating:       filter.MinRating,
-		MaxRating:       filter.MaxRating,
-		MinProgress:     filter.MinProgress,
-		MaxProgress:     filter.MaxProgress,
-		AddedWithinDays: filter.AddedWithinDays,
-		ReadState:       stringValue(filter.ReadState),
-		SortByField:     filter.SortByField,
-		SortDir:         filter.SortDir,
-	}
+func (c *Controller) getSmartFilterByID(r *http.Request, id int64) (SmartFilter, error) {
+	return organize.NewSmartCollections(c.store).Get(r.Context(), id)
 }
-
-// getSmartCollectionSeries 返回智能书架当前命中的成员的一页。
-//
-// total 恒为全量命中数，与左栏计数同源；命中数大于一页时，调用方靠响应里回显的
-// limit/offset 继续往后取，而不是指望一次拿全——书架可能命中几万个系列。
-// 书架配置里的 page_size 在这里只是「不指定时用哪个每页大小」的默认值，
-// 单次响应的体量上限由端点自己的 maxSmartCollectionPageLimit 说了算。
+func queryInt(r *http.Request, key string) int {
+	value, _ := strconv.Atoi(r.URL.Query().Get(key))
+	return value
+}
+func smartCollectionError(w http.ResponseWriter, err error, fallback string) {
+	if errors.Is(err, sql.ErrNoRows) {
+		jsonError(w, http.StatusNotFound, "Smart collection not found")
+		return
+	}
+	if errors.Is(err, organize.ErrSmartSnapshotEmpty) {
+		jsonError(w, http.StatusConflict, err.Error())
+		return
+	}
+	collectionUseCaseError(w, err, fallback)
+}
 func (c *Controller) getSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
-	filterID, err := parseID(r, "filterId")
+	id, err := parseID(r, "filterId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid smart collection ID")
 		return
 	}
-	filter, err := c.getSmartFilterByID(r, filterID)
+	limit := queryInt(r, "limit")
+	if limit > 0 {
+		limit = organize.SmartCollectionPageLimit(limit)
+	}
+	page, err := organize.NewSmartCollections(c.store).Members(r.Context(), id, c.currentUserID(r), limit, queryInt(r, "offset"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Smart collection not found")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to load smart collection")
+		smartCollectionError(w, err, "Failed to load smart collection series")
 		return
 	}
-
-	limit := smartCollectionPageLimit(filter.PageSize)
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			limit = smartCollectionPageLimit(parsed)
-		}
+	if page.Items == nil {
+		page.Items = []database.SearchSeriesPagedRow{}
 	}
-	offset := 0
-	if raw := r.URL.Query().Get("offset"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			offset = parsed
-		}
-	}
-
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, offset, c.currentUserID(r))
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load smart collection series")
-		return
-	}
-	if rows == nil {
-		rows = []database.SearchSeriesPagedRow{}
-	}
-	jsonResponse(w, http.StatusOK, SmartCollectionSeriesResponse{
-		Items:    rows,
-		Total:    total,
-		Limit:    limit,
-		Offset:   offset,
-		Filter:   filter,
-		Kind:     "smart",
-		ViewID:   "smart:" + strconv.FormatInt(filter.ID, 10),
-		ViewName: filter.Name,
-	})
+	jsonResponse(w, http.StatusOK, SmartCollectionSeriesResponse{Items: page.Items, Total: page.Total, Limit: page.Limit, Offset: page.Offset, Filter: page.Filter, Kind: "smart", ViewID: "smart:" + strconv.FormatInt(id, 10), ViewName: page.Filter.Name})
 }
-
 func (c *Controller) previewSmartCollectionSnapshot(w http.ResponseWriter, r *http.Request) {
-	filterID, err := parseID(r, "filterId")
+	id, err := parseID(r, "filterId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid smart collection ID")
 		return
 	}
-	filter, err := c.getSmartFilterByID(r, filterID)
+	req := organize.SmartSnapshotRequest{Name: r.URL.Query().Get("name"), Description: r.URL.Query().Get("description"), Limit: queryInt(r, "limit")}
+	preview, err := organize.NewSmartCollections(c.store).PreviewSnapshot(r.Context(), id, c.currentUserID(r), req, queryInt(r, "preview_limit"))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Smart collection not found")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to load smart collection")
+		smartCollectionError(w, err, "Failed to preview smart collection members")
 		return
 	}
-
-	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	if name == "" {
-		name = filter.Name
+	if preview.Items == nil {
+		preview.Items = []database.SearchSeriesPagedRow{}
 	}
-	description := strings.TrimSpace(r.URL.Query().Get("description"))
-	if description == "" {
-		description = "Snapshot from smart collection: " + filter.Name
-	}
-	previewLimit := defaultSmartSnapshotPreviewLimit
-	if raw := r.URL.Query().Get("preview_limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			previewLimit = parsed
-		}
-	}
-	if previewLimit > maxSmartSnapshotPreviewLimit {
-		previewLimit = maxSmartSnapshotPreviewLimit
-	}
-	snapshotLimit := normalizeSmartSnapshotLimit(0)
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil {
-			snapshotLimit = normalizeSmartSnapshotLimit(parsed)
-		}
-	}
-
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, previewLimit, 0, c.currentUserID(r))
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to preview smart collection members")
-		return
-	}
-	if rows == nil {
-		rows = []database.SearchSeriesPagedRow{}
-	}
-	conflict, err := c.collectionNameExists(r.Context(), name)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to check collection name")
-		return
-	}
-
-	snapshotCount := total
-	if snapshotCount > snapshotLimit {
-		snapshotCount = snapshotLimit
-	}
-	jsonResponse(w, http.StatusOK, SmartCollectionSnapshotPreviewResponse{
-		FilterID:      filter.ID,
-		Name:          name,
-		Description:   description,
-		Items:         rows,
-		Total:         total,
-		PreviewLimit:  previewLimit,
-		SnapshotLimit: snapshotLimit,
-		SnapshotCount: snapshotCount,
-		Truncated:     total > snapshotLimit,
-		NameConflict:  conflict,
-		Filter:        filter,
-	})
+	jsonResponse(w, http.StatusOK, SmartCollectionSnapshotPreviewResponse{FilterID: preview.FilterID, Name: preview.Name, Description: preview.Description, Items: preview.Items, Total: preview.Total, PreviewLimit: preview.PreviewLimit, SnapshotLimit: preview.SnapshotLimit, SnapshotCount: preview.SnapshotCount, Truncated: preview.Truncated, NameConflict: preview.NameConflict, Filter: preview.Filter})
 }
-
 func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Request) {
-	filterID, err := parseID(r, "filterId")
+	id, err := parseID(r, "filterId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid smart collection ID")
 		return
 	}
-	filter, err := c.getSmartFilterByID(r, filterID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Smart collection not found")
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "Failed to load smart collection")
-		return
-	}
-
 	var req snapshotSmartCollectionRequest
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = strings.TrimSpace(filter.Name)
-	}
-	description := strings.TrimSpace(req.Description)
-	if description == "" {
-		description = "Snapshot from smart collection: " + filter.Name
-	}
-	limit := req.Limit
-	limit = normalizeSmartSnapshotLimit(limit)
-
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, 0, c.currentUserID(r))
+	result, err := organize.NewSmartCollections(c.store).Snapshot(r.Context(), id, c.currentUserID(r), organize.SmartSnapshotRequest{Name: req.Name, Description: req.Description, Limit: req.Limit})
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load smart collection members")
+		smartCollectionError(w, err, "Failed to snapshot smart collection")
 		return
 	}
-	if len(rows) == 0 {
-		jsonError(w, http.StatusConflict, "Smart collection has no members to snapshot")
-		return
-	}
-
-	// 重名校验落在事务内，与建号、AI 分组应用同口径：preview 端点那份提示只是建议性的，
-	// 用户可能明知冲突仍确认提交，得到两个同名合集，列表里根本分不清哪个是哪个。
-	// store 的 DSN 带 _txlock=immediate，BeginTx 即取写锁，并发的固化与建号因此被串行化；
-	// collections.name 上没有唯一约束兜底，这道串行化就是这条不变量在固化入口的全部保障。
-	var createdID int64
-	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		if err := organize.CheckCollectionName(r.Context(), q, name); err != nil {
-			return err
-		}
-		created, err := q.CreateCollection(r.Context(), database.CreateCollectionParams{
-			Name:           name,
-			Description:    sql.NullString{String: description, Valid: description != ""},
-			SourceType:     "smart_snapshot",
-			SourceReviewID: sql.NullInt64{},
-		})
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			if _, err := q.AddSeriesToCollection(r.Context(), database.AddSeriesToCollectionParams{
-				CollectionID: created.ID,
-				SeriesID:     row.ID,
-			}); err != nil {
-				return err
-			}
-		}
-		if err := q.TouchCollection(r.Context(), created.ID); err != nil {
-			return err
-		}
-		createdID = created.ID
-		return nil
-	})
-	if errors.Is(err, errCollectionNameTaken) {
-		jsonError(w, http.StatusConflict, "A collection with this name already exists")
-		return
-	}
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to snapshot smart collection")
-		return
-	}
-
-	jsonResponse(w, http.StatusCreated, map[string]any{
-		"id":           createdID,
-		"name":         name,
-		"series_count": len(rows),
-		"total":        total,
-		"truncated":    total > len(rows),
-	})
-}
-
-// smartCollectionPageLimit 把「想要的每页条数」夹进端点允许的区间。
-func smartCollectionPageLimit(want int) int {
-	if want <= 0 {
-		return defaultSmartCollectionPageLimit
-	}
-	if want > maxSmartCollectionPageLimit {
-		return maxSmartCollectionPageLimit
-	}
-	return want
-}
-
-func normalizeSmartSnapshotLimit(limit int) int {
-	if limit <= 0 {
-		return defaultSmartSnapshotLimit
-	}
-	if limit > maxSmartSnapshotLimit {
-		return maxSmartSnapshotLimit
-	}
-	return limit
-}
-
-func (c *Controller) collectionNameExists(ctx context.Context, name string) (bool, error) {
-	return organize.CollectionNameExists(ctx, c.store, name)
-}
-
-func (c *Controller) getSmartFilterByID(r *http.Request, filterID int64) (SmartFilter, error) {
-	row, err := c.store.GetSmartFilterByID(r.Context(), filterID)
-	if err != nil {
-		return SmartFilter{}, err
-	}
-	return smartFilterFromDB(row), nil
-}
-
-func stringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(*value)
+	jsonResponse(w, http.StatusCreated, map[string]any{"id": result.ID, "name": result.Name, "series_count": result.SeriesCount, "total": result.Total, "truncated": result.Truncated})
 }
