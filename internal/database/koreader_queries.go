@@ -380,8 +380,8 @@ func (q *Queries) FindBookByDocumentFingerprint(ctx context.Context, documentKey
 func (q *Queries) UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReaderProgressParams) (KOReaderProgress, error) {
 	row := q.db.QueryRowContext(ctx, `
 		INSERT INTO koreader_progress (
-			username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, raw_payload, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, raw_payload, received_at_ns, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(username, document) DO UPDATE SET
 			progress = excluded.progress,
 			percentage = excluded.percentage,
@@ -391,9 +391,10 @@ func (q *Queries) UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReader
 			matched_by = excluded.matched_by,
 			timestamp = excluded.timestamp,
 			raw_payload = excluded.raw_payload,
+			received_at_ns = excluded.received_at_ns,
 			updated_at = CURRENT_TIMESTAMP
-		RETURNING id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload
-	`, arg.Username, arg.Document, arg.Progress, arg.Percentage, arg.Device, arg.DeviceID, arg.BookID, arg.MatchedBy, arg.Timestamp, arg.RawPayload)
+		RETURNING id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload, received_at_ns
+	`, arg.Username, arg.Document, arg.Progress, arg.Percentage, arg.Device, arg.DeviceID, arg.BookID, arg.MatchedBy, arg.Timestamp, arg.RawPayload, arg.ReceivedAtNS)
 
 	var item KOReaderProgress
 	err := row.Scan(
@@ -410,13 +411,14 @@ func (q *Queries) UpsertKOReaderProgress(ctx context.Context, arg UpsertKOReader
 		&item.CreatedAt,
 		&item.UpdatedAt,
 		&item.RawPayload,
+		&item.ReceivedAtNS,
 	)
 	return item, err
 }
 
 func (q *Queries) GetKOReaderProgress(ctx context.Context, username, document string) (KOReaderProgress, error) {
 	row := q.db.QueryRowContext(ctx, `
-		SELECT id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload
+		SELECT id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload, received_at_ns
 		FROM koreader_progress
 		WHERE username = ? AND document = ?
 	`, username, document)
@@ -436,6 +438,7 @@ func (q *Queries) GetKOReaderProgress(ctx context.Context, username, document st
 		&item.CreatedAt,
 		&item.UpdatedAt,
 		&item.RawPayload,
+		&item.ReceivedAtNS,
 	)
 	return item, err
 }
@@ -552,7 +555,7 @@ func (q *Queries) ListUnmatchedKOReaderProgress(ctx context.Context, limit int) 
 		limit = 500
 	}
 	rows, err := q.db.QueryContext(ctx, `
-		SELECT id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload
+		SELECT id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload, received_at_ns
 		FROM koreader_progress
 		WHERE book_id IS NULL
 		ORDER BY updated_at DESC
@@ -580,6 +583,7 @@ func (q *Queries) ListUnmatchedKOReaderProgress(ctx context.Context, limit int) 
 			&item.CreatedAt,
 			&item.UpdatedAt,
 			&item.RawPayload,
+			&item.ReceivedAtNS,
 		); err != nil {
 			return nil, err
 		}
@@ -809,7 +813,7 @@ func (q *Queries) ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterI
 		limit = 500
 	}
 	rows, err := q.db.QueryContext(ctx, `
-		SELECT id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload
+		SELECT id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload, received_at_ns
 		FROM koreader_progress
 		WHERE book_id IS NULL
 		  AND id > ?
@@ -838,6 +842,7 @@ func (q *Queries) ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterI
 			&item.CreatedAt,
 			&item.UpdatedAt,
 			&item.RawPayload,
+			&item.ReceivedAtNS,
 		); err != nil {
 			return nil, err
 		}
@@ -850,7 +855,7 @@ func (q *Queries) DeleteKOReaderProgress(ctx context.Context, id int64) (KOReade
 	row := q.db.QueryRowContext(ctx, `
 		DELETE FROM koreader_progress
 		WHERE id = ?
-		RETURNING id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload
+		RETURNING id, username, document, progress, percentage, device, device_id, book_id, matched_by, timestamp, created_at, updated_at, raw_payload, received_at_ns
 	`, id)
 
 	var item KOReaderProgress
@@ -868,6 +873,7 @@ func (q *Queries) DeleteKOReaderProgress(ctx context.Context, id int64) (KOReade
 		&item.CreatedAt,
 		&item.UpdatedAt,
 		&item.RawPayload,
+		&item.ReceivedAtNS,
 	)
 	return item, err
 }
