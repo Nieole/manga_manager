@@ -29,6 +29,7 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/organize"
 	"manga-manager/internal/proposal"
+	"manga-manager/internal/reading"
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
@@ -372,7 +373,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.Default)
 
-	c.koreader = koreader.NewService(store, cfg)
+	c.koreader = koreader.NewService(store, cfg, koreader.WithReadingPositions(reading.New(store, func() { c.invalidateVolatileStatsCache("koreader_progress") })))
 
 	// Relations owns coalesced franchise rebuilding; background work remains lifecycle registered.
 	c.relations = organize.NewRelations(c.store, c.runBackground)

@@ -16,6 +16,7 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
+	"manga-manager/internal/reading"
 	"manga-manager/internal/storageio"
 )
 
@@ -43,8 +44,10 @@ var (
 )
 
 type Service struct {
-	store database.Store
-	cfg   *config.Manager
+	store     database.Store
+	cfg       *config.Manager
+	positions PositionRecorder
+	now       func() time.Time
 }
 
 type Credentials struct {
@@ -61,13 +64,37 @@ type ProgressPayload struct {
 }
 
 type SyncResult struct {
-	Record  database.KOReaderProgress
-	Matched bool
-	BookID  *int64
+	Record           database.KOReaderProgress
+	Matched          bool
+	BookID           *int64
+	PositionApplied  bool
+	ProjectionError  error
+	ActivityWarnings []error
 }
 
-func NewService(store database.Store, cfg *config.Manager) *Service {
-	return &Service{store: store, cfg: cfg}
+// PositionRecorder accepts matched book positions as a complete reading use case.
+type PositionRecorder interface {
+	RecordPosition(context.Context, reading.Position) (reading.Result, error)
+}
+
+// Option connects a KOReader application dependency.
+type Option func(*Service)
+
+// WithReadingPositions supplies the production reading use case, including its cache invalidation.
+func WithReadingPositions(positions PositionRecorder) Option {
+	return func(service *Service) {
+		if positions != nil {
+			service.positions = positions
+		}
+	}
+}
+
+func NewService(store database.Store, cfg *config.Manager, options ...Option) *Service {
+	service := &Service{store: store, cfg: cfg, positions: reading.New(store, nil), now: time.Now}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 // RegisterDevice 实现 kosync /users/create 设备自助注册。KOReader 客户端提交的 password
@@ -263,7 +290,10 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	}
 	_ = account
 	// KOReader 账户绑定的站点用户（多用户）；>0 时同步进度写入该用户，0 回落全局。
-	syncUserID, _ := s.store.GetKOReaderAccountUserID(ctx, creds.Username)
+	syncUserID, err := s.store.GetKOReaderAccountUserID(ctx, creds.Username)
+	if err != nil {
+		return SyncResult{}, fmt.Errorf("resolve reading owner: %w", err)
+	}
 
 	payload.Document = strings.TrimSpace(payload.Document)
 	payload.Progress = strings.TrimSpace(payload.Progress)
@@ -286,7 +316,8 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return SyncResult{}, err
 	}
-	nowTS := time.Now().Unix()
+	receivedAt := s.now()
+	nowTS := receivedAt.Unix()
 
 	// kosync semantics are last-write-wins: the most recent push always wins,
 	// even when its percentage is lower than the stored value (rollback / re-read).
@@ -297,50 +328,49 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	regressed := err == nil && existing.Percentage > payload.Percentage
 
 	var (
-		bookID    sql.NullInt64
-		matchedBy string
-		applyErr  error
+		bookID     sql.NullInt64
+		matchedBy  string
+		applyErr   error
+		projection reading.Result
 	)
 	matchConfig := s.currentMatchConfig()
 	documentKey := normalizeDocumentForMatch(payload.Document, matchConfig)
 	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
 		bookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 		matchedBy = match.MatchedBy
-		if applyErr = s.applyBookProgress(ctx, match, payload.Percentage, syncUserID); applyErr != nil {
-			slog.Warn("Failed to project KOReader progress onto book", "book_id", match.BookID, "error", applyErr)
+		if projection, applyErr = s.applyReceivedBookProgress(ctx, match, payload.Percentage, syncUserID, receivedAt); applyErr != nil {
+			slog.WarnContext(ctx, "Failed to project KOReader progress onto book", "book_id", match.BookID, "error", applyErr)
 		}
 	}
 
 	rawPayload, _ := json.Marshal(payload)
 	record, err := s.store.UpsertKOReaderProgress(ctx, database.UpsertKOReaderProgressParams{
-		Username:   creds.Username,
-		Document:   payload.Document,
-		Progress:   payload.Progress,
-		Percentage: payload.Percentage,
-		Device:     payload.Device,
-		DeviceID:   payload.DeviceID,
-		BookID:     bookID,
-		MatchedBy:  matchedBy,
-		Timestamp:  nowTS,
-		RawPayload: string(rawPayload),
+		Username:     creds.Username,
+		Document:     payload.Document,
+		Progress:     payload.Progress,
+		Percentage:   payload.Percentage,
+		Device:       payload.Device,
+		DeviceID:     payload.DeviceID,
+		BookID:       bookID,
+		MatchedBy:    matchedBy,
+		Timestamp:    nowTS,
+		ReceivedAtNS: receivedAt.UnixNano(),
+		RawPayload:   string(rawPayload),
 	})
 	if err != nil {
-		return SyncResult{}, err
+		return SyncResult{Matched: bookID.Valid, BookID: nullableInt64Ptr(bookID), PositionApplied: projection.Applied, ProjectionError: applyErr, ActivityWarnings: projection.Warnings}, err
 	}
-
 	status := "ok"
 	message := matchedBy
 	if regressed {
 		status = "progress_regressed"
 		message = fmt.Sprintf("last-write-wins applied lower percentage %.4f (was %.4f) from device %q", payload.Percentage, existing.Percentage, payload.Device)
 	}
-	// 投影失败必须留下痕迹。设备侧仍按 kosync 语义收到 ok——规范记录已存下，重推也救不回来，
-	// 报错只会让设备无谓重试；但只写一条 slog.Warn 等于静默：用户看到同步成功，进度却一条都没进来。
-	// 状态不在 (ok, progress_regressed) 里的事件会被账户列表与设备诊断当作最新错误展示，
-	// 于是这次失败在界面上可见。它压过 progress_regressed：进度根本没落地，比落得偏低更值得报。
-	if applyErr != nil {
-		status = "progress_apply_failed"
-		message = fmt.Sprintf("progress matched book but could not be written: %v", applyErr)
+	// 规范记录保存与书位置投影独立：设备成功响应不掩盖位置失败，
+	// 活动软告警另有状态，不能被报告成位置没有保存。
+	if issueStatus, issueMessage := projectionIssue(projection, applyErr); issueStatus != "" {
+		status = issueStatus
+		message = issueMessage
 	}
 	_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{
 		Direction: "push",
@@ -352,9 +382,10 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	})
 
 	return SyncResult{
-		Record:  record,
-		Matched: record.BookID.Valid,
-		BookID:  nullableInt64Ptr(record.BookID),
+		Record:          record,
+		Matched:         record.BookID.Valid,
+		BookID:          nullableInt64Ptr(record.BookID),
+		PositionApplied: projection.Applied, ProjectionError: applyErr, ActivityWarnings: projection.Warnings,
 	}, nil
 }
 
@@ -376,15 +407,22 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 		matchConfig := s.currentMatchConfig()
 		documentKey := normalizeDocumentForMatch(record.Document, matchConfig)
 		if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
-			_ = s.store.LinkKOReaderProgressToBook(ctx, record.ID, match.BookID, match.MatchedBy)
+			pullUserID, ownerErr := s.store.GetKOReaderAccountUserID(ctx, record.Username)
+			if ownerErr != nil {
+				return record, fmt.Errorf("resolve reading owner: %w", ownerErr)
+			}
+			if linkErr := s.store.LinkKOReaderProgressToBook(ctx, record.ID, match.BookID, match.MatchedBy); linkErr != nil {
+				return record, linkErr
+			}
 			record.BookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 			record.MatchedBy = match.MatchedBy
-			pullUserID, _ := s.store.GetKOReaderAccountUserID(ctx, record.Username)
-			if applyErr := s.applyBookProgress(ctx, match, record.Percentage, pullUserID); applyErr != nil {
-				slog.Warn("Failed to project KOReader pull progress onto book", "book_id", match.BookID, "error", applyErr)
-				// 与推送路径同理：拉取时补记的投影同样不能只留一条日志就算完。
-				status = "progress_apply_failed"
-				message = fmt.Sprintf("progress matched book but could not be written: %v", applyErr)
+			projected, applyErr := s.applyBookProgress(ctx, match, record.Percentage, pullUserID, progressOccurredAt(record))
+			if applyErr != nil {
+				slog.WarnContext(ctx, "Failed to project KOReader pull progress onto book", "book_id", match.BookID, "error", applyErr)
+			}
+			if issueStatus, issueMessage := projectionIssue(projected, applyErr); issueStatus != "" {
+				status = issueStatus
+				message = issueMessage
 			} else {
 				message = record.MatchedBy
 			}
@@ -578,12 +616,19 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, task TaskHan
 			documentKey := normalizeDocumentForMatch(item.Document, matchConfig)
 			match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension)
 			if matchErr == nil {
+				reconcileUserID, ownerErr := s.store.GetKOReaderAccountUserID(ctx, item.Username)
+				if ownerErr != nil {
+					return updated, total, fmt.Errorf("resolve reading owner: %w", ownerErr)
+				}
 				if err := s.store.LinkKOReaderProgressToBook(ctx, item.ID, match.BookID, match.MatchedBy); err != nil {
 					return updated, total, err
 				}
-				reconcileUserID, _ := s.store.GetKOReaderAccountUserID(ctx, item.Username)
-				if applyErr := s.applyBookProgress(ctx, match, item.Percentage, reconcileUserID); applyErr != nil {
-					slog.Warn("Failed to project reconciled progress onto book", "book_id", match.BookID, "error", applyErr)
+				projected, applyErr := s.applyBookProgress(ctx, match, item.Percentage, reconcileUserID, progressOccurredAt(item))
+				if applyErr != nil {
+					slog.WarnContext(ctx, "Failed to project reconciled progress onto book", "book_id", match.BookID, "error", applyErr)
+				}
+				if issueStatus, issueMessage := projectionIssue(projected, applyErr); issueStatus != "" {
+					_ = s.store.CreateKOReaderSyncEvent(ctx, database.CreateKOReaderSyncEventParams{Direction: "reconcile", Username: item.Username, Document: item.Document, BookID: sql.NullInt64{Int64: match.BookID, Valid: true}, Status: issueStatus, Message: issueMessage})
 				}
 				updated++
 			}
@@ -732,11 +777,32 @@ func readableMatchMode(cfg MatchConfig) string {
 	return "二进制哈希"
 }
 
-// applyBookProgress 把 KOReader 同步的百分比投影为书页进度。userID>0 时写入该站点用户的每用户进度，
-// 否则回落到旧的全局进度（未关联账户 / 首启）。「不回退」保护按对应用户（或全局）的既有进度比较。
-func (s *Service) applyBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64, userID int64) error {
+// applyReceivedBookProgress translates a fresh receipt without turning it into an old fact.
+func (s *Service) applyReceivedBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64, userID int64, at time.Time) (reading.Result, error) {
+	position, known := bookPositionFromDevice(match, percentage, userID)
+	if !known {
+		return reading.Result{}, nil
+	}
+	position.ReceivedAt = &at
+	return s.positions.RecordPosition(ctx, position)
+}
+
+// applyBookProgress replays only the occurrence proved by the stored device record.
+func (s *Service) applyBookProgress(ctx context.Context, match database.KOReaderBookMatch, percentage float64, userID int64, at time.Time) (reading.Result, error) {
+	position, known := bookPositionFromDevice(match, percentage, userID)
+	if !known {
+		return reading.Result{}, nil
+	}
+	if at.IsZero() {
+		return reading.Result{}, errors.New("stored progress has no occurrence time")
+	}
+	position.OccurredAt = &at
+	return s.positions.RecordPosition(ctx, position)
+}
+
+func bookPositionFromDevice(match database.KOReaderBookMatch, percentage float64, userID int64) (reading.Position, bool) {
 	if match.PageCount <= 0 {
-		return nil
+		return reading.Position{}, false
 	}
 	page := int64(float64(match.PageCount) * percentage)
 	if page < 1 {
@@ -745,39 +811,28 @@ func (s *Service) applyBookProgress(ctx context.Context, match database.KOReader
 	if page > match.PageCount {
 		page = match.PageCount
 	}
+	return reading.Position{UserID: userID, BookID: match.BookID, Page: page}, true
+}
 
-	prev := int64(0)
-	if userID > 0 {
-		if p, ok, err := s.store.GetUserBookProgress(ctx, userID, match.BookID); err == nil && ok && p.LastReadPage.Valid {
-			prev = p.LastReadPage.Int64
-		}
-	} else if match.LastReadPage != nil {
-		prev = *match.LastReadPage
+func projectionIssue(result reading.Result, err error) (string, string) {
+	if err != nil {
+		return "progress_apply_failed", fmt.Sprintf("progress matched book but could not be written: %v", err)
 	}
-	if prev > 0 && page < prev {
-		return nil
+	if len(result.Warnings) > 0 {
+		return "progress_activity_warning", fmt.Sprintf("book position saved; %d activity projections failed", len(result.Warnings))
 	}
+	return "", ""
+}
 
-	now := time.Now()
-	if userID > 0 {
-		if err := s.store.SetUserBookProgress(ctx, userID, match.BookID, page, now); err != nil {
-			return err
-		}
-	} else if err := s.store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
-		ID:           match.BookID,
-		LastReadPage: sql.NullInt64{Int64: page, Valid: true},
-		LastReadAt:   sql.NullTime{Time: now, Valid: true},
-	}); err != nil {
-		return err
+func progressOccurredAt(record database.KOReaderProgress) time.Time {
+	if record.ReceivedAtNS != 0 {
+		return time.Unix(0, record.ReceivedAtNS)
 	}
-	// 全局活动始终记；已关联站点用户时同时记每用户活动，使 KOReader 阅读也计入连续天数/热力图/年度回顾。
-	if err := s.store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: match.BookID, PagesRead: page, Date: database.ActivityDayKey(time.Now())}); err != nil {
-		return err
+	if record.Timestamp > 0 {
+		return time.Unix(record.Timestamp, 0)
 	}
-	if userID > 0 {
-		return s.store.LogUserReadingActivity(ctx, userID, match.BookID, page)
-	}
-	return nil
+	// Matching updates updated_at, so it cannot establish a new reading occurrence.
+	return record.CreatedAt
 }
 
 func nullableInt64Ptr(v sql.NullInt64) *int64 {

@@ -495,6 +495,7 @@ CREATE TABLE IF NOT EXISTS koreader_progress (
     book_id INTEGER,
     matched_by TEXT NOT NULL DEFAULT '',
     timestamp INTEGER NOT NULL DEFAULT 0,
+    received_at_ns INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     raw_payload TEXT NOT NULL DEFAULT '',
