@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -72,7 +73,7 @@ func TestSmartCollectionCountMatchesListing(t *testing.T) {
 	filter, err := store.UpsertSmartFilter(ctx, database.UpsertSmartFilterParams{
 		LibraryID: lib.ID,
 		Name:      "已读完",
-		ReadState: nullStringFromPointer(&completed),
+		ReadState: sql.NullString{String: completed, Valid: true},
 	})
 	if err != nil {
 		t.Fatalf("UpsertSmartFilter: %v", err)
@@ -102,7 +103,7 @@ func TestSmartCollectionCountMatchesListing(t *testing.T) {
 				t.Fatal("书架列表里找不到这个智能书架")
 			}
 
-			_, gotTotal, err := controller.loadSmartCollectionSeries(ctx, smartFilterFromDB(filter), 50, 0, tc.userID)
+			_, gotTotal, err := controller.loadSmartCollectionSeries(ctx, SmartFilter{ID: filter.ID}, 50, 0, tc.userID)
 			if err != nil {
 				t.Fatalf("loadSmartCollectionSeries: %v", err)
 			}
@@ -151,7 +152,7 @@ func TestSmartCollectionCountIsPerUser(t *testing.T) {
 
 	completed := "completed"
 	filter, err := store.UpsertSmartFilter(ctx, database.UpsertSmartFilterParams{
-		LibraryID: lib.ID, Name: "已读完", ReadState: nullStringFromPointer(&completed),
+		LibraryID: lib.ID, Name: "已读完", ReadState: sql.NullString{String: completed, Valid: true},
 	})
 	if err != nil {
 		t.Fatalf("UpsertSmartFilter: %v", err)

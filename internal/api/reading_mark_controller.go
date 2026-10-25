@@ -59,7 +59,7 @@ func writeMarkResult(w http.ResponseWriter, r *http.Request, result reading.Mark
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	body := map[string]interface{}{"message": message, "updated": len(result.CommittedBookIDs), "committed_book_ids": result.CommittedBookIDs}
+	body := map[string]interface{}{"message": message, "updated": len(result.CommittedBookIDs), "committed_book_ids": result.CommittedBookIDs, "warnings": len(result.Warnings)}
 	status := http.StatusOK
 	if err != nil {
 		status = http.StatusInternalServerError

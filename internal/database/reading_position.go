@@ -18,6 +18,7 @@ type ReadingPositionState struct {
 
 // ReadingPositionMutation is the decision applied within the locked transaction.
 type ReadingPositionMutation struct {
+	IsRead     bool
 	Apply      bool
 	Clear      bool
 	Page       int64
@@ -116,14 +117,14 @@ func persistReadingPosition(ctx context.Context, q *Queries, userID, bookID int6
 				return err
 			}
 		} else {
-			if _, err := q.db.ExecContext(ctx, `INSERT INTO user_book_progress(user_id,book_id,last_read_page,last_read_at) VALUES(?,?,?,?) ON CONFLICT(user_id,book_id) DO UPDATE SET last_read_page=excluded.last_read_page,last_read_at=excluded.last_read_at,updated_at=CURRENT_TIMESTAMP`, userID, bookID, m.Page, LocalWallClock(m.OccurredAt)); err != nil {
+			if _, err := q.db.ExecContext(ctx, `INSERT INTO user_book_progress(user_id,book_id,last_read_page,last_read_at,is_read) VALUES(?,?,?,?,?) ON CONFLICT(user_id,book_id) DO UPDATE SET last_read_page=excluded.last_read_page,last_read_at=excluded.last_read_at,is_read=excluded.is_read,updated_at=CURRENT_TIMESTAMP`, userID, bookID, sql.NullInt64{Int64: m.Page, Valid: m.Page > 0}, LocalWallClock(m.OccurredAt), m.IsRead); err != nil {
 				return err
 			}
 		}
 	} else {
-		page := sql.NullInt64{Int64: m.Page, Valid: !m.Clear}
+		page := sql.NullInt64{Int64: m.Page, Valid: !m.Clear && m.Page > 0}
 		at := sql.NullTime{Time: LocalWallClock(m.OccurredAt), Valid: !m.Clear}
-		if err := q.UpdateBookProgress(ctx, UpdateBookProgressParams{ID: bookID, LastReadPage: page, LastReadAt: at}); err != nil {
+		if err := q.UpdateBookProgress(ctx, UpdateBookProgressParams{ID: bookID, LastReadPage: page, LastReadAt: at, IsRead: m.IsRead}); err != nil {
 			return err
 		}
 	}
@@ -141,4 +142,16 @@ func persistReadingPosition(ctx context.Context, q *Queries, userID, bookID int6
 func (s *SqlStore) LogUserReadingActivityAt(ctx context.Context, userID, bookID, pages int64, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_reading_activity(user_id,book_id,date,pages_read) VALUES(?,?,?,?) ON CONFLICT(user_id,book_id,date) DO UPDATE SET pages_read=MAX(user_reading_activity.pages_read,excluded.pages_read)`, userID, bookID, ActivityDayKey(LocalWallClock(at)), pages)
 	return err
+}
+
+// ResolveReadingOperationTime retains the first proven occurrence for an identified operation.
+func (s *SqlStore) ResolveReadingOperationTime(ctx context.Context, userID int64, operationID string, at time.Time) (time.Time, error) {
+	var ns int64
+	err := s.ExecTx(ctx, func(q *Queries) error {
+		if _, err := q.db.ExecContext(ctx, `INSERT INTO reading_operations(user_id,operation_id,occurred_at_ns) VALUES(?,?,?) ON CONFLICT(user_id,operation_id) DO NOTHING`, userID, operationID, at.UnixNano()); err != nil {
+			return err
+		}
+		return q.db.QueryRowContext(ctx, `SELECT occurred_at_ns FROM reading_operations WHERE user_id=? AND operation_id=?`, userID, operationID).Scan(&ns)
+	})
+	return time.Unix(0, ns), err
 }

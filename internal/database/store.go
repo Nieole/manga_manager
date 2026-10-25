@@ -27,6 +27,7 @@ var schemaHandwrittenSQL string
 var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
+	ResolveReadingOperationTime(context.Context, int64, string, time.Time) (time.Time, error)
 	MutateReadingPositions(context.Context, int64, []int64, string, func(int64, ReadingPositionState) ReadingPositionMutation) (map[int64]ReadingPositionMutation, error)
 	MutateReadingPosition(context.Context, int64, int64, string, func(ReadingPositionState) ReadingPositionMutation) (ReadingPositionMutation, error)
 	LogUserReadingActivityAt(context.Context, int64, int64, int64, time.Time) error

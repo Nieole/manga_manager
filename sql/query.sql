@@ -357,7 +357,7 @@ RETURNING *;
 
 -- name: UpdateBookProgress :exec
 UPDATE books 
-SET last_read_page = ?, last_read_at = ?, updated_at = CURRENT_TIMESTAMP
+SET last_read_page = ?, last_read_at = ?, is_read = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?;
 
 -- name: UpsertSeriesByPath :one
@@ -561,7 +561,7 @@ SELECT
     s.total_pages,
     GROUP_CONCAT(DISTINCT t.name) as tags_string,
     (SELECT b.cover_path FROM books b WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != '' ORDER BY b.sort_number, b.name LIMIT 1) as cover_path,
-    (SELECT COUNT(DISTINCT CASE WHEN b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
+    (SELECT COUNT(DISTINCT CASE WHEN b.is_read OR b.last_read_page > 0 THEN b.id END) FROM books b WHERE b.series_id = s.id) as read_count
 FROM series s
 LEFT JOIN series_tags st ON s.id = st.series_id
 LEFT JOIN tags t ON st.tag_id = t.id
@@ -648,12 +648,12 @@ SELECT
     COALESCE((
         SELECT COUNT(*)
         FROM books b
-        WHERE b.series_id = s.id AND b.last_read_page IS NOT NULL AND b.last_read_page > 0
+        WHERE b.series_id = s.id AND (b.is_read OR b.last_read_page > 0)
     ), 0) AS read_book_count,
     COALESCE((
         SELECT COUNT(*)
         FROM books b
-        WHERE b.series_id = s.id AND b.page_count > 0 AND b.last_read_page >= b.page_count
+        WHERE b.series_id = s.id AND (b.is_read OR (b.page_count > 0 AND b.last_read_page >= b.page_count))
     ), 0) AS completed_book_count,
     (
         SELECT b.last_read_at
@@ -1030,6 +1030,7 @@ SELECT
         WHERE b.series_id = s.id
         ORDER BY
             CASE
+                WHEN b.is_read THEN 1
                 WHEN b.page_count = 0 THEN 0
                 WHEN b.last_read_page IS NULL THEN 0
                 WHEN b.last_read_page < b.page_count THEN 0
@@ -1086,6 +1087,7 @@ SELECT
         WHERE b.series_id = s.id
         ORDER BY
             CASE
+                WHEN b.is_read THEN 1
                 WHEN b.page_count = 0 THEN 0
                 WHEN b.last_read_page IS NULL THEN 0
                 WHEN b.last_read_page < b.page_count THEN 0
@@ -1421,7 +1423,7 @@ WHERE rli.reading_list_id = ?;
 SELECT
     (SELECT COUNT(*) FROM series) AS total_series,
     (SELECT COUNT(*) FROM books) AS total_books,
-    (SELECT COUNT(*) FROM books WHERE last_read_page > 0) AS read_books,
+    (SELECT COUNT(*) FROM books WHERE is_read OR last_read_page > 0) AS read_books,
     (SELECT COALESCE(SUM(page_count), 0) FROM books) AS total_pages,
     (SELECT COUNT(DISTINCT date) FROM reading_activity WHERE date >= sqlc.arg(since_date)) AS active_days_7;
 
@@ -1483,8 +1485,7 @@ JOIN series s ON s.id = ss.series_id
 JOIN books b ON b.id = ss.last_read_book_id
 WHERE ss.last_read_at IS NOT NULL
   AND ss.last_read_book_id > 0
-  AND b.last_read_page IS NOT NULL
-  AND b.last_read_page > 0
+  AND (b.is_read OR b.last_read_page > 0)
 ORDER BY ss.last_read_at DESC, s.name ASC
 LIMIT ?;
 
@@ -1494,12 +1495,12 @@ WITH preferred_tags AS (
     FROM series_tags st
     JOIN series s ON s.id = st.series_id
     WHERE s.is_favorite = 1
-       OR (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0) >= 2
+       OR (SELECT COUNT(*) FROM books b WHERE b.series_id = s.id AND (b.is_read OR b.last_read_page > 0)) >= 2
 ),
 unread_series AS (
     SELECT s.id
     FROM series s
-    WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND b.last_read_page > 0)
+    WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.series_id = s.id AND (b.is_read OR b.last_read_page > 0))
 )
 SELECT s.id, s.name, s.title, s.book_count,
     (SELECT b.cover_path FROM books b

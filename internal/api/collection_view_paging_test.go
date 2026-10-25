@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -126,4 +127,46 @@ func TestSmartCollectionSeriesPagesBeyondConfiguredPageSize(t *testing.T) {
 				defaultSmartCollectionPageLimit, total, payload.Limit, len(payload.Items))
 		}
 	})
+}
+func TestSmartCollectionProtocolsKeepTheirPagingLimits(t *testing.T) {
+	controller, id := seedTaggedSmartCollection(t, 121, 30)
+	rec := httptest.NewRecorder()
+	controller.opdsSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1?limit=120", nil, "filterId", strconv.FormatInt(id, 10)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OPDS status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var feed OPDSFeed
+	feed = OPDSFeed{}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+		t.Fatal(err)
+	}
+	if len(feed.Entries) != 120 {
+		t.Fatalf("OPDS first page members=%d want 120", len(feed.Entries))
+	}
+	rec = httptest.NewRecorder()
+	controller.opdsSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1?limit=120&page=2", nil, "filterId", strconv.FormatInt(id, 10)))
+	feed = OPDSFeed{}
+	if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
+		t.Fatal(err)
+	}
+	if len(feed.Entries) != 1 {
+		t.Fatalf("OPDS second page members=%d want 1", len(feed.Entries))
+	}
+	rec = httptest.NewRecorder()
+	controller.mihonSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series?limit=120", nil, "filterId", strconv.FormatInt(id, 10)))
+	var page MihonSeriesPageResponse
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Limit != 100 || len(page.Items) != 100 || page.Total != 121 || !page.HasNext {
+		t.Fatalf("Mihon first page=%+v", page)
+	}
+	rec = httptest.NewRecorder()
+	controller.mihonSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series?limit=120&page=2", nil, "filterId", strconv.FormatInt(id, 10)))
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Limit != 100 || len(page.Items) != 21 || page.HasNext {
+		t.Fatalf("Mihon second page=%+v", page)
+	}
 }

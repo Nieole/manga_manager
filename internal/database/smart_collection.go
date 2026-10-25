@@ -25,7 +25,7 @@ type SmartCollectionFilter struct {
 	UserID int64
 }
 
-func (s *SqlStore) SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error) {
+func (s *Queries) SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error) {
 	baseQuery, args := buildSmartCollectionBaseQuery(filter)
 
 	countQuery := "SELECT COUNT(*) " + baseQuery
@@ -201,7 +201,7 @@ var _ = sql.ErrNoRows
 //
 // 必须复用 buildSmartCollectionBaseQuery，只把 SELECT 换成 COUNT(*)：与列表用另一套 SQL
 // 口径分裂，会出现「书架显示 12 个系列，点进去只有 9 个」这类计数与列表对不上的问题。
-func (s *SqlStore) CountSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter) (int, error) {
+func (s *Queries) CountSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter) (int, error) {
 	baseQuery, args := buildSmartCollectionBaseQuery(filter)
 	var total int
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) "+baseQuery, args...).Scan(&total); err != nil {

@@ -62,6 +62,7 @@ type Book struct {
 	CoverLocked          bool            `json:"cover_locked"`
 	LastReadPage         sql.NullInt64   `json:"last_read_page"`
 	LastReadAt           sql.NullTime    `json:"last_read_at"`
+	IsRead               bool            `json:"is_read"`
 	FileHash             sql.NullString  `json:"file_hash"`
 	QuickHash            sql.NullString  `json:"quick_hash"`
 	PathFingerprint      sql.NullString  `json:"path_fingerprint"`

@@ -5,15 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"manga-manager/internal/booksort"
-	"manga-manager/internal/database"
-	"manga-manager/internal/seriesmeta"
 	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"manga-manager/internal/booksort"
+	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
+	"manga-manager/internal/seriesmeta"
 )
 
 // parseReadState 归一化阅读状态查询参数，未识别值按“不筛选”处理。
@@ -576,15 +578,10 @@ func buildSeriesContinue(books []database.Book) SeriesContinue {
 	for i := range books {
 		book := books[i]
 		out.TotalPages += book.PageCount
-		readPages := int64(0)
-		if book.LastReadPage.Valid {
-			readPages = book.LastReadPage.Int64
-			if book.PageCount > 0 && readPages > book.PageCount {
-				readPages = book.PageCount
-			}
-		}
+		state := reading.InspectBook(book)
+		readPages := state.ReadPages
 		out.ReadPages += readPages
-		isFinished := book.PageCount > 0 && readPages >= book.PageCount
+		isFinished := state.Completed
 		if isFinished {
 			out.ReadBooks++
 		}
@@ -625,13 +622,7 @@ func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []Seri
 		}
 		acc.summary.BookCount++
 		acc.summary.TotalPages += book.PageCount
-		if book.LastReadPage.Valid {
-			readPages := book.LastReadPage.Int64
-			if book.PageCount > 0 && readPages > book.PageCount {
-				readPages = book.PageCount
-			}
-			acc.summary.ReadPages += readPages
-		}
+		acc.summary.ReadPages += reading.InspectBook(book).ReadPages
 		if acc.summary.CoverBookID == 0 && book.CoverPath.Valid && strings.TrimSpace(book.CoverPath.String) != "" {
 			acc.summary.CoverBookID = book.ID
 			acc.summary.CoverPath = book.CoverPath

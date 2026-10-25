@@ -144,18 +144,6 @@ func RequestBodyLimit(next http.Handler) http.Handler {
 	})
 }
 
-// isUniqueConstraintError 判断错误是否为 SQLite 的唯一约束冲突。
-//
-// 这类冲突是「用户输入撞车」而非服务端故障：改名撞到同名合集/智能筛选时回 500，
-// 前端只能显示「服务器错误」，用户不知道改个名字就能过。用文本匹配是因为 modernc/sqlite
-// 的错误类型不导出稳定的错误码常量，而这条消息在 SQLite 各版本间是稳定的。
-func isUniqueConstraintError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToUpper(err.Error()), "UNIQUE CONSTRAINT FAILED")
-}
-
 // contentDispositionAttachment 生成同时兼容新旧客户端的下载文件名头。
 //
 // filename= 只允许 ASCII，直接塞中文卷名会让浏览器保存出乱码文件名；RFC 5987 的

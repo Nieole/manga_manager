@@ -11,6 +11,7 @@ import (
 type UserBookProgress struct {
 	LastReadPage sql.NullInt64
 	LastReadAt   sql.NullTime
+	IsRead       bool
 }
 
 // refreshUserSeriesProgressForSeriesStmt 增量刷新单个 (user, series) 的派生进度。占位符顺序见下方调用。
@@ -26,9 +27,9 @@ const refreshUserSeriesProgressForSeriesStmt = `
 			FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
 			WHERE ubp.user_id = ? AND b.series_id = ?), 0),
 		COALESCE((SELECT COUNT(*) FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
-			WHERE ubp.user_id = ? AND b.series_id = ? AND ubp.last_read_page IS NOT NULL AND ubp.last_read_page > 0), 0),
+			WHERE ubp.user_id = ? AND b.series_id = ? AND (ubp.is_read OR ubp.last_read_page > 0)), 0),
 		COALESCE((SELECT COUNT(*) FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
-			WHERE ubp.user_id = ? AND b.series_id = ? AND b.page_count > 0 AND ubp.last_read_page >= b.page_count), 0),
+			WHERE ubp.user_id = ? AND b.series_id = ? AND (ubp.is_read OR (b.page_count > 0 AND ubp.last_read_page >= b.page_count))), 0),
 		(SELECT ubp.last_read_at FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
 			WHERE ubp.user_id = ? AND b.series_id = ? AND ubp.last_read_at IS NOT NULL
 			ORDER BY ubp.last_read_at DESC, ubp.book_id DESC LIMIT 1),
@@ -54,8 +55,8 @@ const refreshUserSeriesProgressAllStmt = `
 			WHEN ubp.last_read_page IS NULL OR ubp.last_read_page <= 0 THEN 0
 			WHEN b.page_count > 0 AND ubp.last_read_page > b.page_count THEN b.page_count
 			ELSE ubp.last_read_page END),
-		SUM(CASE WHEN ubp.last_read_page IS NOT NULL AND ubp.last_read_page > 0 THEN 1 ELSE 0 END),
-		SUM(CASE WHEN b.page_count > 0 AND ubp.last_read_page >= b.page_count THEN 1 ELSE 0 END),
+		SUM(CASE WHEN (ubp.is_read OR ubp.last_read_page > 0) THEN 1 ELSE 0 END),
+		SUM(CASE WHEN (ubp.is_read OR (b.page_count > 0 AND ubp.last_read_page >= b.page_count)) THEN 1 ELSE 0 END),
 		MAX(ubp.last_read_at),
 		COALESCE((SELECT ubp2.book_id FROM user_book_progress ubp2 JOIN books b2 ON b2.id = ubp2.book_id
 			WHERE ubp2.user_id = ubp.user_id AND b2.series_id = b.series_id AND ubp2.last_read_at IS NOT NULL
@@ -93,7 +94,7 @@ func (s *SqlStore) SetUserBookProgress(ctx context.Context, userID, bookID, page
 			`INSERT INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, updated_at)
 			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 			 ON CONFLICT(user_id, book_id) DO UPDATE SET
-			   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, updated_at = CURRENT_TIMESTAMP`,
+			   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, is_read=FALSE, updated_at = CURRENT_TIMESTAMP`,
 			userID, bookID, page, at); err != nil {
 			return err
 		}
@@ -112,8 +113,8 @@ func (s *SqlStore) SetUserBookProgress(ctx context.Context, userID, bookID, page
 func (s *SqlStore) GetUserBookProgress(ctx context.Context, userID, bookID int64) (UserBookProgress, bool, error) {
 	var p UserBookProgress
 	err := s.db.QueryRowContext(ctx,
-		`SELECT last_read_page, last_read_at FROM user_book_progress WHERE user_id = ? AND book_id = ?`,
-		userID, bookID).Scan(&p.LastReadPage, &p.LastReadAt)
+		`SELECT last_read_page, last_read_at, is_read FROM user_book_progress WHERE user_id = ? AND book_id = ?`,
+		userID, bookID).Scan(&p.LastReadPage, &p.LastReadAt, &p.IsRead)
 	if errors.Is(err, sql.ErrNoRows) {
 		return UserBookProgress{}, false, nil
 	}
@@ -137,7 +138,7 @@ func (s *SqlStore) GetUserBookProgressMap(ctx context.Context, userID int64, boo
 	// 叠加进度展示，叠加本身也从不与写入串行；要保持快照语义得把整个循环包进只读事务，
 	// 为一次展示付这个代价不值得。
 	err := sqlInBatches(bookIDs, func(placeholders string, args []interface{}) error {
-		query := `SELECT book_id, last_read_page, last_read_at FROM user_book_progress WHERE user_id = ? AND book_id IN (` + placeholders + `)`
+		query := `SELECT book_id, last_read_page, last_read_at, is_read FROM user_book_progress WHERE user_id = ? AND book_id IN (` + placeholders + `)`
 		fullArgs := append([]interface{}{userID}, args...)
 		rows, err := s.db.QueryContext(ctx, query, fullArgs...)
 		if err != nil {
@@ -147,7 +148,7 @@ func (s *SqlStore) GetUserBookProgressMap(ctx context.Context, userID int64, boo
 		for rows.Next() {
 			var bookID int64
 			var p UserBookProgress
-			if err := rows.Scan(&bookID, &p.LastReadPage, &p.LastReadAt); err != nil {
+			if err := rows.Scan(&bookID, &p.LastReadPage, &p.LastReadAt, &p.IsRead); err != nil {
 				return err
 			}
 			out[bookID] = p
@@ -197,7 +198,7 @@ func (s *SqlStore) GetUserRecentReadAll(ctx context.Context, userID, limit int64
 		LEFT JOIN user_book_progress ubp ON ubp.user_id = usp.user_id AND ubp.book_id = usp.last_read_book_id
 		LEFT JOIN series_stats sc ON sc.series_id = s.id
 		WHERE usp.user_id = ? AND usp.last_read_at IS NOT NULL AND usp.last_read_book_id > 0
-		  AND ubp.last_read_page IS NOT NULL AND ubp.last_read_page > 0
+		  AND (ubp.is_read OR ubp.last_read_page > 0)
 		ORDER BY usp.last_read_at DESC, s.name ASC
 		LIMIT ?`, userID, limit)
 	if err != nil {
@@ -258,7 +259,7 @@ func (s *SqlStore) GetUserRecentReadSeries(ctx context.Context, userID, libraryI
 func (s *SqlStore) GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM user_book_progress WHERE user_id = ? AND last_read_page IS NOT NULL AND last_read_page > 0`,
+		`SELECT COUNT(*) FROM user_book_progress WHERE user_id = ? AND (is_read OR last_read_page > 0)`,
 		userID).Scan(&n)
 	return n, err
 }
@@ -268,8 +269,8 @@ func (s *SqlStore) GetUserReadBooksCount(ctx context.Context, userID int64) (int
 func (s *SqlStore) MigrateGlobalProgressToUser(ctx context.Context, userID int64) error {
 	return s.ExecTx(ctx, func(q *Queries) error {
 		if _, err := q.db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO user_book_progress (user_id, book_id, last_read_page, last_read_at)
-			 SELECT ?, id, last_read_page, last_read_at FROM books WHERE last_read_page IS NOT NULL AND last_read_page > 0`,
+			`INSERT OR IGNORE INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, is_read)
+			 SELECT ?, id, last_read_page, last_read_at, is_read FROM books WHERE (is_read OR last_read_page > 0)`,
 			userID); err != nil {
 			return err
 		}
@@ -278,15 +279,8 @@ func (s *SqlStore) MigrateGlobalProgressToUser(ctx context.Context, userID int64
 	})
 }
 
-// ListUserReadingListItems 是 ListReadingListItems 的每用户版本。
-//
-// sqlc 生成的那版把 next_book_id（「继续阅读」按钮的落点）算在全局 books.last_read_page 上，
-// 而多用户改造后该列已停写——于是不论读到哪一卷，按钮永远指回第一卷。
-// user_book_progress 位于 schema_handwritten.sql（刻意避开 sqlc 以防模型重名），
-// 无法在 sql/query.sql 里 JOIN，故这条查询手写在此。
-//
-// userID<=0 时不应调用本方法（走 sqlc 版即可）；即便调用，LEFT JOIN 无匹配行会让
-// COALESCE 回落到全局列，行为与旧版一致。
+// ListUserReadingListItems projects list ordering and the reader's next unfinished book.
+// userID must identify a user; missing user progress never falls back to global progress.
 func (s *SqlStore) ListUserReadingListItems(ctx context.Context, userID, readingListID int64) ([]ListReadingListItemsRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
@@ -314,9 +308,9 @@ func (s *SqlStore) ListUserReadingListItems(ctx context.Context, userID, reading
 				WHERE b.series_id = s.id
 				ORDER BY
 					CASE
-						WHEN b.page_count = 0 THEN 0
-						WHEN COALESCE(ubp.last_read_page, b.last_read_page) IS NULL THEN 0
-						WHEN COALESCE(ubp.last_read_page, b.last_read_page) < b.page_count THEN 0
+						WHEN COALESCE(ubp.is_read,FALSE) THEN 1
+                        WHEN b.page_count = 0 THEN 0
+						WHEN COALESCE(ubp.last_read_page, 0) < b.page_count THEN 0
 						ELSE 1
 					END,
 					b.sort_number,

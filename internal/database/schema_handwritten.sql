@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS user_book_progress (
     book_id INTEGER NOT NULL,
     last_read_page INTEGER,
     last_read_at DATETIME,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, book_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -175,4 +176,12 @@ CREATE TABLE IF NOT EXISTS reading_position_receipts (
  book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
  fact_id TEXT NOT NULL,
  PRIMARY KEY (user_id, book_id, fact_id)
+);
+
+
+CREATE TABLE IF NOT EXISTS reading_operations (
+ user_id INTEGER NOT NULL,
+ operation_id TEXT NOT NULL,
+ occurred_at_ns INTEGER NOT NULL,
+ PRIMARY KEY (user_id,operation_id)
 );

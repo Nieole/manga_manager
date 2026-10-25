@@ -207,9 +207,11 @@ func (c *Controller) overlayUserProgress(ctx context.Context, uid int64, books [
 		if p, ok := m[books[i].ID]; ok {
 			books[i].LastReadPage = p.LastReadPage
 			books[i].LastReadAt = p.LastReadAt
+			books[i].IsRead = p.IsRead
 		} else {
 			books[i].LastReadPage = sql.NullInt64{}
 			books[i].LastReadAt = sql.NullTime{}
+			books[i].IsRead = false
 		}
 	}
 }
@@ -227,9 +229,11 @@ func (c *Controller) overlayUserProgressOne(ctx context.Context, uid int64, book
 	if found {
 		book.LastReadPage = p.LastReadPage
 		book.LastReadAt = p.LastReadAt
+		book.IsRead = p.IsRead
 	} else {
 		book.LastReadPage = sql.NullInt64{}
 		book.LastReadAt = sql.NullTime{}
+		book.IsRead = false
 	}
 }
 

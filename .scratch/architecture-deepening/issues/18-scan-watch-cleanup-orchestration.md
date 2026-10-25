@@ -4,7 +4,7 @@
 
 **Blocked by:** 17: 应用运行入口与历史保留清理
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -17,7 +17,7 @@
 - [x] 扫描观察者和运行句柄继续归属正确运行，任务体日志带上下文，不从全局任务键反查运行。
 - [x] 扫描批事件保留统计失效、完成时必要预热与原语义推送；迁移回调不能覆盖其中一部分。
 - [x] 迁移所需监听协作归属时保留监听资源装配的兼容方式，不提前改变进程启动恢复和关闭顺序。
-- [ ] 用应用 seam、真实 SQLite 和既有监听集成先例覆盖排队、合并、停发、失败、改名后清理与保护；完成相关门禁并移除本票旧发起配方。
+- [x] 用应用 seam、真实 SQLite 和既有监听集成先例覆盖排队、合并、停发、失败、改名后清理与保护；完成相关门禁并移除本票旧发起配方。
 
 ## Comments
 
@@ -33,3 +33,7 @@
 - 全量 API 测试发现集成基线的 `TestUpdateBookProgressThrottlesRepeatedWrites` 失败（与新阅读事务 seam/旧节流预期有关），交阅读实施票处理，本票不改它的行为测试。最后一项门禁待集成复验，因此状态暂不置 done。
 - 经主代理授权，确认无引用后删除 09 集成基线遗留的三个 unused API 兼容声明：`franchiseCollectionSourceType`、`derivedCollectionSourceType`、`nullStringFromString`，使全量 lint 恢复通过。
 - 工具环境为 `GOTOOLCHAIN=go1.26.10`、共享主树 `.gocache`、树外独立 lint cache；本轮使用系统默认 CGO 配置可正常执行上述检查，未修改 gcc、路径或系统策略。`web/dist` 仅复制主树已有生成物满足 Go embed，不进入提交。
+
+## 集成补验
+
+04 基于含 19 的集成分支完成最终全量 Go 测试、全量 lint（0 issues）、格式、SQL 与 TypeScript 生成检查，全部通过；前端 893 项测试、build/lint 通过。04 合入 cb8fab1 后 reading/database 及 HTTP 节流、批量读态、未知页数定向回归再次通过。此前记录的环境阻碍与旧测试缺口已补验，全部本票验收项满足，关闭工单。
