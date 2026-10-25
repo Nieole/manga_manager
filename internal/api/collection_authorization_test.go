@@ -42,6 +42,11 @@ func TestRegularUserCanReadButCannotMutateManualCollections(t *testing.T) {
 		body         any
 	}{
 		{http.MethodPost, "/api/collections/", map[string]string{"name": "Other"}},
+		{http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil},
+		{http.MethodPost, "/api/ai-grouping/reviews/1/reject", nil},
+		{http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/apply", nil},
+		{http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/reject", nil},
+		{http.MethodPut, "/api/ai-grouping/reviews/1/collections/1", map[string]any{"name": "Edited", "series_ids": []int64{1}}},
 		{http.MethodPut, "/api/collections/" + itoa(id), map[string]string{"name": "Edited"}},
 		{http.MethodDelete, "/api/collections/" + itoa(id), nil},
 		{http.MethodPost, "/api/collections/" + itoa(id) + "/series", map[string]any{"series_ids": []int64{1}}},
