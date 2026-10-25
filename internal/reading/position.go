@@ -69,11 +69,10 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 		at := s.now()
 		if p.OccurredAt != nil {
 			at = *p.OccurredAt
-		} else if at.UnixNano() == state.ChangedAtNS {
-			at = at.Add(time.Nanosecond)
 		}
 		retained := database.ReadingPositionMutation{Page: state.Page}
-		if state.Duplicate || at.UnixNano() <= state.ChangedAtNS {
+		freshLegacy := p.OccurredAt == nil && p.FactID == ""
+		if state.Duplicate || staleOccurrence(at, state.ChangedAtNS, freshLegacy) {
 			return retained
 		}
 		if state.LastReadAt.Valid && at.Before(state.LastReadAt.Time) {
@@ -105,4 +104,10 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 	}
 	result.Warnings = s.recordActivity(ctx, p.UserID, p.BookID, saved.Page, saved.OccurredAt)
 	return result, nil
+}
+
+// Equal receive-clock ticks order fresh compatibility inputs by their transaction;
+// facts carrying occurrence evidence remain subject to strict replay rejection.
+func staleOccurrence(at time.Time, changedAtNS int64, freshLegacy bool) bool {
+	return at.UnixNano() < changedAtNS || (at.UnixNano() == changedAtNS && !freshLegacy)
 }
