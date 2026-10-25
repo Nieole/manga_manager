@@ -86,7 +86,6 @@ type Querier interface {
 	GetMihonSeries(ctx context.Context, id int64) (GetMihonSeriesRow, error)
 	GetNextBookInSeries(ctx context.Context, id int64) (Book, error)
 	GetReadingList(ctx context.Context, id int64) (ReadingList, error)
-	GetReadingListItemProgressByList(ctx context.Context, readingListID int64) ([]GetReadingListItemProgressByListRow, error)
 	GetRecentReadAll(ctx context.Context, limit int64) ([]GetRecentReadAllRow, error)
 	GetRecentReadSeries(ctx context.Context, arg GetRecentReadSeriesParams) ([]GetRecentReadSeriesRow, error)
 	GetRecommendations(ctx context.Context, limit int64) ([]GetRecommendationsRow, error)
@@ -147,7 +146,9 @@ type Querier interface {
 	ListPendingMetadataReviewInbox(ctx context.Context, arg ListPendingMetadataReviewInboxParams) ([]ListPendingMetadataReviewInboxRow, error)
 	ListPendingMetadataReviewsBySeries(ctx context.Context, seriesID int64) ([]MetadataReview, error)
 	ListReadingBookmarks(ctx context.Context, arg ListReadingBookmarksParams) ([]ReadingBookmark, error)
+	// Reader continuation is projected by organize.ReadingLists; next_book_id preserves the result shape.
 	ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error)
+	// Reader continuation is projected by organize.ReadingLists; next_book_id preserves the result shape.
 	ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error)
 	ListReadingLists(ctx context.Context) ([]ListReadingListsRow, error)
 	ListRecentAddedSeries(ctx context.Context, arg ListRecentAddedSeriesParams) ([]ListRecentAddedSeriesRow, error)

@@ -97,7 +97,6 @@ type Store interface {
 	ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterID int64, limit int) ([]KOReaderProgress, error)
 	LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error
 	CreateKOReaderSyncEvent(ctx context.Context, arg CreateKOReaderSyncEventParams) error
-	GetReadingListItemProgress(ctx context.Context, readingListID, userID int64) (map[int64]ReadingListSeriesProgress, error)
 	SearchSmartCollectionSeries(ctx context.Context, filter SmartCollectionFilter, limit, offset int) ([]SearchSeriesPagedRow, int, error)
 	// 站点账户体系（多用户）——用户与会话存储，见 users.go。
 	CountUsers(ctx context.Context) (int64, error)
@@ -122,7 +121,6 @@ type Store interface {
 	GetUserBookProgressMap(ctx context.Context, userID int64, bookIDs []int64) (map[int64]UserBookProgress, error)
 	GetUserRecentReadAll(ctx context.Context, userID, limit int64) ([]GetRecentReadAllRow, error)
 	GetUserRecentReadSeries(ctx context.Context, userID, libraryID, limit int64) ([]GetRecentReadSeriesRow, error)
-	ListUserReadingListItems(ctx context.Context, userID, readingListID int64) ([]ListReadingListItemsRow, error)
 	RefreshUserSeriesProgressForAllUsers(ctx context.Context, seriesID int64) error
 	GetUserTopReadingTags(ctx context.Context, userID, limit int64) ([]GetTopReadingTagsRow, error)
 	// RefreshSeriesDerivedData 重算系列的全部派生数据（冗余统计 + series_stats + 每用户聚合），
@@ -155,13 +153,6 @@ type Store interface {
 	GetUserSeriesReview(ctx context.Context, userID, seriesID int64) (UserSeriesReview, bool, error)
 	DeleteUserSeriesReview(ctx context.Context, userID, seriesID int64) error
 	MigrateGlobalActivityToUser(ctx context.Context, userID int64) error
-}
-
-type ReadingListSeriesProgress struct {
-	SeriesID       int64 `json:"series_id"`
-	ReadBooks      int64 `json:"read_books"`
-	CompletedBooks int64 `json:"completed_books"`
-	TotalBooks     int64 `json:"total_books"`
 }
 
 type LibrarySize struct {
@@ -495,48 +486,6 @@ func sqlInClause(ids []int64) (string, []interface{}) {
 		args[i] = id
 	}
 	return strings.Join(placeholders, ","), args
-}
-
-// GetReadingListItemProgress 返回某阅读清单各系列的进度。userID>0 时取该用户的 user_series_progress，
-// 否则用全局 series_stats（旧行为 / 首启 / 单元测试）。
-func (s *SqlStore) GetReadingListItemProgress(ctx context.Context, readingListID, userID int64) (map[int64]ReadingListSeriesProgress, error) {
-	out := make(map[int64]ReadingListSeriesProgress)
-	if userID > 0 {
-		rows, err := s.db.QueryContext(ctx, `
-			SELECT rli.series_id,
-			       COALESCE(usp.read_book_count, 0),
-			       COALESCE(usp.completed_book_count, 0),
-			       COALESCE(s.book_count, 0)
-			FROM reading_list_items rli
-			JOIN series s ON s.id = rli.series_id
-			LEFT JOIN user_series_progress usp ON usp.series_id = rli.series_id AND usp.user_id = ?
-			WHERE rli.reading_list_id = ?`, userID, readingListID)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var p ReadingListSeriesProgress
-			if err := rows.Scan(&p.SeriesID, &p.ReadBooks, &p.CompletedBooks, &p.TotalBooks); err != nil {
-				return nil, err
-			}
-			out[p.SeriesID] = p
-		}
-		return out, rows.Err()
-	}
-	rows, err := s.Queries.GetReadingListItemProgressByList(ctx, readingListID)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range rows {
-		out[r.SeriesID] = ReadingListSeriesProgress{
-			SeriesID:       r.SeriesID,
-			ReadBooks:      r.ReadBooks,
-			CompletedBooks: r.CompletedBooks,
-			TotalBooks:     r.TotalBooks,
-		}
-	}
-	return out, nil
 }
 
 func (s *SqlStore) refreshSeriesStatsForBook(ctx context.Context, bookID int64) error {

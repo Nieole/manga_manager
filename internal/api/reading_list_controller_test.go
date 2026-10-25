@@ -1,17 +1,20 @@
-// 本文件是业务回归测试，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
-
 package api
 
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
+	"manga-manager/internal/organize"
+	"manga-manager/internal/reading"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"manga-manager/internal/database"
 )
@@ -326,4 +329,163 @@ func readingListItemSortOrder(t *testing.T, store database.Store, listID, itemID
 	}
 	t.Fatalf("reading list item %d not found in list %d", itemID, listID)
 	return 0
+}
+
+func TestReadingListProjectsCurrentBooksWithoutAggregateSnapshot(t *testing.T) {
+	controller, store, _, root := newTestController(t)
+	_, series, book := seedBookFixture(t, store, root, "Library", "Series", "01.cbz", 10)
+	ctx := context.Background()
+	list, err := store.CreateReadingList(ctx, database.CreateReadingListParams{Name: "Order"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddReadingListItem(ctx, database.AddReadingListItemParams{ReadingListID: list.ID, SeriesID: series.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.(*database.SqlStore).DB().Exec(`UPDATE books SET last_read_page=10,is_read=1 WHERE id=?`, book.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	controller.listReadingListItems(rec, requestWithRouteParam(http.MethodGet, "/api/reading-lists/1/items", nil, "listId", strconv.FormatInt(list.ID, 10)))
+	var got []readingListItemResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 200 || len(got) != 1 || got[0].CompletedBooks != 1 || got[0].ReadBooks != 1 || got[0].NextBookID != 0 {
+		t.Fatalf("projection=%+v status=%d", got, rec.Code)
+	}
+}
+
+func TestReadingListProtocolsKeepIdentityOrderAndPagination(t *testing.T) {
+	controller, store, _, root := newTestController(t)
+	_, a, _ := seedBookFixture(t, store, root, "A", "Alpha", "01.cbz", 10)
+	_, b, _ := seedBookFixture(t, store, root, "B", "Beta", "01.cbz", 10)
+	ctx := context.Background()
+	lists := organize.NewReadingLists(store)
+	list, err := lists.Create(ctx, "Order", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ia, err := lists.Add(ctx, list.ID, a.ID, "alpha note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ib, err := lists.Add(ctx, list.ID, b.ID, "beta note")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = lists.Reorder(ctx, list.ID, []int64{ib.ID, ia.ID}); err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatInt(list.ID, 10)
+	opds := httptest.NewRecorder()
+	controller.opdsReadingListSeries(opds, requestWithRouteParam(http.MethodGet, "/opds/v1.2/reading-lists/"+id+"?page=1&limit=1", nil, "listId", id))
+	var feed OPDSFeed
+	if err = xml.Unmarshal(opds.Body.Bytes(), &feed); err != nil {
+		t.Fatal(err)
+	}
+	wantID := fmt.Sprintf("urn:manga-manager:opds:reading-list:%d:series:%d", list.ID, b.ID)
+	if opds.Code != 200 || len(feed.Entries) != 1 || feed.Entries[0].ID != wantID || feed.Entries[0].Content != "beta note" {
+		t.Fatalf("OPDS=%+v status=%d", feed, opds.Code)
+	}
+	hasNext := false
+	for _, link := range feed.Links {
+		if link.Rel == "next" {
+			hasNext = true
+		}
+	}
+	if !hasNext {
+		t.Fatal("missing OPDS next page")
+	}
+	mihon := httptest.NewRecorder()
+	controller.mihonReadingListSeries(mihon, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/reading-lists/"+id+"/series?page=2&limit=1", nil, "listId", id))
+	var page MihonSeriesPageResponse
+	if err = json.Unmarshal(mihon.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if mihon.Code != 200 || page.Total != 2 || page.Page != 2 || page.HasNext || len(page.Items) != 1 || page.Items[0].ID != a.ID {
+		t.Fatalf("Mihon=%+v status=%d", page, mihon.Code)
+	}
+}
+
+func TestReadingListHTTPDoesNotInheritAnotherReaderOrGlobalCompletion(t *testing.T) {
+	controller, store, _, root := newTestController(t)
+	_, series, book := seedBookFixture(t, store, root, "Library", "Series", "01.cbz", 10)
+	ctx := context.Background()
+	user, err := store.CreateUser(ctx, database.CreateUserParams{Username: "isolated", PasswordHash: "x", Role: "user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := organize.NewReadingLists(store).Create(ctx, "Order", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = organize.NewReadingLists(store).Add(ctx, list.ID, series.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	if _, err = reading.New(store, nil).MarkBooks(ctx, reading.MarkBooksInput{BookIDs: []int64{book.ID}, IsRead: true, OccurredAt: &at}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := requestWithRouteParam(http.MethodGet, "/api/reading-lists/1/items", nil, "listId", strconv.FormatInt(list.ID, 10))
+	controller.listReadingListItems(rec, withUserContext(req, user))
+	var items []readingListItemResponse
+	if err = json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != 200 || len(items) != 1 || items[0].ReadBooks != 0 || items[0].CompletedBooks != 0 || items[0].NextBookID != book.ID {
+		t.Fatalf("isolated=%+v status=%d", items, rec.Code)
+	}
+}
+
+func TestReadingListRoutesKeepSharedListsAdminEditable(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	_ = mkTestUser(t, store, "admin", database.RoleAdmin)
+	_ = mkTestUser(t, store, "reader", database.RoleRegular)
+	router := chi.NewRouter()
+	controller.SetupRoutes(router)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	client := newAuthClient(t)
+	response, body := authDo(t, client, http.MethodPost, server.URL+"/api/auth/login", "", map[string]string{"username": "reader", "password": "password1"})
+	if response.StatusCode != 200 {
+		t.Fatalf("login=%d", response.StatusCode)
+	}
+	var session authSessionResponse
+	if err := json.Unmarshal(body, &session); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodPost, "/api/reading-lists/", map[string]string{"name": "Order"}},
+		{http.MethodPut, "/api/reading-lists/1", map[string]string{"name": "Changed"}},
+		{http.MethodDelete, "/api/reading-lists/1", nil},
+		{http.MethodPost, "/api/reading-lists/1/items", map[string]int{"series_id": 1}},
+		{http.MethodDelete, "/api/reading-lists/1/items/1", nil},
+		{http.MethodPost, "/api/reading-lists/1/items/reorder", map[string][]int{"item_ids": {1}}},
+	} {
+		response, _ := authDo(t, client, action.method, server.URL+action.path, session.CSRFToken, action.body)
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s %s status=%d", action.method, action.path, response.StatusCode)
+		}
+	}
+	response, _ = authDo(t, client, http.MethodGet, server.URL+"/api/reading-lists/", "", nil)
+	if response.StatusCode != 200 {
+		t.Fatalf("browse=%d", response.StatusCode)
+	}
+	admin := newAuthClient(t)
+	response, body = authDo(t, admin, http.MethodPost, server.URL+"/api/auth/login", "", map[string]string{"username": "admin", "password": "password1"})
+	if response.StatusCode != 200 {
+		t.Fatalf("admin login=%d", response.StatusCode)
+	}
+	if err := json.Unmarshal(body, &session); err != nil {
+		t.Fatal(err)
+	}
+	response, _ = authDo(t, admin, http.MethodPost, server.URL+"/api/reading-lists/", session.CSRFToken, map[string]string{"name": "Order"})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("admin create=%d", response.StatusCode)
+	}
 }

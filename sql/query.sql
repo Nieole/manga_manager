@@ -1005,6 +1005,7 @@ RETURNING *;
 -- name: DeleteReadingList :execrows
 DELETE FROM reading_lists WHERE id = ?;
 
+-- Reader continuation is projected by organize.ReadingLists; next_book_id preserves the result shape.
 -- name: ListReadingListItems :many
 SELECT
     rli.id,
@@ -1024,22 +1025,7 @@ SELECT
         ORDER BY b.sort_number, b.name
         LIMIT 1
     ), '') AS TEXT) as cover_path,
-    CAST(COALESCE((
-        SELECT b.id
-        FROM books b
-        WHERE b.series_id = s.id
-        ORDER BY
-            CASE
-                WHEN b.is_read THEN 1
-                WHEN b.page_count = 0 THEN 0
-                WHEN b.last_read_page IS NULL THEN 0
-                WHEN b.last_read_page < b.page_count THEN 0
-                ELSE 1
-            END,
-            b.sort_number,
-            b.name
-        LIMIT 1
-    ), 0) AS INTEGER) as next_book_id
+    CAST(0 AS INTEGER) as next_book_id
 FROM reading_list_items rli
 JOIN series s ON s.id = rli.series_id
 WHERE rli.reading_list_id = ?
@@ -1050,6 +1036,7 @@ SELECT COUNT(*)
 FROM reading_list_items rli
 WHERE rli.reading_list_id = ?;
 
+-- Reader continuation is projected by organize.ReadingLists; next_book_id preserves the result shape.
 -- name: ListReadingListSeriesPage :many
 SELECT
     rli.id as item_id,
@@ -1081,22 +1068,7 @@ SELECT
         ORDER BY b.sort_number, b.name
         LIMIT 1
     ), 0) AS INTEGER) as cover_book_id,
-    CAST(COALESCE((
-        SELECT b.id
-        FROM books b
-        WHERE b.series_id = s.id
-        ORDER BY
-            CASE
-                WHEN b.is_read THEN 1
-                WHEN b.page_count = 0 THEN 0
-                WHEN b.last_read_page IS NULL THEN 0
-                WHEN b.last_read_page < b.page_count THEN 0
-                ELSE 1
-            END,
-            b.sort_number,
-            b.name
-        LIMIT 1
-    ), 0) AS INTEGER) as next_book_id
+    CAST(0 AS INTEGER) as next_book_id
 FROM reading_list_items rli
 JOIN series s ON s.id = rli.series_id
 WHERE rli.reading_list_id = sqlc.arg(reading_list_id)
@@ -1407,17 +1379,6 @@ SELECT series_id FROM books WHERE id = ?;
 
 -- name: GetSeriesIDByBookPath :one
 SELECT series_id FROM books WHERE path = ?;
-
--- name: GetReadingListItemProgressByList :many
-SELECT
-    rli.series_id,
-    COALESCE(ss.read_book_count, 0) AS read_books,
-    COALESCE(ss.completed_book_count, 0) AS completed_books,
-    COALESCE(s.book_count, 0) AS total_books
-FROM reading_list_items rli
-JOIN series s ON s.id = rli.series_id
-LEFT JOIN series_stats ss ON ss.series_id = rli.series_id
-WHERE rli.reading_list_id = ?;
 
 -- name: GetDashboardCoreStats :one
 SELECT

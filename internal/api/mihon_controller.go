@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
 	"manga-manager/internal/reading"
 
 	"github.com/go-chi/chi/v5"
@@ -223,7 +224,7 @@ func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) mihonReadingLists(w http.ResponseWriter, r *http.Request) {
-	lists, err := c.store.ListReadingLists(r.Context())
+	lists, err := c.readingLists().List(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading lists")
 		return
@@ -247,30 +248,18 @@ func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
 		return
 	}
-	if _, err := c.store.GetReadingList(r.Context(), listID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	page := positiveQueryInt(r, "page", 1, 0)
+	limit := positiveQueryInt(r, "limit", 30, 100)
+	result, err := c.readingLists().Page(r.Context(), c.currentUserID(r), listID, int64(limit), pageOffset(page, limit))
+	if err != nil {
+		if errors.Is(err, organize.ErrReadingListMissing) {
 			jsonError(w, http.StatusNotFound, "Reading list not found")
 			return
 		}
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list")
-		return
-	}
-	page := positiveQueryInt(r, "page", 1, 0)
-	limit := positiveQueryInt(r, "limit", 30, 100)
-	total, err := c.store.CountReadingListSeries(r.Context(), listID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to count reading list series")
-		return
-	}
-	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
-		ReadingListID: listID,
-		Limit:         int64(limit),
-		Offset:        pageOffset(page, limit),
-	})
-	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list series")
 		return
 	}
+	rows, total := result.Rows, result.Total
 	items := make([]MihonSeriesResponse, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, mihonSeriesFromReadingListRow(row))

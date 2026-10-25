@@ -279,68 +279,6 @@ func (s *SqlStore) MigrateGlobalProgressToUser(ctx context.Context, userID int64
 	})
 }
 
-// ListUserReadingListItems projects list ordering and the reader's next unfinished book.
-// userID must identify a user; missing user progress never falls back to global progress.
-func (s *SqlStore) ListUserReadingListItems(ctx context.Context, userID, readingListID int64) ([]ListReadingListItemsRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT
-			rli.id,
-			rli.reading_list_id,
-			rli.series_id,
-			rli.sort_order,
-			rli.note,
-			rli.created_at,
-			rli.updated_at,
-			s.name AS series_name,
-			COALESCE(s.title, '') AS series_title,
-			s.book_count,
-			CAST(COALESCE((
-				SELECT b.cover_path
-				FROM books b
-				WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
-				ORDER BY b.sort_number, b.name
-				LIMIT 1
-			), '') AS TEXT) AS cover_path,
-			CAST(COALESCE((
-				SELECT b.id
-				FROM books b
-				LEFT JOIN user_book_progress ubp ON ubp.book_id = b.id AND ubp.user_id = ?
-				WHERE b.series_id = s.id
-				ORDER BY
-					CASE
-						WHEN COALESCE(ubp.is_read,FALSE) THEN 1
-                        WHEN b.page_count = 0 THEN 0
-						WHEN COALESCE(ubp.last_read_page, 0) < b.page_count THEN 0
-						ELSE 1
-					END,
-					b.sort_number,
-					b.name
-				LIMIT 1
-			), 0) AS INTEGER) AS next_book_id
-		FROM reading_list_items rli
-		JOIN series s ON s.id = rli.series_id
-		WHERE rli.reading_list_id = ?
-		ORDER BY rli.sort_order, s.name`, userID, readingListID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []ListReadingListItemsRow
-	for rows.Next() {
-		var i ListReadingListItemsRow
-		if err := rows.Scan(
-			&i.ID, &i.ReadingListID, &i.SeriesID, &i.SortOrder, &i.Note,
-			&i.CreatedAt, &i.UpdatedAt, &i.SeriesName, &i.SeriesTitle,
-			&i.BookCount, &i.CoverPath, &i.NextBookID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
-}
-
 // RefreshUserSeriesProgressForAllUsers 重算某系列在所有用户下的派生进度聚合。
 //
 // 用于「书被删除」这类会改变系列组成的场景：删除 books 行会经 CASCADE 带走

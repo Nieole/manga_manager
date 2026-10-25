@@ -1,7 +1,3 @@
-// 本文件是业务回归测试，覆盖阅读清单进度聚合 GetReadingListItemProgress（全局 vs 每用户
-// 双来源）与全局统计看板 GetDashboardStats / Structural / Volatile。保护「看板/清单进度取数口径」在
-// series_stats 与 user_series_progress 之间正确切换，以及结构性统计(系列/书/页/库体积)与易变统计(已读/活跃天数)的准确性。
-
 package database
 
 import (
@@ -11,69 +7,6 @@ import (
 	"testing"
 	"time"
 )
-
-// TestGetReadingListItemProgressDualSource 验证清单进度在全局(userID=0)取 series_stats、
-// 每用户(userID>0)取 user_series_progress，并与彼此隔离；无进度用户仍返回 0 且保留 TotalBooks。
-func TestGetReadingListItemProgressDualSource(t *testing.T) {
-	store := newStoreForTest(t)
-	ctx, _, seriesID, book1, _ := seedUserProgressFixture(t, store)
-	u1 := mkUser(t, ctx, store, "alice", RoleAdmin)
-	u2 := mkUser(t, ctx, store, "bob", RoleRegular)
-
-	list, err := store.CreateReadingList(ctx, CreateReadingListParams{Name: "My List", Description: ""})
-	if err != nil {
-		t.Fatalf("create list: %v", err)
-	}
-	if _, err := store.AddReadingListItem(ctx, AddReadingListItemParams{ReadingListID: list.ID, SeriesID: seriesID, Note: ""}); err != nil {
-		t.Fatalf("add item: %v", err)
-	}
-
-	// 全局：book1 读完(20/20) → series_stats read=1 completed=1。
-	if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
-		LastReadPage: sql.NullInt64{Int64: 20, Valid: true},
-		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
-		ID:           book1,
-	}); err != nil {
-		t.Fatalf("global progress: %v", err)
-	}
-	// u1：只读到 10（在读，未完成）。
-	if err := store.SetUserBookProgress(ctx, u1, book1, 10, time.Now()); err != nil {
-		t.Fatalf("u1 progress: %v", err)
-	}
-
-	// 全局路径。
-	g, err := store.GetReadingListItemProgress(ctx, list.ID, 0)
-	if err != nil {
-		t.Fatalf("global list progress: %v", err)
-	}
-	gp := g[seriesID]
-	if gp.ReadBooks != 1 || gp.CompletedBooks != 1 || gp.TotalBooks != 2 {
-		t.Fatalf("global progress = %+v want read=1 completed=1 total=2", gp)
-	}
-
-	// u1 路径：读到但未完成。
-	a, err := store.GetReadingListItemProgress(ctx, list.ID, u1)
-	if err != nil {
-		t.Fatalf("u1 list progress: %v", err)
-	}
-	ap := a[seriesID]
-	if ap.ReadBooks != 1 || ap.CompletedBooks != 0 || ap.TotalBooks != 2 {
-		t.Fatalf("u1 progress = %+v want read=1 completed=0 total=2", ap)
-	}
-
-	// u2 路径：无进度但仍在清单里，计数为 0、TotalBooks 保留。
-	b, err := store.GetReadingListItemProgress(ctx, list.ID, u2)
-	if err != nil {
-		t.Fatalf("u2 list progress: %v", err)
-	}
-	bp, ok := b[seriesID]
-	if !ok {
-		t.Fatal("u2 should still see the series row in the list")
-	}
-	if bp.ReadBooks != 0 || bp.CompletedBooks != 0 || bp.TotalBooks != 2 {
-		t.Fatalf("u2 progress = %+v want read=0 completed=0 total=2", bp)
-	}
-}
 
 // TestGetDashboardStatsAggregates 验证看板结构性统计(系列/书/页/库体积)与易变统计(已读/近7天活跃)。
 func TestGetDashboardStatsAggregates(t *testing.T) {
