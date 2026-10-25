@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"manga-manager/internal/database"
-	"manga-manager/internal/metadata"
 	"manga-manager/internal/organize"
 )
 
@@ -221,95 +219,6 @@ func aiGroupingReviewFromListRow(row database.ListAIGroupingReviewsRow) database
 		AppliedAt:       row.AppliedAt,
 		RejectedAt:      row.RejectedAt,
 	}
-}
-
-type aiGroupingReviewProposal struct {
-	Name        string
-	Description string
-	SeriesIDs   []int64
-}
-
-func normalizeAIGroupingReviewProposals(candidates []metadata.CandidateSeries, groups []metadata.AIGroupCollection) []aiGroupingReviewProposal {
-	candidateIDs := make(map[int64]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		candidateIDs[candidate.ID] = struct{}{}
-	}
-
-	proposals := make([]aiGroupingReviewProposal, 0, len(groups))
-	for _, group := range groups {
-		name := strings.TrimSpace(group.Name)
-		if name == "" {
-			continue
-		}
-		seriesIDs := make([]int64, 0, len(group.SeriesIDs))
-		seen := make(map[int64]struct{}, len(group.SeriesIDs))
-		for _, id := range group.SeriesIDs {
-			if _, ok := candidateIDs[id]; !ok {
-				continue
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			seriesIDs = append(seriesIDs, id)
-		}
-		sort.Slice(seriesIDs, func(i, j int) bool { return seriesIDs[i] < seriesIDs[j] })
-		if len(seriesIDs) == 0 {
-			continue
-		}
-		proposals = append(proposals, aiGroupingReviewProposal{
-			Name:        name,
-			Description: strings.TrimSpace(group.Description),
-			SeriesIDs:   seriesIDs,
-		})
-	}
-	return proposals
-}
-
-func (c *Controller) createAIGroupingReview(ctx context.Context, libraryID int64, providerName string, candidates []metadata.CandidateSeries, groups []metadata.AIGroupCollection) (database.AiGroupingReview, int, error) {
-	var created database.AiGroupingReview
-	proposals := normalizeAIGroupingReviewProposals(candidates, groups)
-	if len(proposals) == 0 {
-		return created, 0, nil
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"candidates":  candidates,
-		"collections": groups,
-		"proposals":   proposals,
-	})
-
-	err := c.store.ExecTx(ctx, func(q *database.Queries) error {
-		review, err := q.CreateAIGroupingReview(ctx, database.CreateAIGroupingReviewParams{
-			LibraryID:       libraryID,
-			Provider:        strings.TrimSpace(providerName),
-			Status:          "pending",
-			Summary:         "AI grouping review queued",
-			RawPayload:      string(payload),
-			CandidateCount:  int64(len(candidates)),
-			CollectionCount: int64(len(proposals)),
-		})
-		if err != nil {
-			return err
-		}
-
-		for _, proposal := range proposals {
-			rawIDs, _ := json.Marshal(proposal.SeriesIDs)
-			if _, err := q.CreateAIGroupingReviewCollection(ctx, database.CreateAIGroupingReviewCollectionParams{
-				ReviewID:    review.ID,
-				Name:        proposal.Name,
-				Description: proposal.Description,
-				SeriesIds:   string(rawIDs),
-				SeriesCount: int64(len(proposal.SeriesIDs)),
-				Status:      "pending",
-			}); err != nil {
-				return err
-			}
-		}
-
-		created = review
-		return nil
-	})
-	return created, len(proposals), err
 }
 
 func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Request) {

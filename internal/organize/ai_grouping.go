@@ -21,12 +21,13 @@ type InvalidAIGroupingEdit struct{ Message string }
 func (e *InvalidAIGroupingEdit) Error() string { return e.Message }
 
 type AIGroupingStore interface {
+	GetSeriesWithoutCollection(context.Context, int64) ([]database.GetSeriesWithoutCollectionRow, error)
 	ExecTx(context.Context, func(*database.Queries) error) error
 	GetAIGroupingReview(context.Context, int64) (database.AiGroupingReview, error)
 	ListAIGroupingReviewCollections(context.Context, int64) ([]database.AiGroupingReviewCollection, error)
 }
 
-// AIGrouping adjudicates collection candidates, independently of series metadata proposals.
+// AIGrouping owns generated collection suggestions and their explicit adjudication, independently of series metadata proposals.
 type AIGrouping struct {
 	store   AIGroupingStore
 	refresh func()
