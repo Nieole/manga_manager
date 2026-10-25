@@ -77,7 +77,11 @@ func (s *Service) MarkBooks(ctx context.Context, input MarkBooksInput) (MarkResu
 			end = len(ids)
 		}
 		saved, err := s.store.MutateReadingPositions(ctx, input.UserID, ids[start:end], factID, func(_ int64, state database.ReadingPositionState) database.ReadingPositionMutation {
-			if state.Duplicate || at.UnixNano() <= state.ChangedAtNS || (state.LastReadAt.Valid && at.Before(state.LastReadAt.Time)) {
+			freshLegacy := input.OccurredAt == nil && input.OperationID == ""
+			// Without client evidence, equal receive-clock ticks use transaction order.
+			// Identified or timestamped operations retain strict replay rejection.
+			stale := staleOccurrence(at, state.ChangedAtNS, freshLegacy)
+			if state.Duplicate || stale || (state.LastReadAt.Valid && at.Before(state.LastReadAt.Time)) {
 				return database.ReadingPositionMutation{Page: state.Page}
 			}
 			page := state.PageCount

@@ -244,3 +244,118 @@ func TestMarkSelectionLimitsAndUnknownPages(t *testing.T) {
 		t.Fatalf("other user clear leaked: %+v %v %v", p, found, err)
 	}
 }
+
+func TestFreshLegacyMarksApplySequentiallyWithinOneClockTick(t *testing.T) {
+	for _, seriesMode := range []bool{false, true} {
+		for _, anonymous := range []bool{false, true} {
+			t.Run(fmt.Sprintf("series=%v anonymous=%v", seriesMode, anonymous), func(t *testing.T) {
+				store, uid, bid := positionFixture(t)
+				ctx := context.Background()
+				if anonymous {
+					uid = 0
+				}
+				book, err := store.GetBook(ctx, bid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tick := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
+				service := reading.New(store, nil, reading.WithClock(func() time.Time { return tick }))
+				for _, isRead := range []bool{true, false, true, false} {
+					var result reading.MarkResult
+					if seriesMode {
+						result, err = service.MarkSeries(ctx, reading.MarkSeriesInput{UserID: uid, SeriesIDs: []int64{book.SeriesID}, IsRead: isRead})
+					} else {
+						result, err = service.MarkBooks(ctx, reading.MarkBooksInput{UserID: uid, BookIDs: []int64{bid}, IsRead: isRead})
+					}
+					if err != nil || len(result.CommittedBookIDs) != 1 {
+						t.Fatalf("isRead=%v result=%+v err=%v", isRead, result, err)
+					}
+					if uid > 0 {
+						p, found, err := store.GetUserBookProgress(ctx, uid, bid)
+						if err != nil || found != isRead || (isRead && p.LastReadPage.Int64 != 20) {
+							t.Fatalf("isRead=%v p=%+v found=%v err=%v", isRead, p, found, err)
+						}
+					} else {
+						p, err := store.GetBook(ctx, bid)
+						if err != nil || p.LastReadPage.Valid != isRead {
+							t.Fatalf("isRead=%v book=%+v err=%v", isRead, p, err)
+						}
+					}
+				}
+				for _, identified := range []bool{false, true} {
+					input := reading.MarkBooksInput{UserID: uid, BookIDs: []int64{bid}, IsRead: true, OccurredAt: &tick}
+					if identified {
+						input.OccurredAt = nil
+						input.OperationID = "identified"
+					}
+					got, err := service.MarkBooks(ctx, input)
+					if err != nil || len(got.CommittedBookIDs) != 0 {
+						t.Fatalf("equal proven occurrence must not overwrite clear: result=%+v err=%v", got, err)
+					}
+				}
+				replay, err := service.RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: 10, OccurredAt: &tick})
+				if err != nil || replay.Applied {
+					t.Fatalf("equal old report overwrote clear: %+v err=%v", replay, err)
+				}
+			})
+		}
+	}
+}
+
+func TestLegacyMarksAndPositionsShareSameTickTransactionOrder(t *testing.T) {
+	for _, anonymous := range []bool{false, true} {
+		t.Run(fmt.Sprint(anonymous), func(t *testing.T) {
+			store, uid, bid := positionFixture(t)
+			ctx := context.Background()
+			if anonymous {
+				uid = 0
+			}
+			tick := time.Date(2026, 10, 25, 23, 59, 59, 999999999, time.Local)
+			service := reading.New(store, nil, reading.WithClock(func() time.Time { return tick }))
+			mark := func(isRead bool) {
+				t.Helper()
+				result, err := service.MarkBooks(ctx, reading.MarkBooksInput{UserID: uid, BookIDs: []int64{bid}, IsRead: isRead})
+				if err != nil || len(result.CommittedBookIDs) != 1 {
+					t.Fatalf("isRead=%v result=%+v err=%v", isRead, result, err)
+				}
+			}
+			read := func(page int64) {
+				t.Helper()
+				result, err := service.RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: page})
+				if err != nil || !result.Applied {
+					t.Fatalf("page=%d result=%+v err=%v", page, result, err)
+				}
+				var at time.Time
+				if uid > 0 {
+					p, _, err := store.GetUserBookProgress(ctx, uid, bid)
+					if err != nil {
+						t.Fatal(err)
+					}
+					at = p.LastReadAt.Time
+				} else {
+					p, err := store.GetBook(ctx, bid)
+					if err != nil {
+						t.Fatal(err)
+					}
+					at = p.LastReadAt.Time
+				}
+				if !at.Equal(tick) {
+					t.Fatalf("receive timestamp must remain original, got %v want %v", at, tick)
+				}
+			}
+			mark(true)
+			mark(false)
+			read(6)
+			mark(false)
+			read(3)
+			old, err := service.RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: 10, OccurredAt: &tick})
+			if err != nil || old.Applied {
+				t.Fatalf("equal timestamped replay=%+v err=%v", old, err)
+			}
+			days, err := store.GetActivityHeatmap(ctx, "2026-10-25")
+			if err != nil || len(days) != 1 || days[0].Date != "2026-10-25" {
+				t.Fatalf("invented reading day: %+v err=%v", days, err)
+			}
+		})
+	}
+}
