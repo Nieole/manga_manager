@@ -85,3 +85,40 @@ func TestSyncPositionWriteFailureKeepsEarlierAndLaterResults(t *testing.T) {
 		t.Fatalf("progress=%+v err=%v", p, err)
 	}
 }
+
+func TestReceivedFactsAtSameTickRetainRetryIdentity(t *testing.T) {
+	for _, transport := range []string{"record", "sync"} {
+		t.Run(transport, func(t *testing.T) {
+			store, uid, bid := positionFixture(t)
+			ctx := context.Background()
+			tick := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+			now := tick
+			service := reading.New(store, nil, reading.WithClock(func() time.Time { return now }))
+			report := func(id string) bool {
+				t.Helper()
+				position := reading.Position{UserID: uid, BookID: bid, Page: 5, FactID: id}
+				if transport == "sync" {
+					result := service.SyncPositions(ctx, []reading.Position{position})
+					if len(result) != 1 || (result[0].Status != "updated" && result[0].Status != "skipped_unchanged") {
+						t.Fatalf("sync result=%+v", result)
+					}
+					return result[0].Status == "updated"
+				}
+				result, err := service.RecordPosition(ctx, position)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result.Applied
+			}
+			first := report("first")
+			second := report("second")
+			now = tick.Add(24 * time.Hour)
+			retry := report("second")
+			progress, _, err := store.GetUserBookProgress(ctx, uid, bid)
+			days, daysErr := store.GetActivityHeatmap(ctx, "2026-10-01")
+			if !first || !second || retry || err != nil || daysErr != nil || !progress.LastReadAt.Time.Equal(tick) || len(days) != 1 {
+				t.Fatalf("first=%v second=%v next-day retry=%v last_read_at=%v days=%+v err=%v/%v", first, second, retry, progress.LastReadAt, days, err, daysErr)
+			}
+		})
+	}
+}

@@ -93,7 +93,7 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 			page = state.PageCount
 		}
 		retained := database.ReadingPositionMutation{Page: state.Page}
-		freshReceive := p.OccurredAt == nil && (p.ReceivedAt != nil || p.FactID == "")
+		freshReceive := p.OccurredAt == nil
 		if state.Duplicate {
 			return retained
 		}
@@ -110,7 +110,7 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 		if p.OccurredAt == nil && p.ReceivedAt == nil && p.FactID == "" && state.LastReadAt.Valid && page == state.Page && at.Sub(state.LastReadAt.Time) < 2*time.Second {
 			return retained
 		}
-		if p.ReceivedAt == nil && state.LastReadAt.Valid && page == state.Page && at.Equal(state.LastReadAt.Time) {
+		if p.OccurredAt != nil && state.LastReadAt.Valid && page == state.Page && at.Equal(state.LastReadAt.Time) {
 			return retained
 		}
 		return database.ReadingPositionMutation{Apply: true, Page: page, OccurredAt: at}

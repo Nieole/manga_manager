@@ -36,3 +36,12 @@
 - `gofmt -l ./cmd ./internal` 输出为空；独立缓存的 `golangci-lint run` 为 `0 issues.`；`go run ./cmd/tsgen` 无产物漂移；`git diff --check` 通过。
 
 未完成的环境门禁：完整 `go test ./...` 退出 1，仅 `internal/application/relocating`、`internal/images`、`internal/metadata`、`internal/runtimecfg` 的测试 exe 被 Windows Application Control 阻止执行，提示 `An Application Control policy has blocked this file.`；没有把这些阻断记为通过，也未改名、换路径或绕过策略。故最后一条仍未勾选，状态保留 `ready-for-agent`，待集成环境完整门禁验收。
+### 同刻无发生时间事实的幂等修正（2026-10-25）
+
+在集成 `b8d7ca0` 上通过公共 `RecordPosition` 与 `SyncPositions`、真实 SQLite 和固定 `WithClock` 确认：同一接收 tick 的两个不同 `fact_id`、相同页码、均不携带发生时间的报告，第二条被跳过且没有接收回执；次日重试第二个身份会被当作新阅读，将最近阅读与活动改到次日。
+
+最小修正由 `reading.RecordPosition` 统一完成：是否为新接收只取决于没有 `OccurredAt`，事实身份只用于回执去重；同页等时的额外拒绝只针对显式发生时间。无时间的新身份因此按事务顺序接受并持久保存回执，次日重试不再产生新阅读日期。未改写或合成时间；无身份兼容报告的两秒节流、显式发生时间的严格拒旧、持久清除保护，以及 `ReceivedAt`/`OccurredAt` 互斥保持原规则。
+
+红绿证据：新增 `TestReceivedFactsAtSameTickRetainRetryIdentity`，修复前两入口均报告 `first=true second=false next-day retry=true`，活动日期出现两天；修复后两入口均为首条与第二条接受、次日重试拒重，最近阅读仍为原接收时刻，活动仅原一天。`go test ./internal/reading ./internal/koreader -count=1` 通过；仅变更公共位置规则和此回归，没有重跑无关全量或改变既有环境门禁结论。
+
+本轮变更门禁：HTTP 离线/在线/匹配 KOReader 与 bulk 定向回归通过；独立缓存的 `golangci-lint run` 为 `0 issues.`，`gofmt -l ./cmd ./internal` 为空，`git diff --check` 通过。提交前已同步最新集成分支。
