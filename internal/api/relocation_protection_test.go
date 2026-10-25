@@ -59,6 +59,7 @@ func TestRelocationPreviewPollingCannotOverwriteCompletedFacts(t *testing.T) {
 	originalRuns := c.taskEngine.runStore
 	runs := &delayedPreviewRunStore{Store: originalRuns, entered: make(chan struct{}), resume: make(chan struct{})}
 	c.taskEngine.runStore = runs
+	c.assembleRelocationUseCases()
 	body, _ := json.Marshal(map[string]string{"target_root": target})
 	created := httptest.NewRecorder()
 	c.createRelocationPlan(created, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
