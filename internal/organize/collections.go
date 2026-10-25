@@ -1,4 +1,4 @@
-// Package organize owns collection membership, names and source ownership.
+// Package organize owns manual and smart collections, snapshots, names and source ownership.
 package organize
 
 import (
