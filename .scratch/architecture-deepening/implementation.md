@@ -17,6 +17,8 @@
 - booksort 与 koreader 测试可执行文件仍被 Application Control 拦截，因此该次全量门禁失败；不能用其他包通过代替完整门禁。
 - 日志：`C:/Users/saber/.codex/tmp/architecture-deepening/integration-go-test.log`。后续按原工具链正常验证，不修改编译器路径或系统策略。
 
+- 2026-10-25：已安装 CI 固定 govulncheck v1.6.0，原路径正常执行被 Windows Application Control 明确拦截，漏洞扫描未运行；未改名、改路径或绕过策略。最终联合验收须补齐该门禁。
+
 ## 已合入
 
 | 票 | 实现提交 | 集成提交 | 验证结果 |
