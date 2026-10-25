@@ -4,6 +4,7 @@ package reading
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"manga-manager/internal/database"
@@ -11,12 +12,19 @@ import (
 
 // Position identifies one reading fact. OccurredAt and FactID survive transport retries.
 type Position struct {
-	UserID     int64
-	BookID     int64
-	Page       int64
+	UserID int64
+	BookID int64
+	Page   int64
+	// OccurredAt is client or historical fact time and survives replay.
 	OccurredAt *time.Time
+	// ReceivedAt is trusted server receipt time for a fresh report, never HTTP input.
+	// It is mutually exclusive with OccurredAt; RecordPosition rejects both together.
+	ReceivedAt *time.Time
 	FactID     string
 }
+
+// ErrConflictingPositionTimes rejects reports with ambiguous time provenance.
+var ErrConflictingPositionTimes = errors.New("position occurrence and receipt times are mutually exclusive")
 
 // Result distinguishes a committed position from best-effort activity warnings.
 type Result struct {
@@ -66,11 +74,16 @@ func WithClock(now func() time.Time) Option {
 
 // RecordPosition saves a newer position and attempts each compatibility activity projection independently.
 func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error) {
+	if p.OccurredAt != nil && p.ReceivedAt != nil {
+		return Result{}, ErrConflictingPositionTimes
+	}
 	stale := false
 	saved, err := s.store.MutateReadingPosition(ctx, p.UserID, p.BookID, p.FactID, func(state database.ReadingPositionState) database.ReadingPositionMutation {
 		at := s.now()
 		if p.OccurredAt != nil {
 			at = *p.OccurredAt
+		} else if p.ReceivedAt != nil {
+			at = *p.ReceivedAt
 		}
 		page := p.Page
 		if page < 1 {
@@ -80,11 +93,11 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 			page = state.PageCount
 		}
 		retained := database.ReadingPositionMutation{Page: state.Page}
-		freshLegacy := p.OccurredAt == nil && p.FactID == ""
+		freshReceive := p.OccurredAt == nil && (p.ReceivedAt != nil || p.FactID == "")
 		if state.Duplicate {
 			return retained
 		}
-		if staleOccurrence(at, state.ChangedAtNS, freshLegacy) {
+		if staleOccurrence(at, state.ChangedAtNS, freshReceive) {
 			stale = !state.LastReadAt.Valid || !at.Equal(state.LastReadAt.Time) || page != state.Page
 			return retained
 		}
@@ -94,10 +107,10 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 		}
 		// Legacy clients cannot identify retries. Bound their repeated same-page writes,
 		// while timestamped reading facts always retain the newer occurrence.
-		if p.OccurredAt == nil && p.FactID == "" && state.LastReadAt.Valid && page == state.Page && at.Sub(state.LastReadAt.Time) < 2*time.Second {
+		if p.OccurredAt == nil && p.ReceivedAt == nil && p.FactID == "" && state.LastReadAt.Valid && page == state.Page && at.Sub(state.LastReadAt.Time) < 2*time.Second {
 			return retained
 		}
-		if state.LastReadAt.Valid && page == state.Page && at.Equal(state.LastReadAt.Time) {
+		if p.ReceivedAt == nil && state.LastReadAt.Valid && page == state.Page && at.Equal(state.LastReadAt.Time) {
 			return retained
 		}
 		return database.ReadingPositionMutation{Apply: true, Page: page, OccurredAt: at}
@@ -113,7 +126,7 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 	return result, nil
 }
 
-// Equal receive-clock ticks order fresh compatibility inputs by their transaction;
+// Equal receive-clock ticks order fresh server-received inputs by their transaction;
 // facts carrying occurrence evidence remain subject to strict replay rejection.
 func staleOccurrence(at time.Time, changedAtNS int64, freshLegacy bool) bool {
 	return at.UnixNano() < changedAtNS || (at.UnixNano() == changedAtNS && !freshLegacy)

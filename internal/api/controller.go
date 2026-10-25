@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"manga-manager/internal/application/diskjobs"
 	"manga-manager/internal/application/relocating"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
@@ -28,6 +29,7 @@ import (
 	"manga-manager/internal/metadata"
 	"manga-manager/internal/organize"
 	"manga-manager/internal/proposal"
+	"manga-manager/internal/reading"
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
@@ -58,6 +60,7 @@ type Controller struct {
 	diskWork       *diskwork.Runner
 	koreader       *koreader.Service
 	external       *external.Manager
+	diskJobs       *diskjobs.Service
 	proposals      *proposal.Service
 	relocation     *relocation.Service
 	configPath     string
@@ -365,7 +368,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
 	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.Default)
 
-	c.koreader = koreader.NewService(store, cfg)
+	c.koreader = koreader.NewService(store, cfg, koreader.WithReadingPositions(reading.New(store, func() { c.invalidateVolatileStatsCache("koreader_progress") })))
 
 	// Relations owns coalesced franchise rebuilding; background work remains lifecycle registered.
 	c.relations = organize.NewRelations(c.store, c.runBackground)
@@ -388,6 +391,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
 	c.assembleScanUseCases()
+	c.assembleDiskUseCases()
 	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
 		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
 		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },

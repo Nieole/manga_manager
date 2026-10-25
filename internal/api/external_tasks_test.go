@@ -103,7 +103,7 @@ func newExternalRig(t *testing.T, books int, now func() time.Time, run func(func
 	engine, snapshots := newBackgroundTestEngine(t, run, nil)
 	engine.now = now
 
-	return &externalRig{
+	rig := &externalRig{
 		c: &Controller{
 			taskEngine: engine,
 			store:      store,
@@ -113,6 +113,8 @@ func newExternalRig(t *testing.T, books int, now func() time.Time, run func(func
 		libraryID:   libraryID,
 		externalDir: externalDir,
 	}
+	rig.c.assembleDiskUseCases()
+	return rig
 }
 
 // discardScanHandle 是 external.TaskHandle 的手写假体：readySession 里那次扫描不挂在任何
@@ -393,4 +395,8 @@ func TestExternalTasksQueueSecondLaunchOnSameKey(t *testing.T) {
 	if got := currentTask(t, rig.c.taskEngine, scanKey).Status; got != "queued" {
 		t.Fatalf("同键第二次扫描的状态为 %q, want queued", got)
 	}
+}
+
+func (s *externalTaskStore) ListLibraries(context.Context) ([]database.Library, error) {
+	return []database.Library{s.lib}, nil
 }

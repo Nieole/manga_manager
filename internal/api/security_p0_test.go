@@ -241,6 +241,20 @@ func TestAuthGateRoles(t *testing.T) {
 		resp.Body.Close()
 	}
 
+	for _, path := range []string{"/api/libraries/1/external-libraries/session", "/api/libraries/1/external-libraries/session/s/transfer", "/api/series/1/comicinfo"} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, bytes.NewReader([]byte(`{}`)))
+		req.Header.Set("X-CSRF-Token", regCSRF)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := regClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("regular POST %s want 403 got %d", path, resp.StatusCode)
+		}
+	}
+
 	// 普通用户浏览端点 → 200。
 	if resp, _ := regClient.Get(srv.URL + "/api/libraries"); resp != nil {
 		if resp.StatusCode != http.StatusOK {

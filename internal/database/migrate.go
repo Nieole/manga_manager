@@ -75,6 +75,7 @@ func Migrate(dbPath string) error {
 		{table: "books", name: "last_read_at", definition: "DATETIME"},
 		{table: "books", name: "is_read", definition: "BOOLEAN NOT NULL DEFAULT FALSE"},
 		{table: "user_book_progress", name: "is_read", definition: "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{table: "koreader_progress", name: "received_at_ns", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{table: "series", name: "title", definition: "TEXT"},
 		{table: "series", name: "summary", definition: "TEXT"},
 		{table: "series", name: "publisher", definition: "TEXT"},

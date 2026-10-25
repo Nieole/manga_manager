@@ -519,9 +519,7 @@ func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
 	createServiceTestUser(t, store, "bob", database.RoleRegular)
 
 	_, book := seedServiceBook(t, store, rootDir, "Library A", "Series Alpha", "Volume01.cbz")
-	// 预置一个**小于总页数**的已读进度：seedServiceBook 的书 PageCount=32，
-	// 而 applyBookProgress 有「不回退」保护（page < prev 直接返回），
-	// 预置值若 >= 32，缺陷代码下第二条断言会假绿。
+	// 预置独立的管理员进度，未绑定设备只能写全局兼容进度，不能改变它。
 	if err := store.SetUserBookProgress(ctx, admin.ID, book.ID, 4, time.Now()); err != nil {
 		t.Fatalf("预置管理员进度失败: %v", err)
 	}

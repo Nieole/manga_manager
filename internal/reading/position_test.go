@@ -2,6 +2,7 @@ package reading_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -269,5 +270,18 @@ func TestOffsetOccurrencesCompareAsInstantsAcrossLegacyAndNewPositions(t *testin
 	progress, _, err := store.GetUserBookProgress(ctx, uid, bid)
 	if err != nil || progress.LastReadPage.Int64 != 5 || !progress.LastReadAt.Time.Equal(backward) {
 		t.Fatalf("progress=%+v err=%v", progress, err)
+	}
+}
+
+func TestPositionRejectsAmbiguousReceiptAndOccurrenceTimes(t *testing.T) {
+	store, uid, bid := positionFixture(t)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	got, err := reading.New(store, nil).RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: 4, OccurredAt: &at, ReceivedAt: &at})
+	if !errors.Is(err, reading.ErrConflictingPositionTimes) || got.Applied {
+		t.Fatalf("ambiguous result=%+v err=%v", got, err)
+	}
+	if _, found, err := store.GetUserBookProgress(ctx, uid, bid); err != nil || found {
+		t.Fatalf("ambiguous times wrote progress: %v %v", found, err)
 	}
 }
