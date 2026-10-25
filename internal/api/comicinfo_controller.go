@@ -3,22 +3,19 @@ package api
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
-	"manga-manager/internal/diskwork"
-	"manga-manager/internal/storageio"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"manga-manager/internal/application/diskjobs"
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
-	"manga-manager/internal/runhandle"
-	"manga-manager/internal/task"
+	"manga-manager/internal/seriesmeta"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -183,122 +180,34 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	series, err := c.store.GetSeries(r.Context(), seriesID)
+	launch, err := c.diskJobs.WriteSeriesComicInfo(r.Context(), seriesID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			jsonError(w, http.StatusNotFound, "Series not found")
-			return
+		var launchErr *diskjobs.LaunchError
+		var preparationErr *diskjobs.PreparationError
+		switch {
+		case errors.As(err, &launchErr):
+			writeTaskLaunchError(w, err, "ComicInfo write is already running for this series", "Failed to start ComicInfo write")
+		case errors.As(err, &preparationErr):
+			if preparationErr.Stage == "series" && errors.Is(err, sql.ErrNoRows) {
+				jsonError(w, http.StatusNotFound, "Series not found")
+				return
+			}
+			messages := map[string]string{"series": "Failed to get series", "books": "Failed to list series books", "tags": "Failed to get series tags", "authors": "Failed to get series authors"}
+			jsonError(w, http.StatusInternalServerError, messages[preparationErr.Stage])
+		default:
+			jsonError(w, http.StatusInternalServerError, "Failed to prepare ComicInfo write")
 		}
-		jsonError(w, http.StatusInternalServerError, "Failed to get series")
-		return
-	}
-
-	books, err := c.store.ListBooksBySeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to list series books")
-		return
-	}
-	tags, err := c.store.GetTagsForSeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to get series tags")
-		return
-	}
-	authors, err := c.store.GetAuthorsForSeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to get series authors")
-		return
-	}
-
-	if err := c.launchWriteSeriesComicInfoTask(series, books, tags, authors); err != nil {
-		writeTaskLaunchError(w, err, "ComicInfo write is already running for this series", "Failed to start ComicInfo write")
 		return
 	}
 
 	jsonResponse(w, http.StatusAccepted, map[string]interface{}{
 		"status":   "started",
 		"task_key": writeComicInfoTaskKey(seriesID),
-		"total":    len(books),
+		"total":    launch.Total,
 	})
 }
 
-// writeComicInfoTaskKey 拼回写任务的**任务键**。HTTP 层要把它回给前端，任务声明也要用它，
-// 因此它是两处共用的一份实现而不是各拼各的。
-func writeComicInfoTaskKey(seriesID int64) string {
-	return fmt.Sprintf("write_comicinfo_series_%d", seriesID)
-}
-
-// launchWriteSeriesComicInfoTask 是 ComicInfo 回写任务的启动点，走引擎的启动入口。
-//
-// 回写整个系列要逐本解压重压，大系列可以跑到分钟级，因此必须做成后台任务：同步做会让请求一直
-// 挂到最后一本写完、中途无法取消也看不到进度。它**可取消但不可暂停**——每本书都是一次原子替换，
-// 停在两本之间没有额外好处，而任务中心的暂停控件正是由 CanPause 决定的。
-//
-// 系列、书目、标签与作者由调用方备齐后传入：任务声明要一次性落地，其中的作用域显示名来自系列。
-func (c *Controller) launchWriteSeriesComicInfoTask(series database.Series, books []database.Book, tags []database.Tag, authors []database.Author) error {
-	spec := RunSpec{
-		Key:          writeComicInfoTaskKey(series.ID),
-		StartCode:    "task.msg.write_comicinfo.start",
-		Total:        len(books),
-		CanCancel:    true,
-		Metadata:     map[string]string{"series_id": strconv.FormatInt(series.ID, 10)},
-		ScopeName:    series.Name,
-		CompleteCode: "task.msg.write_comicinfo.complete",
-		CancelCode:   "task.msg.write_comicinfo.cancelled",
-		FailCode:     "task.msg.write_comicinfo.failed",
-	}
-
-	return c.taskEngine.Run(seriesTask("write_comicinfo", series.ID, variantSole), task.TriggerManual, spec, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
-		written, skipped, failed := 0, 0, 0
-		for i, book := range books {
-			// 聚合是纯 CPU，留在**磁盘作业**之外：把它夹进令牌的持有区间只会虚占这块盘的归档打开额度。
-			info := buildComicInfoForBook(book, series, tags, authors)
-
-			// 以这个任务的名义发起**磁盘作业**：归档回写是重 IO（逐本解压重压），不受调度会让
-			// 阅读器取页明显卡顿。用 MetadataScan 这一类：它与扫描器读归档同属「后台读写归档」，
-			// 共用同一档并发上限。闭包只捕获自己的错误——回写失败是这一本书的结局，中止只由句柄
-			// 返回的闸门错误决定。
-			// 实况由句柄吸收，但这个任务不报 IO 指标：上报是任务体的选择，这一处没有选它。
-			var writeErr error
-			if err := handle.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
-				writeErr = parser.WriteComicInfoIntoArchive(book.Path, info)
-				return nil
-			}); err != nil {
-				return RunResult{}, err
-			}
-
-			switch {
-			case writeErr == nil:
-				written++
-			case errors.Is(writeErr, parser.ErrArchiveNotWritable), errors.Is(writeErr, parser.ErrComicInfoNotMergeable):
-				// 无法安全合并的原文档与不可写的格式同属「这本书写不了」，都按跳过计，不算失败。
-				skipped++
-			default:
-				slog.ErrorContext(ctx, "write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", writeErr)
-				failed++
-			}
-
-			// 计数、书名与三个结局计数同属这一本书，必须整帧报出：拆开报会被投递水位撕断，
-			// 撕开之后是什么样见 runhandle.Handle.Report。
-			current, total := i+1, len(books)
-			handle.Report(runhandle.Frame{
-				Current: &current,
-				Total:   &total,
-				Phase:   "writing",
-				Item:    book.Name,
-				Code:    "task.msg.write_comicinfo.progress",
-				Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
-				Metrics: map[string]int64{
-					"written": int64(written), "skipped": int64(skipped), "failed": int64(failed),
-				},
-			})
-		}
-		return RunResult{Params: map[string]string{
-			"written": strconv.Itoa(written),
-			"skipped": strconv.Itoa(skipped),
-			"failed":  strconv.Itoa(failed),
-		}}, nil
-	})
-}
+func writeComicInfoTaskKey(seriesID int64) string { return diskjobs.ComicInfoKey(seriesID) }
 
 // buildBookComicInfo 复用导出路径的构造逻辑，从数据库聚合出单本书的 ComicInfo。
 func (c *Controller) buildBookComicInfo(r *http.Request, book database.Book) (parser.ComicInfo, error) {
@@ -352,43 +261,8 @@ func buildSeriesComicInfoArchive(series database.Series, books []database.Book, 
 	return buffer.Bytes(), nil
 }
 
-// buildComicInfoForBook 从库里聚合出一本书的 ComicInfo。
-//
-// 留空的字段表示本项目对它没有可写的内容，回写时会保留归档原值——因此这里**不填 Count**：
-// ComicRack 的 Count 是「本系列共几卷」，而本项目只知道「资料库里收了几卷」，
-// 用户只收藏 3 卷时填 3 会把原本正确的 20 改错。往用户文件里写一个我们并不知道的数字，
-// 比不写更糟。同理，Manga / Web / Rating 本项目取不到值，留空即由归档原值兜住。
 func buildComicInfoForBook(book database.Book, series database.Series, tags []database.Tag, authors []database.Author) parser.ComicInfo {
-	info := parser.ComicInfo{
-		Title:       firstNonEmpty(nullString(book.Title), book.Name),
-		Series:      firstNonEmpty(nullString(series.Title), series.Name),
-		Summary:     firstNonEmpty(nullString(book.Summary), nullString(series.Summary)),
-		Number:      firstNonEmpty(nullString(book.Number), formatNullableFloat(book.SortNumber)),
-		Volume:      book.Volume,
-		Publisher:   nullString(series.Publisher),
-		Genre:       joinTagNames(tags),
-		LanguageISO: nullString(series.Language),
-		PageCount:   parser.LenientInt(book.PageCount),
-	}
-
-	if series.Rating.Valid {
-		info.CommunityRating = parser.LenientFloat(series.Rating.Float64)
-	}
-
-	for _, author := range authors {
-		switch strings.ToLower(strings.TrimSpace(author.Role)) {
-		case "writer", "author", "story":
-			info.Writer = appendCommaValue(info.Writer, author.Name)
-		case "penciller", "artist", "illustrator":
-			info.Penciller = appendCommaValue(info.Penciller, author.Name)
-		case "letterer":
-			info.Letterer = appendCommaValue(info.Letterer, author.Name)
-		case "translator":
-			info.Translator = appendCommaValue(info.Translator, author.Name)
-		}
-	}
-
-	return info
+	return seriesmeta.BuildComicInfoForBook(book, series, tags, authors)
 }
 
 func nullString(value sql.NullString) string {
@@ -405,34 +279,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func formatNullableFloat(value sql.NullFloat64) string {
-	if !value.Valid {
-		return ""
-	}
-	return strconv.FormatFloat(value.Float64, 'f', -1, 64)
-}
-
-func joinTagNames(tags []database.Tag) string {
-	names := make([]string, 0, len(tags))
-	for _, tag := range tags {
-		if name := strings.TrimSpace(tag.Name); name != "" {
-			names = append(names, name)
-		}
-	}
-	return strings.Join(names, ", ")
-}
-
-func appendCommaValue(current, next string) string {
-	next = strings.TrimSpace(next)
-	if next == "" {
-		return current
-	}
-	if current == "" {
-		return next
-	}
-	return current + ", " + next
 }
 
 func uniqueComicInfoArchiveEntry(base string, seen map[string]int) string {

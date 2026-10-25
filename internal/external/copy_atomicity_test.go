@@ -1,13 +1,9 @@
 //go:build unix
 
-// 本文件守卫「外部库传输不会在目标路径上留下半截文件」。
-//
-// 传输目的地通常是 USB/SD 外接盘，单本几百 MB、整个系列跑几十分钟，进程随时可能被强杀
-// 或外接盘中途掉线：必须先写临时路径再原子改名，直接写最终路径会留下截断的 .cbz。
-// copyFileToExternalLibrary 开头的 os.Stat 与 external/manager.go 按扩展名列举归档，
-// 这两处「已存在」判定都只看路径不看内容，坏书会被永远当成「已经有了」而跳过重传。
+// 原子传输在复制途中不暴露最终目标，防止未完成的归档被后续重试判成已存在。
+// FIFO 提供确定的复制中观测点，完成后验证完整内容与临时文件清理。
 
-package api
+package external
 
 import (
 	"errors"
@@ -35,7 +31,7 @@ func TestCopyFileToExternalLibraryNeverExposesPartialDestination(t *testing.T) {
 	// FIFO 的 O_WRONLY 会一直阻塞到有读端为止，顺序反了这里就永远回不来。
 	done := make(chan error, 1)
 	go func() {
-		_, copyErr := copyFileToExternalLibrary(src, dst, nil)
+		_, copyErr := CopyFile(src, dst, nil)
 		done <- copyErr
 	}()
 
@@ -73,7 +69,7 @@ func TestCopyFileToExternalLibraryNeverExposesPartialDestination(t *testing.T) {
 		t.Fatalf("关闭 FIFO 写端: %v", err)
 	}
 	if err := <-done; err != nil {
-		t.Fatalf("copyFileToExternalLibrary: %v", err)
+		t.Fatalf("CopyFile: %v", err)
 	}
 	info, err := os.Stat(dst)
 	if err != nil {
@@ -99,7 +95,7 @@ func TestCopyFileToExternalLibraryCleansUpTemporaryFileOnFailure(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, copyErr := copyFileToExternalLibrary(src, dst, nil)
+		_, copyErr := CopyFile(src, dst, nil)
 		done <- copyErr
 	}()
 

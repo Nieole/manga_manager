@@ -1,8 +1,4 @@
-// 本文件是业务回归测试，属于后端 HTTP API 层，负责把前端请求转换为数据库、扫描器、图片处理和元数据服务调用。
-// 它通过自动化断言保护对应业务场景在扫描、读取、展示或配置变更后仍保持兼容。
-// 维护时应让用例名称、测试数据和断言结果直接反映真实用户流程，而不是只覆盖实现细节。
-
-package api
+package external
 
 import (
 	"bytes"
@@ -27,9 +23,9 @@ func TestCopyFileToExternalLibraryCopiesWithBufferedStaging(t *testing.T) {
 		t.Fatalf("set source mod time failed: %v", err)
 	}
 
-	skipped, err := copyFileToExternalLibrary(src, dst, make(map[string]struct{}))
+	skipped, err := CopyFile(src, dst, make(map[string]struct{}))
 	if err != nil {
-		t.Fatalf("copyFileToExternalLibrary failed: %v", err)
+		t.Fatalf("CopyFile failed: %v", err)
 	}
 	if skipped {
 		t.Fatal("expected copy to execute for missing destination")
@@ -65,9 +61,9 @@ func TestCopyFileToExternalLibrarySkipsExistingDestination(t *testing.T) {
 		t.Fatalf("write destination failed: %v", err)
 	}
 
-	skipped, err := copyFileToExternalLibrary(src, dst, make(map[string]struct{}))
+	skipped, err := CopyFile(src, dst, make(map[string]struct{}))
 	if err != nil {
-		t.Fatalf("copyFileToExternalLibrary failed: %v", err)
+		t.Fatalf("CopyFile failed: %v", err)
 	}
 	if !skipped {
 		t.Fatal("expected existing destination to be skipped")

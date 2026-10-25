@@ -40,6 +40,7 @@ func newComicInfoRig(t *testing.T, now func() time.Time, run func(func())) (*Con
 	e, snapshots := newBackgroundTestEngine(t, run, c.diskWork)
 	e.now = now
 	c.taskEngine = e
+	c.assembleDiskUseCases()
 	// 键由生产的启动点自己拼，身份也在那里声明（见 launchWriteSeriesComicInfoTask）：
 	// 契约上不再有键（ADR 0007），装置的取数按身份走，两样在这里一次登记齐。
 	rememberTaskKey(writeComicInfoTaskKey(comicInfoSeriesID), seriesTask("write_comicinfo", comicInfoSeriesID, variantSole))
