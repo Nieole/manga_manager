@@ -8,6 +8,8 @@ import {
   getQueuedOfflineProgress,
   listQueuedOfflineProgress,
   queueOfflineProgress,
+  reconcileOfflineOwner,
+  releaseOfflineOwner,
   syncQueuedOfflineProgress,
 } from './offlineReader';
 
@@ -76,6 +78,7 @@ describe('syncQueuedOfflineProgress', () => {
   beforeEach(() => {
     ls = memStorage();
     vi.stubGlobal('window', { localStorage: ls });
+    vi.stubGlobal('localStorage', ls);
     vi.stubGlobal('navigator', { onLine: true });
   });
   afterEach(() => {
@@ -176,6 +179,69 @@ describe('syncQueuedOfflineProgress', () => {
     expect(remaining().sort()).toEqual(['42', '43']);
   });
 
+  it.each(['bulk', 'fallback'])('keeps newer queued facts when a late %s response confirms the old fact', async (transport) => {
+    queueOfflineProgress('42', 5, 'Book', '2026-10-20T10:00:00Z');
+    let finish!: (value: unknown) => void;
+    const late = new Promise((resolve) => { finish = resolve; });
+    const fetchMock = vi.fn();
+    if (transport === 'fallback') fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
+    fetchMock.mockReturnValueOnce(late);
+    vi.stubGlobal('fetch', fetchMock);
+    const syncing = syncQueuedOfflineProgress();
+    if (transport === 'fallback') await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    queueOfflineProgress('42', 9, 'Book', '2026-10-20T11:00:00Z');
+    queueOfflineProgress('43', 3, 'Other', '2026-10-20T11:30:00Z');
+    finish({ ok: true, json: async () => ({ results: [{ book_id: 42, status: 'updated' }] }) });
+    const result = await syncing;
+    expect(getQueuedOfflineProgress('42')?.page).toBe(9);
+    expect(getQueuedOfflineProgress('43')?.page).toBe(3);
+    expect(result.remaining).toBe(2);
+  });
+  it.each(['bulk-success', 'bulk-failure', 'fallback-failure', 'logout'])('stops the old owner sync after %s returns late', async (scenario) => {
+    reconcileOfflineOwner(1);
+    queueOfflineProgress('42', 5, 'Old', '2026-10-20T10:00:00Z');
+    queueOfflineProgress('43', 6, 'Old second', '2026-10-20T10:01:00Z');
+    let finish!: (value: unknown) => void;
+    const late = new Promise((resolve) => { finish = resolve; });
+    const fetchMock = vi.fn();
+    if (scenario === 'fallback-failure') fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
+    fetchMock.mockReturnValueOnce(late);
+    vi.stubGlobal('fetch', fetchMock);
+    const syncing = syncQueuedOfflineProgress();
+    if (scenario === 'fallback-failure') await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    if (scenario === 'logout') releaseOfflineOwner();
+    else {
+      reconcileOfflineOwner(2);
+      queueOfflineProgress('42', 9, 'New', '2026-10-20T11:00:00Z');
+    }
+    finish({ ok: scenario === 'bulk-success', json: async () => ({ results: [{ book_id: 42, status: 'updated' }] }) });
+    await syncing;
+    expect(fetchMock).toHaveBeenCalledTimes(scenario === 'fallback-failure' ? 2 : 1);
+    expect(listQueuedOfflineProgress().map((item) => item.page)).toEqual(scenario === 'logout' ? [] : [9]);
+  });
+  it('retains a new same-tick queue fact and sends one stable identity through fallback and retry', async () => {
+    queueOfflineProgress('42', 5, 'Book', '2026-10-20T10:00:00Z');
+    let finish!: (value: unknown) => void;
+    const late = new Promise((resolve) => { finish = resolve; });
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false }).mockReturnValueOnce(late);
+    vi.stubGlobal('fetch', fetchMock);
+    const syncing = syncQueuedOfflineProgress();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const bulk = JSON.parse(fetchMock.mock.calls[0][1].body).items[0];
+    const fallback = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(bulk.fact_id).toEqual(expect.any(String));
+    expect(fallback.fact_id).toBe(bulk.fact_id);
+    queueOfflineProgress('42', 5, 'Book', '2026-10-20T10:00:00Z');
+    finish({ ok: true });
+    await syncing;
+    expect(getQueuedOfflineProgress('42')).not.toBeNull();
+    fetchMock.mockResolvedValue({ ok: false });
+    await syncQueuedOfflineProgress();
+    const retryBulk = JSON.parse(fetchMock.mock.calls[2][1].body).items[0];
+    const retryFallback = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(retryBulk.fact_id).not.toBe(bulk.fact_id);
+    expect(retryFallback.fact_id).toBe(retryBulk.fact_id);
+  });
   it('short-circuits without fetching when the queue is empty', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -192,6 +258,7 @@ describe('offline progress queue read/write/list', () => {
   beforeEach(() => {
     ls = memStorage();
     vi.stubGlobal('window', { localStorage: ls });
+    vi.stubGlobal('localStorage', ls);
   });
   afterEach(() => {
     vi.unstubAllGlobals();

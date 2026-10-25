@@ -21,6 +21,7 @@ type Position struct {
 // Result distinguishes a committed position from best-effort activity warnings.
 type Result struct {
 	Applied  bool
+	Stale    bool
 	Page     int64
 	Warnings []error
 }
@@ -65,18 +66,11 @@ func WithClock(now func() time.Time) Option {
 
 // RecordPosition saves a newer position and attempts each compatibility activity projection independently.
 func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error) {
+	stale := false
 	saved, err := s.store.MutateReadingPosition(ctx, p.UserID, p.BookID, p.FactID, func(state database.ReadingPositionState) database.ReadingPositionMutation {
 		at := s.now()
 		if p.OccurredAt != nil {
 			at = *p.OccurredAt
-		}
-		retained := database.ReadingPositionMutation{Page: state.Page}
-		freshLegacy := p.OccurredAt == nil && p.FactID == ""
-		if state.Duplicate || staleOccurrence(at, state.ChangedAtNS, freshLegacy) {
-			return retained
-		}
-		if state.LastReadAt.Valid && at.Before(state.LastReadAt.Time) {
-			return retained
 		}
 		page := p.Page
 		if page < 1 {
@@ -84,6 +78,19 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 		}
 		if state.PageCount > 0 && page > state.PageCount {
 			page = state.PageCount
+		}
+		retained := database.ReadingPositionMutation{Page: state.Page}
+		freshLegacy := p.OccurredAt == nil && p.FactID == ""
+		if state.Duplicate {
+			return retained
+		}
+		if staleOccurrence(at, state.ChangedAtNS, freshLegacy) {
+			stale = !state.LastReadAt.Valid || !at.Equal(state.LastReadAt.Time) || page != state.Page
+			return retained
+		}
+		if state.LastReadAt.Valid && at.Before(state.LastReadAt.Time) {
+			stale = true
+			return retained
 		}
 		// Legacy clients cannot identify retries. Bound their repeated same-page writes,
 		// while timestamped reading facts always retain the newer occurrence.
@@ -95,7 +102,7 @@ func (s *Service) RecordPosition(ctx context.Context, p Position) (Result, error
 		}
 		return database.ReadingPositionMutation{Apply: true, Page: page, OccurredAt: at}
 	})
-	result := Result{Applied: saved.Apply, Page: saved.Page}
+	result := Result{Applied: saved.Apply, Stale: stale, Page: saved.Page}
 	if err != nil || !saved.Apply {
 		return result, err
 	}

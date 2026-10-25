@@ -174,7 +174,8 @@ func TestConcurrentPositionsKeepNewestOccurrence(t *testing.T) {
 
 func TestIdentifiedRetryRemainsDuplicateAfterAnotherFact(t *testing.T) {
 	store, uid, bid := positionFixture(t)
-	service := reading.New(store, nil)
+	at := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	service := reading.New(store, nil, reading.WithClock(func() time.Time { at = at.Add(time.Minute); return at }))
 	ctx := context.Background()
 	for _, id := range []string{"first", "second"} {
 		got, err := service.RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: 5, FactID: id})
