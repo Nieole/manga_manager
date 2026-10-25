@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/organize"
 )
 
@@ -225,50 +224,7 @@ func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.R
 // [#5] 系列关联 (Series Relations)
 // ============================================
 
-type SeriesRelation struct {
-	ID               int64  `json:"id"`
-	TargetSeriesID   int64  `json:"target_series_id"`
-	TargetSeriesName string `json:"target_series_name"`
-	RelationType     string `json:"relation_type"`
-}
-
-// inverseRelationType returns the inverse relation type for display
-// when viewing a relation from the target's perspective.
-// e.g. A → B (spinoff) means B sees A as "parent"
-func inverseRelationType(rt string) string {
-	switch rt {
-	case "sequel":
-		return "prequel"
-	case "prequel":
-		return "sequel"
-	case "spinoff":
-		return "parent_story"
-	case "side_story":
-		return "parent_story"
-	case "adaptation":
-		return "source"
-	case "remake":
-		return "original"
-	case "same_universe":
-		return "same_universe"
-	case "parent_story":
-		return "spinoff"
-	case "alternative_version":
-		return "alternative_version"
-	case "alternate_story":
-		return "alternate_story"
-	case "crossover":
-		return "crossover"
-	case "one_shot":
-		return "serialization"
-	case "anthology":
-		return "original"
-	case "doujinshi":
-		return "original"
-	default:
-		return rt
-	}
-}
+type SeriesRelation = organize.SeriesRelation
 
 // getSeriesRelations 获取系列的所有关联
 func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +250,7 @@ func (c *Controller) getSeriesFranchise(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	items, err := c.store.GetConnectedSeriesRelations(r.Context(), seriesID)
+	items, err := c.relations.Graph(r.Context(), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get franchise relations")
 		return
@@ -346,10 +302,7 @@ func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	items, err := c.store.GetAllSeriesRelationsForLibrary(r.Context(), database.GetAllSeriesRelationsForLibraryParams{
-		LibraryID:   libraryID,
-		LibraryID_2: libraryID,
-	})
+	items, err := c.relations.LibraryGraph(r.Context(), libraryID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get library franchise relations")
 		return
@@ -401,36 +354,8 @@ func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, result)
 }
 
-func (c *Controller) loadSeriesRelations(ctx context.Context, seriesID int64) ([]SeriesRelation, error) {
-	forward, err := c.store.ListForwardSeriesRelations(ctx, seriesID)
-	if err != nil {
-		return nil, err
-	}
-
-	items := make([]SeriesRelation, 0, len(forward))
-	for _, row := range forward {
-		items = append(items, SeriesRelation{
-			ID:               row.ID,
-			TargetSeriesID:   row.TargetSeriesID,
-			TargetSeriesName: row.TargetSeriesName,
-			RelationType:     row.RelationType,
-		})
-	}
-
-	reverse, err := c.store.ListReverseSeriesRelations(ctx, seriesID)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range reverse {
-		items = append(items, SeriesRelation{
-			ID:               row.ID,
-			TargetSeriesID:   row.TargetSeriesID,
-			TargetSeriesName: row.TargetSeriesName,
-			RelationType:     inverseRelationType(row.RelationType),
-		})
-	}
-
-	return items, nil
+func (c *Controller) loadSeriesRelations(ctx context.Context, id int64) ([]SeriesRelation, error) {
+	return c.relations.List(ctx, id)
 }
 
 type CreateRelationRequest struct {
@@ -439,8 +364,20 @@ type CreateRelationRequest struct {
 }
 
 // createSeriesRelation 创建系列关联
+func relationUseCaseError(w http.ResponseWriter, err error, fallback string) {
+	switch {
+	case errors.Is(err, organize.ErrRelationSelf):
+		jsonError(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, organize.ErrRelationTargetMissing), errors.Is(err, organize.ErrRelationMissing):
+		jsonError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, organize.ErrRelationTypeRequired):
+		jsonError(w, http.StatusBadRequest, err.Error())
+	default:
+		jsonError(w, http.StatusInternalServerError, fallback)
+	}
+}
 func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
+	id, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
 		return
@@ -450,71 +387,27 @@ func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "target_series_id is required")
 		return
 	}
-	if req.RelationType == "" {
-		req.RelationType = "sequel"
-	}
-	req.RelationType = strings.TrimSpace(req.RelationType)
-	if req.RelationType == "" {
-		req.RelationType = "sequel"
-	}
-	if req.TargetSeriesID == seriesID {
-		jsonError(w, http.StatusUnprocessableEntity, "A series cannot relate to itself")
+	result, err := c.relations.Create(r.Context(), id, req.TargetSeriesID, req.RelationType)
+	if err != nil {
+		relationUseCaseError(w, err, "Failed to create relation")
 		return
 	}
-
-	if _, err := c.store.SeriesExistsByID(r.Context(), req.TargetSeriesID); err != nil {
-		jsonError(w, http.StatusNotFound, "Target series not found")
+	if result.Existing {
+		jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "exists", "id": result.ID})
 		return
 	}
-
-	existingID, err := c.store.FindExistingSeriesRelation(r.Context(), database.FindExistingSeriesRelationParams{
-		LeftID:  seriesID,
-		RightID: req.TargetSeriesID,
-	})
-	if err == nil {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "exists", "id": existingID})
-		return
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		jsonError(w, http.StatusInternalServerError, "Failed to check relation")
-		return
-	}
-
-	if err := c.store.CreateSeriesRelation(r.Context(), database.CreateSeriesRelationParams{
-		SourceSeriesID: seriesID,
-		TargetSeriesID: req.TargetSeriesID,
-		RelationType:   req.RelationType,
-	}); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to create relation")
-		return
-	}
-
-	// 合并式调度 franchise 重建（去抖 + 登记到 backgroundWG）
-	c.scheduleFranchiseRebuild()
-
 	jsonResponse(w, http.StatusCreated, map[string]string{"status": "created"})
 }
-
-// deleteSeriesRelation 删除系列关联
 func (c *Controller) deleteSeriesRelation(w http.ResponseWriter, r *http.Request) {
-	relationID, err := parseID(r, "relationId")
+	id, err := parseID(r, "relationId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid relation ID")
 		return
 	}
-	affected, err := c.store.DeleteSeriesRelation(r.Context(), relationID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to delete relation")
+	if err := c.relations.Delete(r.Context(), id); err != nil {
+		relationUseCaseError(w, err, "Failed to delete relation")
 		return
 	}
-	if affected == 0 {
-		jsonError(w, http.StatusNotFound, "Relation not found")
-		return
-	}
-
-	// 合并式调度 franchise 重建（去抖 + 登记到 backgroundWG）
-	c.scheduleFranchiseRebuild()
-
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -522,9 +415,8 @@ type UpdateRelationRequest struct {
 	RelationType string `json:"relation_type"`
 }
 
-// updateSeriesRelation 更新系列关联
 func (c *Controller) updateSeriesRelation(w http.ResponseWriter, r *http.Request) {
-	relationID, err := parseID(r, "relationId")
+	id, err := parseID(r, "relationId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid relation ID")
 		return
@@ -534,22 +426,9 @@ func (c *Controller) updateSeriesRelation(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "relation_type is required")
 		return
 	}
-	req.RelationType = strings.TrimSpace(req.RelationType)
-	if req.RelationType == "" {
-		jsonError(w, http.StatusBadRequest, "relation_type cannot be empty")
+	if err := c.relations.Update(r.Context(), id, req.RelationType); err != nil {
+		relationUseCaseError(w, err, "Failed to update relation")
 		return
 	}
-
-	if err := c.store.UpdateSeriesRelation(r.Context(), database.UpdateSeriesRelationParams{
-		RelationType: req.RelationType,
-		ID:           relationID,
-	}); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to update relation")
-		return
-	}
-
-	// 合并式调度 franchise 重建（去抖 + 登记到 backgroundWG）
-	c.scheduleFranchiseRebuild()
-
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "updated"})
 }

@@ -26,6 +26,7 @@ import (
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/organize"
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/runtimecfg"
@@ -101,8 +102,7 @@ type Controller struct {
 	closed        bool
 	backgroundWG  sync.WaitGroup
 
-	// franchise 合集重建的合并式调度已抽成独立组件（franchise_rebuilder.go）；Controller 仅持引用。
-	franchiseRebuilder *franchiseRebuilder
+	relations *organize.Relations
 }
 
 type RunSnapshot struct {
@@ -372,8 +372,8 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 
 	c.koreader = koreader.NewService(store, cfg)
 
-	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
-	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
+	// Relations owns coalesced franchise rebuilding; background work remains lifecycle registered.
+	c.relations = organize.NewRelations(c.store, c.runBackground)
 
 	// taskEngine 依赖 c 的 SSE 投递与后台运行能力，同样须在 c 构造完成后建立。
 	// 任务快照只投给管理员：它带着作用域显示名、重启入参与失败原因，与任务列表接口
