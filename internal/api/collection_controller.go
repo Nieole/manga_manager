@@ -38,8 +38,6 @@ type CollectionSeriesItem struct {
 	AddedAt    time.Time      `json:"added_at"`
 }
 
-var errCollectionNameTaken = organize.ErrCollectionNameTaken
-
 func collectionUseCaseError(w http.ResponseWriter, err error, fallback string) {
 	status := http.StatusInternalServerError
 	switch {

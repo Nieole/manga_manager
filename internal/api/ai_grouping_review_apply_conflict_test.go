@@ -15,6 +15,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/organize"
 )
 
 // preemptingAIGroupingStore 在开事务之前抢先把候选合集应用掉，精确复现「事务外读到待应用、
@@ -115,10 +116,7 @@ func TestApplyAIGroupingReviewRejectsPreemptedApply(t *testing.T) {
 
 			// 抢先者走的是同一条生产通路，只是提前一步提交。
 			preempted := &preemptingAIGroupingStore{Store: store, preempt: func() {
-				if err := store.ExecTx(ctx, func(q *database.Queries) error {
-					_, err := applyAIGroupingReviewCollectionWithQueries(ctx, q, review, target)
-					return err
-				}); err != nil {
+				if _, err := organize.NewAIGrouping(store, func() {}).ApplyCollection(ctx, review.ID, target.ID); err != nil {
 					t.Errorf("抢先应用失败: %v", err)
 				}
 			}}
