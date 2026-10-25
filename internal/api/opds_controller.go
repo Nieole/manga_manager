@@ -9,13 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -951,15 +950,12 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	books, err := c.store.ListBooksBySeries(r.Context(), seriesID)
+	view, err := reading.NewQueries(c.store).Series(r.Context(), c.currentUserID(r), seriesID)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-	// 与全站阅读顺序口径对齐：SQL 的 ORDER BY volume, sort_number, name 在 sort_number 缺失时
-	// 会退化为按名称的字典序（第 10 话排到第 2 话之前）。用 booksort 规范化处理中文卷话等格式。
-	slices.SortStableFunc(books, booksort.CompareBooks)
-	c.overlayUserProgress(r.Context(), c.currentUserID(r), books)
+	books := view.Books
 
 	// 不存在的系列必须回 404 而不是 200 + 空 feed：吞掉这个错误会让阅读器把
 	// 「系列已被删除」显示成「这个系列一本书都没有」，用户无从判断。
@@ -1038,15 +1034,7 @@ func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request)
 func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	limit := int64(opdsPositiveQueryInt(r, "limit", 30, 100))
-	var (
-		items []database.GetRecentReadAllRow
-		err   error
-	)
-	if uid := c.currentUserID(r); uid > 0 {
-		items, err = c.store.GetUserRecentReadAll(r.Context(), uid, limit)
-	} else {
-		items, err = c.store.GetRecentReadAll(r.Context(), limit)
-	}
+	items, err := reading.RecentReads(r.Context(), c.store, c.currentUserID(r), limit)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return

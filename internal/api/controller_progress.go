@@ -1,84 +1,44 @@
 package api
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
-	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
 	"manga-manager/internal/reading"
 )
 
 func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	bookID, err := parseID(r, "bookId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid book ID")
-		return
-	}
-
-	currentBook, err := c.store.GetBook(ctx, bookID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "No next book")
-		return
-	}
-	books, err := c.store.ListBooksBySeries(ctx, currentBook.SeriesID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "No next book")
-		return
-	}
-	sortBooksForReading(books)
-	for i := range books {
-		if books[i].ID == currentBook.ID && i+1 < len(books) {
-			jsonResponse(w, http.StatusOK, books[i+1])
-			return
-		}
-	}
-
-	jsonError(w, http.StatusNotFound, "No next book")
+	c.getAdjacentBook(w, r, true)
 }
-
 func (c *Controller) getPrevBook(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	bookID, err := parseID(r, "bookId")
+	c.getAdjacentBook(w, r, false)
+}
+
+func (c *Controller) getAdjacentBook(w http.ResponseWriter, r *http.Request, next bool) {
+	id, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
 		return
 	}
-
-	currentBook, err := c.store.GetBook(ctx, bookID)
+	message := "No previous book"
+	if next {
+		message = "No next book"
+	}
+	book, err := reading.NewQueries(c.store).Adjacent(r.Context(), c.currentUserID(r), id, next)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "No previous book")
+		jsonError(w, http.StatusNotFound, message)
 		return
 	}
-	books, err := c.store.ListBooksBySeries(ctx, currentBook.SeriesID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "No previous book")
-		return
-	}
-	sortBooksForReading(books)
-	for i := range books {
-		if books[i].ID == currentBook.ID && i > 0 {
-			jsonResponse(w, http.StatusOK, books[i-1])
-			return
-		}
-	}
-
-	jsonError(w, http.StatusNotFound, "No previous book")
+	jsonResponse(w, http.StatusOK, book)
 }
 
-func sortBooksForReading(books []database.Book) {
-	sort.SliceStable(books, func(i, j int) bool {
-		return booksort.CompareBooks(books[i], books[j]) < 0
-	})
-}
+func sortBooksForReading(books []database.Book) { reading.SortBooks(books) }
 
 type UpdateProgressRequest struct {
 	Page      int64      `json:"page"`
@@ -167,56 +127,6 @@ func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// overlayUserProgress 用当前用户的每用户进度覆盖一组书的 LastReadPage/LastReadAt。
-// uid==0（旧全局路径 / 首启 / 单元测试）时不改动，保留 books 自带的全局列；uid>0 时按用户隔离：
-// 有每用户记录则覆盖，无记录则清零，避免看到他人或全局遗留的进度。
-func (c *Controller) overlayUserProgress(ctx context.Context, uid int64, books []database.Book) {
-	if uid == 0 || len(books) == 0 {
-		return
-	}
-	ids := make([]int64, len(books))
-	for i := range books {
-		ids[i] = books[i].ID
-	}
-	m, err := c.store.GetUserBookProgressMap(ctx, uid, ids)
-	if err != nil {
-		slog.Error("overlay user progress failed", "user_id", uid, "error", err)
-		return
-	}
-	for i := range books {
-		if p, ok := m[books[i].ID]; ok {
-			books[i].LastReadPage = p.LastReadPage
-			books[i].LastReadAt = p.LastReadAt
-			books[i].IsRead = p.IsRead
-		} else {
-			books[i].LastReadPage = sql.NullInt64{}
-			books[i].LastReadAt = sql.NullTime{}
-			books[i].IsRead = false
-		}
-	}
-}
-
-// overlayUserProgressOne 覆盖单本书的每用户进度（语义同 overlayUserProgress）。
-func (c *Controller) overlayUserProgressOne(ctx context.Context, uid int64, book *database.Book) {
-	if uid == 0 || book == nil {
-		return
-	}
-	p, found, err := c.store.GetUserBookProgress(ctx, uid, book.ID)
-	if err != nil {
-		slog.Error("overlay user progress failed", "user_id", uid, "book_id", book.ID, "error", err)
-		return
-	}
-	if found {
-		book.LastReadPage = p.LastReadPage
-		book.LastReadAt = p.LastReadAt
-		book.IsRead = p.IsRead
-	} else {
-		book.LastReadPage = sql.NullInt64{}
-		book.LastReadAt = sql.NullTime{}
-		book.IsRead = false
-	}
 }
 
 type BulkSyncProgressItem struct {

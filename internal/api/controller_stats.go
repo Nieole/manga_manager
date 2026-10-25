@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 	"net/http"
 	"strconv"
 	"time"
@@ -191,15 +192,7 @@ func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
 	// 与 /api/series/search 统一口径：limit 必须有上限，避免单请求拉出全部阅读记录。
 	limit := int64(queryLimit(r, "limit", 20, maxListLimit))
 
-	var (
-		items []database.GetRecentReadAllRow
-		err   error
-	)
-	if uid := c.currentUserID(r); uid > 0 {
-		items, err = c.store.GetUserRecentReadAll(r.Context(), uid, limit)
-	} else {
-		items, err = c.store.GetRecentReadAll(r.Context(), limit)
-	}
+	items, err := reading.RecentReads(r.Context(), c.store, c.currentUserID(r), limit)
 	if err != nil {
 		slog.Error("GetRecentReadAll failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get recent reads")

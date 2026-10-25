@@ -1074,17 +1074,16 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	books, err := c.store.ListBooksBySeries(ctx, seriesID)
+	view, err := reading.NewQueries(c.store).Series(ctx, c.currentUserID(r), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch books")
 		return
 	}
 
+	books := view.Books
 	if books == nil {
 		books = []database.Book{}
 	}
-	c.overlayUserProgress(ctx, c.currentUserID(r), books)
-	sortBooksForReading(books)
 	jsonResponse(w, http.StatusOK, books)
 }
 
@@ -1096,13 +1095,12 @@ func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	book, err := c.store.GetBook(ctx, bookID)
+	book, err := reading.NewQueries(c.store).Book(ctx, c.currentUserID(r), bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book not found")
 		return
 	}
 
-	c.overlayUserProgressOne(ctx, c.currentUserID(r), &book)
 	jsonResponse(w, http.StatusOK, book)
 }
 
