@@ -4,7 +4,7 @@
 
 **Blocked by:** 09: 人工合集的完整用例
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -16,7 +16,7 @@
 - [x] 快照内容与创建结果在必要事务内一致，之后智能条件变化或新书加入不回头覆盖固化合集。
 - [x] 快照落地后可以人工维护，调用 09 的共同名称与所有权规则，不另造第二种创建约束。
 - [x] 真实 SQLite 与功能测试覆盖高级条件、计数列表一致、多页、主体差异、快照、冲突及失败回滚；保留页面/协议回归。
-- [ ] 删除被替代的过滤与快照规则副本，保持查询集合式能力，完成相关后端和前端门禁。
+- [x] 删除被替代的过滤与快照规则副本，保持查询集合式能力，完成相关后端和前端门禁。
 
 
 ## 实施与验证
@@ -35,3 +35,7 @@
 - `go run ./cmd/tsgen` 无契约漂移。本票无 SQL 源和前端实现变更，无需 sqlc 再生成和额外前端变更门禁。
 
 完整 `go test ./...` 尚未一次全绿：`internal/application/scanning` 与 `internal/diskwork` 测试可执行文件被 Windows Application Control 拦截；另一次 `internal/scanner` 的临时目录清理竞态（directory is not empty）单独重跑 `TestScanAccountsArchiveFailuresAndKeepsScanning` 已通过。本票不改动这些包，也未绕过系统策略。日志：`C:/Users/saber/.codex/tmp/architecture-deepening/10-go-test-resumed.log`；待集成工作区完成全仓补验后将最后验收项勾选并标记 done。
+
+## 时钟修复后的集成补验
+
+在含 11、20 及 04 时钟修复的集成提交 9b55d36 上运行完整 go test ./...，退出码 0；全量 lint 为 0 issues，gofmt 输出为空。reading、scanner 及 API 全部通过，相关回归缺口已补齐。本票适用验收项满足并关闭；漏洞扫描仍是 25 联合验收的独立待执行门禁。日志位于外部 post-clock-go-test.log。
