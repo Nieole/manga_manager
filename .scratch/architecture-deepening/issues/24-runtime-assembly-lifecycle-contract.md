@@ -4,7 +4,7 @@
 
 **Blocked by:** 18: 手动、定时与监听扫描清理；19: 扫描封面批与封面运行；20: 资料库迁移与保护恢复编排；21: 维护及 KOReader 校准运行发起；22: 外部库与 ComicInfo 磁盘用例发起；23: 刮削与 AI 分组后台发起
 
-**Status:** done
+**Status:** ready-for-agent
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -18,7 +18,7 @@
 - [x] 应用装配不反向依赖 HTTP Controller，HTTP 路由、响应和 SSE 传输 adapter 保留合适归属，避免形成另一个吸收所有业务的大对象。
 - [x] 移除已无调用方的旧运行桥、启动循环和重复装配，尚属其他功能的规则不以本票为借口继续搬家。
 - [x] 以生产等价装配和可控依赖验证恢复前不放行、配置更新一致、历史任务可重试、停机取消到任务体及全部后台退出。
-- [x] 完成相关后端、前端契约与生成门禁，记录实际验证和仍然有效的装配限制。
+- [ ] 完成相关后端、前端契约与生成门禁，记录实际验证和仍然有效的装配限制。
 
 
 ## Comments
@@ -36,3 +36,12 @@
 - 本机适用门禁通过：合入 d27d291 后 go test ./... 全部包退出 0；go vet ./...；go build ./...；gofmt -l ./cmd ./internal 空输出；golangci-lint run 为 0 issues；go run ./cmd/tsgen 后 generated.ts 无漂移；文档检查器通过。
 - 早期完整测试曾有 Application Control 拒执行，另有新 fixture 的目录/相对封面路径与迁移 watcher owner 断言失败；前者未计为通过，后者已修正并逐项复验。最终绿证据与早期失败日志分开保留在工作树 .tmp 下。
 - 本票未改前端或 SQL，无需重复前端/sqlc 生成。Ubuntu-only race/govulncheck 未在 Windows 执行，不作为本机验收阻塞；票 25 继续负责最终联合验收。共享变更记录、规格和实施队列未由本票修改。
+
+
+### 独立夹具复核（2026-10-26）
+
+- 合入 `21253f8` 后精确运行 `go test ./internal/api -run '^TestRunReleasesRuntimeOnEveryExitPath$' -count=1`，完成、取消、失败及 panic 分支均实证缺少测试键 `scan_library_1` 的身份登记；红日志在 `.tmp/fixture24-red.log`。
+- 同文件直接 `e.Run` 后按测试别名观测的用例均补显式 `rememberTaskKey`，包括不同库身份的首帧声明验证。原 Claims 用例也统一在局部 key 声明后登记；`seedTask` 自行登记的夹具没有重复补写。没有改生产代码、任务键寻址规则或断言内容。
+- 修复后的 Release 四分支与原 Claims 各用完整锚定名称精确选择一次，执行均被 Windows Application Control 拦截，未运行到断言。日志分别为 `.tmp/fixture24-release-final.log`、`.tmp/fixture24-claims-final.log`；两者不能记作绿证据，不对未变源码重复抽签。
+- `gofmt -l ./cmd ./internal` 空输出，`golangci-lint run` 为 `0 issues.`。未重复无关全量门禁。
+- 实施与此前已核实的生命周期行为保留；本票暂回 `ready-for-agent`，最后门禁项等待票 25 在最新集成上补验这些独立选择。补验成功后再恢复 `done`。
