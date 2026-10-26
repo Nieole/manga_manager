@@ -1,17 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiClient } from '../../../api/client';
-import { getApiErrorMessage, isAxiosError } from '../../../api/client';
-import type { Author, MetaTag, Series, SeriesLink } from '../types';
-
-
-export type SeriesEditForm = Partial<Series> & {
-  tagsInput?: string[];
-  authorsInput?: { name: string; role: string }[];
-  linksInput?: { name: string; url: string }[];
-};
-
-export type SeriesFormField = 'title' | 'summary' | 'publisher' | 'status' | 'rating' | 'language' | 'tagsInput' | 'authorsInput' | 'linksInput';
-export type SeriesFormValue = string | number | string[] | { name: string; role: string }[] | { name: string; url: string }[];
+import { apiClient, getApiErrorMessage, isAxiosError } from '../../api/client';
+import type { Author, MetaTag, Series, SeriesLink } from './types';
+import type { SeriesEditForm, SeriesFormField, SeriesFormValue } from './draft';
+export type { SeriesEditForm, SeriesFormField, SeriesFormValue } from './draft';
 
 interface UseSeriesEditParams {
   seriesId: string | undefined;
@@ -20,7 +11,7 @@ interface UseSeriesEditParams {
   authors: Author[];
   links: SeriesLink[];
   metadataVersion: string | null;
-  reload: () => Promise<void>;
+  reload: (requireFresh?: boolean) => Promise<void>;
   showToast: (message: string, level: 'success' | 'error') => void;
   t: (key: string, params?: Record<string, unknown>) => string;
 }
@@ -61,12 +52,13 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
     setHasConflict(false);
     setLockedFields(new Set(series.locked_fields?.Valid && series.locked_fields.String ? series.locked_fields.String.split(',') : []));
     setEditForm({
-      title: series.title,
-      summary: series.summary,
-      publisher: series.publisher,
-      status: series.status,
-      rating: series.rating,
-      language: series.language,
+      id: series.id,
+      title: series.title?.String ?? '',
+      summary: series.summary?.String ?? '',
+      publisher: series.publisher?.String ?? '',
+      status: series.status?.String ?? '',
+      rating: series.rating?.Float64 ?? 0,
+      language: series.language?.String ?? '',
       tagsInput: tags.map((tag) => tag.name),
       authorsInput: authors.map((author) => ({ name: author.name, role: author.role })),
       linksInput: links.map((link) => ({ name: link.name, url: link.url })),
@@ -98,7 +90,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
     setEditForm((prev) => {
       const next: SeriesEditForm = { ...prev };
       if (field === 'rating') {
-        next.rating = { Float64: Number(value), Valid: Number(value) > 0 };
+        next.rating = Number(value);
       } else if (field === 'tagsInput' && Array.isArray(value)) {
         next.tagsInput = value as string[];
       } else if (field === 'authorsInput' && Array.isArray(value)) {
@@ -108,7 +100,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
       } else {
         const stringValue = String(value);
         if (field === 'title' || field === 'summary' || field === 'publisher' || field === 'status' || field === 'language') {
-          next[field] = { String: stringValue, Valid: stringValue.trim() !== '' };
+          next[field] = stringValue;
         }
       }
       return next;
@@ -122,9 +114,8 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
   }, []);
 
   const save = useCallback(async () => {
-    if (!series || !seriesId) return;
-    // 没拿到版本就不保存。带空串发出去，服务端只能当成「调用方不参与并发控制」而跳过校验，
-    // 「有人改过了」的提示再也不会出现——用户以为自己受着保护，后写的却在静默覆盖先写的。
+    if (!series || !seriesId || series.id !== Number(seriesId)) return;
+    // 保存必须携带草稿的版本；没有基线时不能发起无保护的全量覆盖。
     const expectedVersion = formVersionRef.current;
     if (!expectedVersion) {
       showToast(t('series.toast.saveNoVersion'), 'error');
@@ -132,23 +123,26 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
     }
     try {
       await apiClient.put(`/api/series/info/${seriesId}`, {
-        title: editForm.title?.String || '',
-        summary: editForm.summary?.String || '',
-        publisher: editForm.publisher?.String || '',
-        status: editForm.status?.String || '',
-        rating: editForm.rating?.Float64 || 0,
-        language: editForm.language?.String || '',
+        title: editForm.title,
+        summary: editForm.summary,
+        publisher: editForm.publisher,
+        status: editForm.status,
+        rating: editForm.rating,
+        language: editForm.language,
         locked_fields: Array.from(lockedFields).join(','),
-        tags: editForm.tagsInput || [],
-        authors: editForm.authorsInput || [],
-        links: editForm.linksInput || [],
+        tags: editForm.tagsInput,
+        authors: editForm.authorsInput,
+        links: editForm.linksInput,
         expected_version: expectedVersion,
       });
       if (activeScope.current !== scope) return;
       setHasConflict(false);
-      await reload();
-      if (activeScope.current !== scope) return;
       setIsEditing(false);
+      try {
+        await reload(true);
+      } catch {
+        if (activeScope.current === scope) showToast(t('series.toast.savedRefreshFailed'), 'error');
+      }
     } catch (err) {
       if (activeScope.current !== scope) return;
       // 409：编辑期间服务端被别的途径写过（刮削应用了提案、另一个标签页保存、另一个用户改了）。

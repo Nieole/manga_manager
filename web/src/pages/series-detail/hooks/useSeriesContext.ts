@@ -79,7 +79,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
   const shownSeriesIdRef = useRef<string | undefined>(undefined);
 
   const load = useCallback(
-    async (silent: boolean) => {
+    async (silent: boolean, requireFresh = false) => {
       if (!seriesId || activeScope.current !== scope) return;
       const requestID = latestRequestIDRef.current + 1;
       latestRequestIDRef.current = requestID;
@@ -104,6 +104,7 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
         if (requestID !== latestRequestIDRef.current || activeScope.current !== scope) return;
         console.error('Failed to load series context', err);
         setError(getApiErrorMessage(err, ''));
+        if (requireFresh) throw err;
       } finally {
         if (requestID === latestRequestIDRef.current && activeScope.current === scope) setLoading(false);
       }
@@ -111,12 +112,14 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
     [seriesId, scope],
   );
 
-  // reload：写操作后的静默重取（不显示 loading）。
-  const reload = useCallback(async () => {
+  // 写后静默刷新；requireFresh 将刷新失败交给已提交动作的调用者单独提示。
+  const reload = useCallback(async (requireFresh = false) => {
     if (activeScope.current !== scope) return;
-    await load(true);
-    if (activeScope.current !== scope) return;
-    invalidateLibrary({ libraryId: series?.library_id ? String(series.library_id) : undefined, areas: ['catalog', 'collections', 'organize', 'stats', 'reading-lists'] });
+    try {
+      await load(true, requireFresh);
+    } finally {
+      if (activeScope.current === scope) invalidateLibrary({ libraryId: series?.library_id ? String(series.library_id) : undefined, areas: ['catalog', 'collections', 'organize', 'stats', 'reading-lists'] });
+    }
   }, [load, invalidateLibrary, series?.library_id, scope]);
 
   useEffect(() => {

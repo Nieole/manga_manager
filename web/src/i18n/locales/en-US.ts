@@ -740,6 +740,7 @@ export const messages: MessageCatalog = {
     'series.toast.retryTaskQueued': 'Task requeued',
     'series.toast.retryTaskFailed': 'Failed to retry task',
     'series.toast.saveFailed': 'Save failed',
+    'series.toast.savedRefreshFailed': 'Metadata saved, but refresh failed. Reload this series.',
     'series.toast.saveConflict': 'Someone changed this series while you were editing. Nothing was saved; your input is still here.',
     'series.toast.saveNoVersion': "Can't read this series' metadata version, so saving is blocked. Reload the page and try again.",
     'series.toast.addedToCollection': 'Added to collection successfully',

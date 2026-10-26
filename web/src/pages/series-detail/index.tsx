@@ -26,7 +26,7 @@ import type { Book } from './types';
 import { useSeriesContext } from './hooks/useSeriesContext';
 import { useSeriesSelection } from './hooks/useSeriesSelection';
 import { useSeriesScrape } from './hooks/useSeriesScrape';
-import { useSeriesEdit } from './hooks/useSeriesEdit';
+import { useSeriesEdit } from '../../features/series-metadata/useSeriesEdit';
 import { useSeriesActions } from './hooks/useSeriesActions';
 import { useSeriesMetadataReview } from './hooks/useSeriesMetadataReview';
 import { useSeriesRelations } from './hooks/useSeriesRelations';

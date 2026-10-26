@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"manga-manager/internal/application/seriesediting"
 	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
 	"manga-manager/internal/reading"
@@ -289,40 +290,27 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if req.ExpectedVersion != nil && strings.TrimSpace(*req.ExpectedVersion) == "" {
-		jsonError(w, http.StatusBadRequest, "expected_version must not be empty; omit the field to opt out of concurrency checks")
+	result, err := seriesediting.New(seriesediting.NewSQLStore(c.store)).Save(r.Context(), seriesID, seriesmeta.ManualInput{
+		Title: req.Title, Summary: req.Summary, Publisher: req.Publisher,
+		Status: req.Status, Rating: req.Rating, Language: req.Language,
+		LockedFields: req.LockedFields, Tags: req.Tags, Authors: req.Authors,
+		Links: req.Links, ExpectedVersion: req.ExpectedVersion,
+	})
+	if errors.Is(err, seriesediting.ErrInvalidVersion) {
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	currentSeries, err := c.store.GetSeries(r.Context(), seriesID)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		jsonError(w, http.StatusNotFound, "Series not found")
 		return
 	}
-
-	// 冲突时返回当前版本，供用户确认后重试。
-	var currentVersion string
-	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		var err error
-		currentVersion, err = seriesmeta.SaveManual(r.Context(), q, currentSeries, seriesmeta.ManualInput{
-			Title: req.Title, Summary: req.Summary, Publisher: req.Publisher,
-			Status: req.Status, Rating: req.Rating, Language: req.Language,
-			LockedFields: req.LockedFields, Tags: req.Tags, Authors: req.Authors,
-			Links: req.Links, ExpectedVersion: req.ExpectedVersion,
-		})
-		if err != nil {
-			return err
-		}
-
-		return q.RefreshSeriesStats(r.Context(), seriesID)
-	})
 
 	if errors.Is(err, seriesmeta.ErrConflict) {
 		// 409 而不是 412：请求里带的是我们自己定义的 expected_version 字段，不是 If-Match 前置条件头。
 		// 载荷只报「变了」和最新版本，不报变的是哪几项——版本是内容指纹，服务端手里没有用户那一版的原值。
 		jsonResponse(w, http.StatusConflict, map[string]any{
 			"error":           "Series metadata was changed by someone else while you were editing",
-			"current_version": currentVersion,
+			"current_version": result.CurrentVersion,
 		})
 		return
 	}
@@ -331,9 +319,7 @@ func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch updated details for response
-	updated, _ := c.store.GetSeries(r.Context(), seriesID)
-	jsonResponse(w, http.StatusOK, updated)
+	jsonResponse(w, http.StatusOK, result.Series)
 }
 
 func (c *Controller) getSeriesTags(w http.ResponseWriter, r *http.Request) {

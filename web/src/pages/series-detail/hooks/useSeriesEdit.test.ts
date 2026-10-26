@@ -12,7 +12,7 @@ import { act, renderHook } from '@testing-library/react';
 import { apiClient } from '../../../api/client';
 import type { SeriesContextResponse } from '../types';
 import { useSeriesContext } from './useSeriesContext';
-import { useSeriesEdit } from './useSeriesEdit';
+import { useSeriesEdit } from '../../../features/series-metadata/useSeriesEdit';
 
 // 服务端此刻的简介，用例可在两次取数之间改它，模拟刮削应用提案后值真的变了。
 let serverSummary = new Map<number, string>();
@@ -106,7 +106,7 @@ describe('useSeriesEdit 表单重置', () => {
     rerender({ id: '1', trigger: 1 });
     await flush();
 
-    expect(result.current.edit.editForm.summary?.String).toBe('用户正在写的新简介');
+    expect(result.current.edit.editForm.summary).toBe('用户正在写的新简介');
     expect(result.current.edit.editForm.tagsInput).toEqual(['用户加的标签']);
     // 用户在编辑期间点过的锁也是编辑内容的一部分，同样不能被刷新抹掉。
     expect(result.current.edit.lockedFields.has('summary')).toBe(true);
@@ -116,13 +116,13 @@ describe('useSeriesEdit 表单重置', () => {
   it('非编辑态下后台刷新仍把表单同步到服务端最新值', async () => {
     const { result, rerender } = renderEditor('1');
     await flush();
-    expect(result.current.edit.editForm.summary?.String).toBe('系列1简介');
+    expect(result.current.edit.editForm.summary).toBe('系列1简介');
 
     serverSummary.set(1, '刮削应用提案后的简介');
     rerender({ id: '1', trigger: 1 });
     await flush();
 
-    expect(result.current.edit.editForm.summary?.String).toBe('刮削应用提案后的简介');
+    expect(result.current.edit.editForm.summary).toBe('刮削应用提案后的简介');
   });
 
   it('编辑中切到另一个系列，表单换成新系列的值', async () => {
@@ -141,8 +141,8 @@ describe('useSeriesEdit 表单重置', () => {
     rerender({ id: '2', trigger: 0 });
     await flush();
 
-    expect(result.current.edit.editForm.title?.String).toBe('系列2标题');
-    expect(result.current.edit.editForm.summary?.String).toBe('系列2简介');
+    expect(result.current.edit.editForm.title).toBe('系列2标题');
+    expect(result.current.edit.editForm.summary).toBe('系列2简介');
     expect(result.current.edit.editForm.tagsInput).toEqual(['标签2']);
     expect(result.current.edit.editForm.authorsInput).toEqual([{ name: '作者2', role: 'author' }]);
   });
@@ -157,6 +157,56 @@ function conflictError(currentVersion: string) {
 }
 
 describe('useSeriesEdit 并发保存', () => {
+  it('the draft uses edit values and preserves explicit clears in its save request', async () => {
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never);
+    const { result } = renderEditor('1');
+    await flush();
+    expect(result.current.edit.editForm.summary).toBe('系列1简介');
+    act(() => result.current.edit.setIsEditing(true));
+    act(() => {
+      result.current.edit.onFormChange('summary', '');
+      result.current.edit.onFormChange('rating', 0);
+      result.current.edit.onFormChange('tagsInput', []);
+    });
+    await act(async () => result.current.edit.save());
+    expect(put.mock.calls[0][1]).toMatchObject({ summary: '', rating: 0, tags: [] });
+  });
+
+  it('a committed save closes the editor and reports a separate refresh warning', async () => {
+    vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never);
+    const reload = vi.fn().mockRejectedValue(new Error('refresh unavailable'));
+    const showToast = vi.fn();
+    const source = contextOf(1);
+    const tags: never[] = [];
+    const authors: never[] = [];
+    const links: never[] = [];
+    const { result } = renderHook(() => useSeriesEdit({
+      seriesId: '1', series: source.series, tags, authors, links,
+      metadataVersion: 'v1', reload, showToast, t: key => key,
+    }));
+    act(() => result.current.setIsEditing(true));
+    await act(async () => result.current.save());
+    expect(result.current.isEditing).toBe(false);
+    expect(showToast).toHaveBeenCalledWith('series.toast.savedRefreshFailed', 'error');
+    expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('series.toast.saveFailed'), 'error');
+  });
+
+  it('a failed production context refresh preserves the committed save and exposes its warning', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never);
+    const showToast = vi.fn();
+    const { result } = renderEditor('1', showToast);
+    await flush();
+    act(() => result.current.edit.setIsEditing(true));
+    act(() => result.current.edit.onFormChange('summary', 'Committed edit'));
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('context unavailable'));
+    await act(async () => result.current.edit.save());
+    expect(put.mock.calls[0][1]).toMatchObject({ summary: 'Committed edit' });
+    expect(result.current.edit.isEditing).toBe(false);
+    expect(showToast).toHaveBeenCalledWith('series.toast.savedRefreshFailed', 'error');
+    expect(result.current.ctx.error).not.toBeNull();
+  });
+
   it('保存带回表单长出来的那个版本，编辑期间的后台刷新不改这个基线', async () => {
     const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: {} } as never);
     const { result, rerender } = renderEditor('1');
@@ -206,7 +256,7 @@ describe('useSeriesEdit 并发保存', () => {
 
     expect(result.current.edit.hasConflict).toBe(true);
     expect(result.current.edit.isEditing).toBe(true);
-    expect(result.current.edit.editForm.summary?.String).toBe('用户敲了半天的简介');
+    expect(result.current.edit.editForm.summary).toBe('用户敲了半天的简介');
     expect(result.current.edit.editForm.tagsInput).toEqual(['用户加的标签']);
     expect(showToast).toHaveBeenCalledWith('series.toast.saveConflict', 'error');
   });
@@ -267,7 +317,7 @@ describe('useSeriesEdit 并发保存', () => {
     expect(showToast).toHaveBeenCalledWith('series.toast.saveNoVersion', 'error');
     // 保存没成功，编辑态与用户敲进去的内容都得留着。
     expect(result.current.edit.isEditing).toBe(true);
-    expect(result.current.edit.editForm.summary?.String).toBe('我写的简介');
+    expect(result.current.edit.editForm.summary).toBe('我写的简介');
   });
 
   it('没人插队时保存照常成功，不留冲突态', async () => {
