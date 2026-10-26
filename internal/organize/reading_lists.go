@@ -1,9 +1,11 @@
 package organize
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 
 	"manga-manager/internal/database"
@@ -161,7 +163,7 @@ func (s *ReadingLists) Items(ctx context.Context, uid, id int64) ([]ReadingListI
 		if err != nil {
 			return nil, err
 		}
-		row.NextBookID = view.Continue.NextUnreadBookID
+		row.NextBookID = readingListTarget(view)
 		item := ReadingListItem{ListReadingListItemsRow: row, TotalBooks: int64(view.Continue.TotalBooks), CompletedBooks: int64(view.Continue.ReadBooks)}
 		for _, book := range view.Books {
 			if reading.InspectBook(book).Started {
@@ -201,7 +203,37 @@ func (s *ReadingLists) Page(ctx context.Context, uid, id, limit, offset int64) (
 		if err != nil {
 			return out, err
 		}
-		out.Rows[i].NextBookID = view.Continue.NextUnreadBookID
+		out.Rows[i].NextBookID = readingListTarget(view)
 	}
 	return out, nil
+}
+
+func readingListTarget(view reading.SeriesView) int64 {
+	if len(view.Books) == 0 {
+		return 0
+	}
+	// Lists prefer unfinished books, then retain catalogue sort_number/name order,
+	// including the first-book fallback when every book is complete.
+	book := slices.MinFunc(view.Books, func(a, b database.Book) int {
+		aDone, bDone := reading.InspectBook(a).Completed, reading.InspectBook(b).Completed
+		if aDone != bDone {
+			if aDone {
+				return 1
+			}
+			return -1
+		}
+		if a.SortNumber.Valid != b.SortNumber.Valid {
+			if a.SortNumber.Valid {
+				return 1
+			}
+			return -1
+		}
+		if a.SortNumber.Valid {
+			if order := cmp.Compare(a.SortNumber.Float64, b.SortNumber.Float64); order != 0 {
+				return order
+			}
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return book.ID
 }

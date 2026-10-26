@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 
 import { LocaleProvider } from '../i18n/LocaleProvider';
 import { ToastProvider } from '../components/ToastProvider';
@@ -57,12 +57,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function CurrentPath() {
+  return <output data-testid="current-path">{useLocation().pathname}</output>;
+}
+
 function renderPage() {
   return render(
     <LocaleProvider initialLocale="zh-CN" initialMessages={zhCN} fallbackMessages={zhCN}>
       <ToastProvider>
         <MemoryRouter>
           <ReadingLists />
+          <CurrentPath />
         </MemoryRouter>
       </ToastProvider>
     </LocaleProvider>,
@@ -123,12 +128,13 @@ describe('阅读清单切换取数', () => {
     expect(screen.queryByText('甲的系列')).toBeNull();
     expect(screen.getByText('加载阅读清单成员失败')).toBeTruthy();
   });
-  it('按响应顺序显示进度，完成系列禁用继续阅读且普通用户没有编辑入口', async () => {
+  it('按响应顺序显示进度，完成系列可从首书重读、空系列禁用且普通用户没有编辑入口', async () => {
     mocks.get.mockImplementation((url: string) => {
       if (url === '/api/reading-lists/') return Promise.resolve({ data: [LIST_A] });
       if (url === '/api/reading-lists/1/items') return Promise.resolve({ data: [
-        { ...item(2, '已完成系列'), read_books: 1, completed_books: 1 },
+        { ...item(2, '已完成系列'), next_book_id: 17, read_books: 1, completed_books: 1 },
         { ...item(1, '待阅读系列'), next_book_id: 42 },
+        { ...item(3, '空系列'), book_count: 0, total_books: 0 },
       ] });
       return Promise.resolve({ data: [] });
     });
@@ -137,8 +143,13 @@ describe('阅读清单切换取数', () => {
     const seriesButtons = screen.getAllByRole('button').filter((button) => ['已完成系列', '待阅读系列'].includes(button.textContent || ''));
     expect(seriesButtons.map((button) => button.textContent)).toEqual(['已完成系列', '待阅读系列']);
     const next = screen.getAllByRole('button', { name: zhCN['readingLists.readNext'] }) as HTMLButtonElement[];
-    expect(next[0].disabled).toBe(true);
+    expect(next[0].disabled).toBe(false);
     expect(next[1].disabled).toBe(false);
+    expect(next[2].disabled).toBe(true);
+    fireEvent.click(next[0]);
+    expect(screen.getByTestId('current-path').textContent).toBe('/reader/17');
+    fireEvent.click(next[1]);
+    expect(screen.getByTestId('current-path').textContent).toBe('/reader/42');
     expect(screen.queryByTitle(zhCN['common.edit'])).toBeNull();
     expect(screen.getAllByText('100%').length).toBe(1);
   });

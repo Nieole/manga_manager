@@ -24,7 +24,7 @@
 ### 实施与验收记录（2026-10-25）
 
 - `reading.Queries` 通过窄 `ProjectionStore` 提供书详情、系列阅读视图及上下本；`ProjectBooks` 统一覆盖页码、时间与 `IsRead`，无本人记录时清空三者。读取失败返回错误，不能把全局数据当成用户数据返回。
-- `reading.Summarize` 复用 `InspectBook`，统一第一本未完成书、最近阅读与统计；保留自然阅读顺序、时间相同取顺序靠前书、全部已读时 `next_unread_book_id=0` 及空系列回退。
+- `reading.Summarize` 复用 `InspectBook`，统一第一本未完成书、最近阅读与统计；保留自然阅读顺序、时间相同取顺序靠前书、全部已读时 `next_unread_book_id=0`。消费者保留各自回退：清单按 `sort_number`、名称取首书供重读，空系列返回零。
 - 系列搜索的主体选择归 `reading.CatalogueQueries`；继续使用 SQLite 的主体聚合、筛选、计数及 offset/cursor 分页，不在分页之后逐系列查书重算。最近系列和 Web/Mihon/OPDS 的最近阅读共用主体选择。
 - HTTP 移除投影与 continue 配方；Web 书列表/详情/系列上下文/continue/上下本、Mihon 和 OPDS 书列表均用共同读取功能。协议身份、分页和响应形状保留。未触及写路径、SQL 或生成前端契约。
 - TDD：公共查询功能测试先因 `NewQueries` 尚不存在失败，随后真实 SQLite 测试通过；上下本 HTTP 回归先实际暴露全局进度泄漏，再通过共同主体投影修复。

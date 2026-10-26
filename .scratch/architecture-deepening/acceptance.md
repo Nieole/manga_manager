@@ -136,7 +136,7 @@ US 编号指向 spec 的原文，避免再复制一份需求。下表测试路�
 | 66 | AIGrouping裁决过滤消失系列 | `TestAIGroupingBatchSkipsGoneSeriesAndLeavesThemForDecision` — `internal/organize/ai_grouping_test.go`<br>`TestAIGroupingAllGoneDoesNotPublishOrAdjudicate` — `internal/organize/ai_grouping_test.go` | G：表列 Go 测试均有本轮同名 pass 事件。 |
 | 67 | organize.AIGrouping与proposal/seriesmeta分离 | `TestScrapeLibraryQueuesProposalWithOriginalSourceAndLocale` — `internal/application/intelligence/intelligence_test.go`<br>`TestGroupingQueuesIndependentReviewAndReplaysLocale` — `internal/application/intelligence/intelligence_test.go` | G：表列 Go 测试均有本轮同名 pass 事件。 生成、分组审核与系列元数据 proposal/seriesmeta 的模型和裁决分开。 |
 | 68 | api OPDS/Mihon读取organize身份 | `TestOPDSCollectionFeeds` — `internal/api/opds_controller_test.go`<br>`TestMihonCollectionEndpoints` — `internal/api/mihon_controller_test.go`<br>`TestApplyAIGroupingReviewCollectionReportsCreatedID` — `internal/api/ai_grouping_review_apply_conflict_test.go` | G：表列 Go 测试均有本轮同名 pass 事件。 |
-| 69 | organize.ReadingLists Items/Page/Reorder -> reading投影 | `TestOrderedReadingListsOwnMembershipAndAtomicReorder` — `internal/organize/reading_lists_test.go`<br>`TestReadingListProgressFollowsReaderFactsAndNeverCreatesActivity` — `internal/organize/reading_lists_test.go`<br>`TestReadingListProtocolsKeepIdentityOrderAndPagination` — `internal/api/reading_list_controller_test.go` | G：表列 Go 测试均有本轮同名 pass 事件。 |
+| 69 | organize.ReadingLists Items/Page/Reorder -> reading投影 | `TestOrderedReadingListsOwnMembershipAndAtomicReorder` — `internal/organize/reading_lists_test.go`<br>`TestReadingListProgressFollowsReaderFactsAndNeverCreatesActivity` — `internal/organize/reading_lists_test.go`<br>`TestReadingListTargetsKeepCatalogueOrderAndCompletedFallback` — `internal/organize/reading_lists_test.go`<br>`TestReadingListProtocolsKeepIdentityOrderAndPagination` — `internal/api/reading_list_controller_test.go` | 原联合执行证据见 G；清单全读首书回退修复及最新执行限制见下方审查修复证据。 |
 | 70 | organize各明确用例类型 | `TestManualCollectionsNameAndIdentity` — `internal/organize/collections_test.go`<br>`TestOrderedReadingListsOwnMembershipAndAtomicReorder` — `internal/organize/reading_lists_test.go`<br>`TestAIGroupingApplyCollectionOwnsIdentityAndAdjudication` — `internal/organize/ai_grouping_test.go` | G：表列 Go 测试均有本轮同名 pass 事件。 人工核对 Collections/SmartCollections/Relations/AIGrouping/ReadingLists 各用例和窄存储接口。 |
 | 71 | ApplicationSessionScope/Provider + App主导航装配 | `Froutes`（见文末真实it标题/路径）<br>`Fsession`（见文末真实it标题/路径） | F：对应前端精确标题本轮均 passed。 |
 | 72 | session onMessage(refresh)->useLibraryRefresh | `Froutes`（见文末真实it标题/路径）<br>`TestServerEventsFiltersTaskFramesByRole` — `internal/api/sse_audience_test.go` | G：表列 Go 测试均有本轮同名 pass 事件。 F：对应前端精确标题本轮均 passed。 |
@@ -203,3 +203,16 @@ US 编号指向 spec 的原文，避免再复制一份需求。下表测试路�
 - `Fexpiry` 补充：`web/src/auth/sessionExpiryOffline.test.tsx`：`先把队列回传上去，再清掉书目、字节与队列`。
 - `Fprefs` 补充：`web/src/pages/book-reader/readerImageOptionsSwitch.test.tsx`：`档位不进请求地址时不清缓存，当前页原地不动`；`档位进了请求地址时旧图作废，但当前页要被重新取回来`。
 - `Fclock` 补充：`web/src/pages/book-reader/useReaderProgressIndicator.test.tsx`：`keeps the real reading date at the local day boundary through online`；`keeps the real reading date at the local day boundary through offline`；`keeps the real reading date at the local day boundary through network-failure`；`reports a later same-page reading as a distinct fact`。
+
+## 清单首书回退审查修复证据
+
+针对 US 69 与票 06 的既有回退契约，`organize.ReadingLists.Items`、`Page` 在同一目标选择中使用共享主体投影及 `reading.InspectBook`，按未完成优先、`sort_number`（空值先）、名称选择；全部已读时仍返回首书，空系列返回零。`reading.Summarize.NextUnreadBookID` 的全读零语义保持不变。
+
+库外日志目录：`C:/Users/saber/.codex/tmp/architecture-deepening/review-fixes/`。
+
+- `organize-red.log`：已完成系列应回退首书，实际返回零而失败；`fallback-green.log` 证明最小回退修复转绿。
+- `ordering-red.log`：NULL sort_number 应先于其他书，实际自然卷序返回另一书而失败；`ordering-green.log` 转绿。真实 SQLite 完整用例同时核验 Items/Page、各未完成目标、全部已知完成、未知页数显式完成、空系列及无本人记录时的主体隔离。
+- `reading-list-regressions.log`：清单及 OPDS/Mihon API 定向回归实际通过；该命令中 reading 显示无匹配测试，不计作执行证据。协议 DTO 不公开继续阅读目标，身份、顺序、分页由协议回归守护，Page 目标由公开完整用例核验。
+- `page.log`：页面定向 3 项通过；完整 `frontend-tests.json` 为 913 项通过；`frontend-build.log`、`frontend-lint.log` 成功。完成系列的按钮可点击并导航首书，普通未完成系列导航目标书，空系列保持禁用。
+- `affected-packages.log`：最终源码上 organize、reading 完整包实际通过；API 测试程序被 Windows Application Control 拒绝执行。随后正常执行一次完整全仓门禁，`all-go-tests.jsonl` 记录包括该 HTTP 目标书详情读取断言在内的 API 完整包实际通过（104.042s）。没有改名、换路径或重复尝试绕过策略。
+- `lint-final.log` 为 `0 issues.`；gofmt 与 diff-check 空。没有 SQL、生成响应结构修改，无须重生成。完整全仓 Go 退出 1：27 包实际通过，diskjobs、images、task 三包仅因 Application Control 拒执行；未重试。未在本机执行 Ubuntu CI 专属 race/govuln，不宣称远端门禁通过。

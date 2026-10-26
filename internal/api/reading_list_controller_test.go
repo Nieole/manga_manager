@@ -351,8 +351,18 @@ func TestReadingListProjectsCurrentBooksWithoutAggregateSnapshot(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || len(got) != 1 || got[0].CompletedBooks != 1 || got[0].ReadBooks != 1 || got[0].NextBookID != 0 {
+	if rec.Code != 200 || len(got) != 1 || got[0].CompletedBooks != 1 || got[0].ReadBooks != 1 || got[0].NextBookID != book.ID {
 		t.Fatalf("projection=%+v status=%d", got, rec.Code)
+	}
+	target := strconv.FormatInt(got[0].NextBookID, 10)
+	bookRec := httptest.NewRecorder()
+	controller.getBookInfo(bookRec, requestWithRouteParam(http.MethodGet, "/api/books/"+target, nil, "bookId", target))
+	var reopened database.Book
+	if err := json.Unmarshal(bookRec.Body.Bytes(), &reopened); err != nil {
+		t.Fatal(err)
+	}
+	if bookRec.Code != http.StatusOK || reopened.ID != book.ID || reopened.PageCount != 10 {
+		t.Fatalf("reopen=%+v status=%d", reopened, bookRec.Code)
 	}
 }
 
