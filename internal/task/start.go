@@ -15,6 +15,9 @@ import (
 	"manga-manager/internal/taskcontrol"
 )
 
+// ErrEngineStopped rejects launch inputs after process shutdown begins.
+var ErrEngineStopped = errors.New("task engine is stopping")
+
 // ErrInvalidRunSpec 是运行声明填不齐时的哨兵错误。
 var ErrInvalidRunSpec = errors.New("run declaration is incomplete")
 
@@ -149,6 +152,10 @@ func (e *Engine) Start(ctx context.Context, spec RunSpec, body Body) (Launched, 
 	// 停发闸门与准入在**同一个临界区**里：那一行长期属性另有一个写入方（收尾那一侧），
 	// 分成两段就会有一次复位与一次失败计数互相覆盖。
 	e.mu.Lock()
+	if e.stopping {
+		e.mu.Unlock()
+		return Launched{}, ErrEngineStopped
+	}
 	if err := e.libraryAdmissionLocked(spec.LibraryIDs); err != nil {
 		e.mu.Unlock()
 		return Launched{}, err
@@ -340,8 +347,10 @@ func (e *Engine) beginLocked(run Run, spec RunSpec, body Body) func() {
 	}
 	handle := e.newHandle(run.ID)
 	runID := run.ID
+	e.pendingLaunches.Add(1)
 
 	return func() {
+		defer e.pendingLaunches.Done()
 		e.runGoroutine(runID, func() {
 			// 必须用 defer 归还运行时句柄：它因此不依赖任务体走哪条出口，panic 也会经这里归还，
 			// 之后才由 runGoroutine 的兜底把运行置为失败态。写成裸调用的话，任务体一 panic
@@ -514,7 +523,7 @@ func (e *Engine) ReleaseQueued() {
 // 「全部暂停」期间一条都不放：那几条排队运行没有闸门可按（任务体还没起），拦住放行是唯一
 // 按得住它们的地方。闸门由「全部恢复」打开，并在那里一并放开。
 func (e *Engine) releaseQueuedLocked() func() {
-	if e.pausedAll {
+	if e.pausedAll || e.stopping {
 		return nil
 	}
 	ctx := context.Background()

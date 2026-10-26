@@ -1,3 +1,4 @@
+import { bookReadingState } from '../../../reading/bookState';
 import { useMemo } from 'react';
 import type { Book, NullString } from '../types';
 import { compareBooksForDisplay, compareOrdinalLabels } from '../utils/ordinal';
@@ -9,6 +10,7 @@ export interface VolumeItem {
   cover_book_id?: number;
   total_pages: number;
   read_pages: number;
+  is_read?: boolean;
 }
 
 export interface UseSeriesVolumesResult {
@@ -41,7 +43,8 @@ export function useSeriesVolumes(books: Book[]): UseSeriesVolumesResult {
         cover_path: coverBook?.cover_path,
         cover_book_id: coverBook?.id,
         total_pages: volBooks.reduce((sum, b) => sum + b.page_count, 0),
-        read_pages: volBooks.reduce((sum, b) => sum + (b.last_read_page?.Valid ? b.last_read_page.Int64 : 0), 0),
+        read_pages: volBooks.reduce((sum, b) => sum + bookReadingState(b).readPages, 0),
+        is_read: volBooks.every((book) => bookReadingState(book).completed),
       };
     });
     volumeArr.sort((a, b) => compareOrdinalLabels(a.name, b.name));

@@ -4,18 +4,49 @@
 
 **Blocked by:** 18: 手动、定时与监听扫描清理；19: 扫描封面批与封面运行；20: 资料库迁移与保护恢复编排；21: 维护及 KOReader 校准运行发起；22: 外部库与 ComicInfo 磁盘用例发起；23: 刮削与 AI 分组后台发起
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
 **规格覆盖：** US 1、US 4、US 5、US 7、US 91、US 92、US 93、US 94、US 95、US 98、US 105、US 106、US 107。
 
-- [ ] 收拢已迁移运行能力的进程装配与生命周期；输入 adapter 获取所需功能，不持有全程序后台和恢复实施配方。
-- [ ] 完整重启函数与能力在装配期一次登记，复用唯一重试/可续跑事实源；不依赖本进程是否曾发起某种任务。
-- [ ] 启动按登记能力、迁移一致性恢复、运行恢复及后台开放、请求开放的承重顺序执行；失败不开放尚不一致的资料库。
-- [ ] 停止按既有安全顺序停止配置监听、排空请求与推送、停止目录监听、取消运行并等待后台退出，资源不在仍被使用时关闭。
-- [ ] 维持任务身份、运行历史、准入、标签与入参、上下文观测及配置 Manager 事实源；不把 taskstore 合回 task。
-- [ ] 应用装配不反向依赖 HTTP Controller，HTTP 路由、响应和 SSE 传输 adapter 保留合适归属，避免形成另一个吸收所有业务的大对象。
-- [ ] 移除已无调用方的旧运行桥、启动循环和重复装配，尚属其他功能的规则不以本票为借口继续搬家。
-- [ ] 以生产等价装配和可控依赖验证恢复前不放行、配置更新一致、历史任务可重试、停机取消到任务体及全部后台退出。
-- [ ] 完成相关后端、前端契约与生成门禁，记录实际验证和仍然有效的装配限制。
+- [x] 收拢已迁移运行能力的进程装配与生命周期；输入 adapter 获取所需功能，不持有全程序后台和恢复实施配方。
+- [x] 完整重启函数与能力在装配期一次登记，复用唯一重试/可续跑事实源；不依赖本进程是否曾发起某种任务。
+- [x] 启动按登记能力、迁移一致性恢复、运行恢复及后台开放、请求开放的承重顺序执行；失败不开放尚不一致的资料库。
+- [x] 停止按既有安全顺序停止配置监听、排空请求与推送、停止目录监听、取消运行并等待后台退出，资源不在仍被使用时关闭。
+- [x] 维持任务身份、运行历史、准入、标签与入参、上下文观测及配置 Manager 事实源；不把 taskstore 合回 task。
+- [x] 应用装配不反向依赖 HTTP Controller，HTTP 路由、响应和 SSE 传输 adapter 保留合适归属，避免形成另一个吸收所有业务的大对象。
+- [x] 移除已无调用方的旧运行桥、启动循环和重复装配，尚属其他功能的规则不以本票为借口继续搬家。
+- [x] 以生产等价装配和可控依赖验证恢复前不放行、配置更新一致、历史任务可重试、停机取消到任务体及全部后台退出。
+- [x] 完成相关后端、前端契约与生成门禁，记录实际验证和仍然有效的装配限制。
+
+
+## Comments
+
+### 实施与验收（2026-10-26）
+
+- `internal/application/runtime` 装配唯一 Engine、Runs、Manager 绑定和各功能用例，登记完整 Registry，并持有进程资源与生命周期。HTTP 保留缓存、身份、路由、响应及 SSE 编解码；应用装配不导入 api，也不使用 RunSnapshot。
+- Registry 从 scanning、maintenance、intelligence 的 Restarts 声明产生同一份重试、可续跑与重放事实。扫描重启的库/系列/强制参数解释已归 scanning；历史清理和外部/磁盘会话任务没有凭空获得重启能力。
+- Controller 的生产与 Core 测试共用相同应用图。Core 返回前恢复迁移一致性；启动进一步初始化配置资源、恢复运行、打开配置监听及后台输入，然后 HTTP host 才监听请求。恢复失败不打开后台或请求。
+- 停止顺序归应用：停止配置监听、关闭 SSE 订阅、排空 HTTP、停止目录监听、停止任务准入及队列放行、取消真实运行上下文、等候已准入任务完成后台交接并等待全部登记工作退出，再释放 scanner 封面 workers 和归档池 collector/句柄。
+- Engine.Shutdown 的停止状态与既有任务准入使用同一把领域锁。已准入但尚在后台交接的任务不能被关闭登记器静默丢弃；排队运行保留历史语义。FileWatcher.Stop 现在还等待事件循环退出；SSE handler 在返回前结束注销协程。taskstore 仍独立负责落盘。
+- 已删除生产 API 的具体装配、恢复重放、定时扫描和 janitor/sampler 配方。旧 Run/start 构造与受控替换装配仅在 adapter 测试支持文件中保留，用于既有故障、身份、权限与协议回归。
+- 真 SQLite / 生产等价图覆盖首启能力、恢复失败不开放、原 force 参数历史重放、Manager 发布放行同一队列、延迟交接任务取消并等待、配置与 SSE 先停再排空、真实任务退出后才释放归档资源，以及 standalone 封面关闭后缓存可安全释放。
+- 修正独立 TestRunClaimsSlotSynchronouslyAndDefersBody 的测试身份登记遗漏，精确选择该单测已通过，没有恢复生产按任务键寻址。迁移监听故障 fixture 的 watcher 替换已明确落到应用资源 owner，原嵌套库监听行为回归通过。
+- 本机适用门禁通过：合入 d27d291 后 go test ./... 全部包退出 0；go vet ./...；go build ./...；gofmt -l ./cmd ./internal 空输出；golangci-lint run 为 0 issues；go run ./cmd/tsgen 后 generated.ts 无漂移；文档检查器通过。
+- 早期完整测试曾有 Application Control 拒执行，另有新 fixture 的目录/相对封面路径与迁移 watcher owner 断言失败；前者未计为通过，后者已修正并逐项复验。最终绿证据与早期失败日志分开保留在工作树 .tmp 下。
+- 本票未改前端或 SQL，无需重复前端/sqlc 生成。Ubuntu-only race/govulncheck 未在 Windows 执行，不作为本机验收阻塞；票 25 继续负责最终联合验收。共享变更记录、规格和实施队列未由本票修改。
+
+
+### 独立夹具复核（2026-10-26）
+
+- 合入 `21253f8` 后精确运行 `go test ./internal/api -run '^TestRunReleasesRuntimeOnEveryExitPath$' -count=1`，完成、取消、失败及 panic 分支均实证缺少测试键 `scan_library_1` 的身份登记；红日志在 `.tmp/fixture24-red.log`。
+- 同文件直接 `e.Run` 后按测试别名观测的用例均补显式 `rememberTaskKey`，包括不同库身份的首帧声明验证。原 Claims 用例也统一在局部 key 声明后登记；`seedTask` 自行登记的夹具没有重复补写。没有改生产代码、任务键寻址规则或断言内容。
+- 修复后的 Release 四分支与原 Claims 各用完整锚定名称精确选择一次，执行均被 Windows Application Control 拦截，未运行到断言。日志分别为 `.tmp/fixture24-release-final.log`、`.tmp/fixture24-claims-final.log`；两者不能记作绿证据，不对未变源码重复抽签。
+- `gofmt -l ./cmd ./internal` 空输出，`golangci-lint run` 为 `0 issues.`。未重复无关全量门禁。
+- 实施与此前已核实的生命周期行为保留；本票暂回 `ready-for-agent`，最后门禁项等待票 25 在最新集成上补验这些独立选择。补验成功后再恢复 `done`。
+
+### 联合补验（2026-10-26）
+
+- 25 合入 `cb85378` 后，分别精确执行 `^TestRunReleasesRuntimeOnEveryExitPath$` 与 `^TestRunClaimsSlotSynchronouslyAndDefersBody$`，两次实际进入断言且退出 0；Release 四分支与 Claims 均通过，恢复 done。日志在库外 `C:/Users/saber/.codex/tmp/architecture-deepening/acceptance-25/runtime-release-exact.jsonl` 与 `runtime-claims-exact.jsonl`。
+- 本轮清理前完整 Go 30 包退出 0；随后仅移除 API 无生产调用的排序转发，受影响 API/reading 和静态门禁通过，额外全量五包受系统拒执行；原始完整绿 JSON 被覆盖的证据限制、派生映射和完整门禁范围见 [联合验收](../acceptance.md)。未把断言失败、系统拒执行或不同基线证据混同。

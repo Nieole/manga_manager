@@ -345,7 +345,7 @@ func (s *SqlStore) searchGlobalBooksFTS(ctx context.Context, keyword string, lim
 	match := fts5PhraseQuery(keyword)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
+			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.is_read, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
 			s.name AS series_name,
 			s.title AS series_title,
 			(
@@ -412,7 +412,7 @@ func (s *SqlStore) searchGlobalBooksSubstring(ctx context.Context, keyword strin
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
+			b.id, b.series_id, b.library_id, b.name, b.path, b.size, b.file_modified_at, b.volume, b.title, b.summary, b.number, b.sort_number, b.page_count, b.cover_path, b.last_read_page, b.last_read_at, b.is_read, b.file_hash, b.quick_hash, b.path_fingerprint, b.path_fingerprint_no_ext, b.filename_fingerprint, b.created_at, b.updated_at,
 			s.name AS series_name,
 			s.title AS series_title,
 			CASE
@@ -842,6 +842,7 @@ func scanBookSearchHits(rows *sql.Rows) ([]BookSearchHit, error) {
 			&i.CoverPath,
 			&i.LastReadPage,
 			&i.LastReadAt,
+			&i.IsRead,
 			&i.FileHash,
 			&i.QuickHash,
 			&i.PathFingerprint,

@@ -134,7 +134,9 @@ func TestUserBookProgressIsolationAndAggregation(t *testing.T) {
 	}
 
 	// 清除 u1/book1 后重算：read_book_count 降为 1。
-	if err := store.ClearUserBookProgress(ctx, u1, book1); err != nil {
+	if _, err := store.MutateReadingPosition(ctx, u1, book1, "", func(ReadingPositionState) ReadingPositionMutation {
+		return ReadingPositionMutation{Apply: true, Clear: true, OccurredAt: time.Now()}
+	}); err != nil {
 		t.Fatalf("clear u1/book1: %v", err)
 	}
 	assertSeriesAgg(u1, 1, 1, 20)

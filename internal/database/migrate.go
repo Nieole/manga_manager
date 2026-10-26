@@ -1,7 +1,3 @@
-// 本文件由 store.go 拆分而来，属于 SQLite 数据访问层的「schema 迁移与回填」子域。
-// 它负责建表、幂等 DDL 重放、按 user_version 门控的一次性回填、FTS 结构升级与历史数据迁移。
-// 维护时应保证每条语句幂等、老库升级路径不崩，并把昂贵的全量回填挡在版本门控之后。
-
 package database
 
 import (
@@ -20,12 +16,10 @@ import (
 // 昂贵的一次性全量回填（series_stats、name_initial、tag_series_count、provenance、FTS 索引重建）
 // 仅在库版本低于此值时执行一次，之后每次启动跳过——这些操作成本随库规模线性增长，运行期已由触发器与
 // RefreshSeriesStats 增量维护。新增需要全量回填的 schema 变更时，把该值 +1。
-// v2：新增 tags.series_count 的一次性回填，确保已升级到 v1 的库也会补算。
-// v3：新增短关键字的 2-gram 辅助索引（series_gram_fts / book_gram_fts），存量库需要回填一次。
 //
 //	注意 user_version 是在回填**成功之后**才写的，所以回填中途被杀不会留下「已完成」的假象，
 //	下次启动会整份重来——这正是我们要的语义，别改成「表非空就算已回填」那种探针。
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 func Migrate(dbPath string) error {
 	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
@@ -79,6 +73,9 @@ func Migrate(dbPath string) error {
 		{table: "books", name: "cover_locked", definition: "BOOLEAN NOT NULL DEFAULT FALSE"},
 		{table: "books", name: "last_read_page", definition: "INTEGER"},
 		{table: "books", name: "last_read_at", definition: "DATETIME"},
+		{table: "books", name: "is_read", definition: "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{table: "user_book_progress", name: "is_read", definition: "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{table: "koreader_progress", name: "received_at_ns", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{table: "series", name: "title", definition: "TEXT"},
 		{table: "series", name: "summary", definition: "TEXT"},
 		{table: "series", name: "publisher", definition: "TEXT"},
@@ -266,6 +263,36 @@ func Migrate(dbPath string) error {
 	}
 
 	// 一次性全量回填只在 schema 版本升级时执行，避免每次启动都做一遍随库规模线性增长的全量重算。
+	if userVersion < 4 {
+		if _, err := db.Exec(`UPDATE books SET is_read=TRUE,last_read_page=NULL WHERE last_read_page=99999 AND page_count<99999`); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`UPDATE user_book_progress SET is_read=TRUE,last_read_page=NULL WHERE last_read_page=99999 AND book_id IN (SELECT id FROM books WHERE page_count<99999)`); err != nil {
+			return err
+		}
+		rows, err := db.Query(`SELECT DISTINCT user_id FROM user_book_progress`)
+		if err != nil {
+			return err
+		}
+		var users []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			users = append(users, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, id := range users {
+			if _, err := db.Exec(refreshUserSeriesProgressAllStmt, id); err != nil {
+				return err
+			}
+		}
+	}
 	needFullBackfill := userVersion < currentSchemaVersion
 	if needFullBackfill {
 		if err := backfillSeriesInitials(db); err != nil {
@@ -452,12 +479,12 @@ func refreshSeriesStatsStatement(whereClause string) string {
 			COALESCE((
 				SELECT COUNT(*)
 				FROM books b
-				WHERE b.series_id = s.id AND b.last_read_page IS NOT NULL AND b.last_read_page > 0
+				WHERE b.series_id = s.id AND (b.is_read OR b.last_read_page > 0)
 			), 0) AS read_book_count,
 			COALESCE((
 				SELECT COUNT(*)
 				FROM books b
-				WHERE b.series_id = s.id AND b.page_count > 0 AND b.last_read_page >= b.page_count
+				WHERE b.series_id = s.id AND (b.is_read OR (b.page_count > 0 AND b.last_read_page >= b.page_count))
 			), 0) AS completed_book_count,
 			(
 				SELECT b.last_read_at

@@ -1,5 +1,4 @@
-// 守封面每库一条**运行**在 api 这一侧的四条：批换成一条串联运行、暂停取消只作用在它自己身上、
-// 删库按**作用域**把它一起带走、跨批的合计不翻倍。
+// 守封面运行的 API 装配、独立控制与删除资料库时的作用域取消。
 
 package api
 
@@ -13,7 +12,6 @@ import (
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
-	"manga-manager/internal/scanner"
 	"manga-manager/internal/task"
 )
 
@@ -58,7 +56,7 @@ func TestCoverBatchBecomesItsOwnChainedRun(t *testing.T) {
 	// 同步执行版的后台能力：任务体在发起调用返回前就跑完，终态因此当场落定。
 	restore := controller.taskEngine.runBackground
 	controller.taskEngine.runBackground = runTaskBodySynchronously
-	controller.dispatchCoverBatch(batch)
+	controller.dispatchCoverBatch(context.Background(), batch)
 	controller.taskEngine.runBackground = restore
 
 	run := currentTask(t, controller.taskEngine, coverRunKey(lib.ID))
@@ -170,99 +168,5 @@ func TestDeletingALibraryCancelsEveryRunOnIt(t *testing.T) {
 	}
 	if got := currentTask(t, controller.taskEngine, coverRunKey(10)).Status; got != "running" {
 		t.Fatalf("删库带走了另一个库的封面运行：状态 %q, want running", got)
-	}
-}
-
-// TestCoverRunObserverDoesNotDoubleCountAcrossBatches 守跨批合计：一条封面运行可能认领好几批
-// （扫描期间又来一次扫描），每一批报的都是**它自己那一批的全量当前值**。
-//
-// 定版由任务体在 Drain 返回后做，不由报文自己判「剩余量归零」——扫描还在往批里加的间隙
-// 剩余量本来就会归零，按它定版会让下一份报文加在自己刚定版的值上，数字凭空翻倍。
-func TestCoverRunObserverDoesNotDoubleCountAcrossBatches(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
-	const key = "generate_covers_3"
-	progress := seedTask(t, controller.taskEngine, taskSeed{
-		Key: key, Identity: libraryTask("generate_covers", 3, variantSole), Trigger: task.TriggerChained,
-	})
-	observer := newCoverRunObserver(progress, "Main")
-
-	observer.begin()
-	observer.Progress(scanner.CoverProgressReport{Queued: 4, Generated: 2, Remaining: 2})
-	// 这一批的中途剩余量归零：扫描还没收尾，下一份报文仍是这一批的全量值。
-	observer.Progress(scanner.CoverProgressReport{Queued: 4, Generated: 4, Remaining: 0})
-	observer.fixate()
-
-	observer.begin()
-	observer.Progress(scanner.CoverProgressReport{Queued: 3, Generated: 3, Remaining: 0})
-	observer.fixate()
-
-	run := currentTask(t, controller.taskEngine, key)
-	if run.Metrics["generated_covers"] != 7 || run.Metrics["queued_covers"] != 7 {
-		t.Fatalf("跨批合计为 生成 %d / 共 %d, want 7 / 7", run.Metrics["generated_covers"], run.Metrics["queued_covers"])
-	}
-	if run.Current != 7 || run.Total != 7 {
-		t.Fatalf("**计数推进**为 %d/%d, want 7/7", run.Current, run.Total)
-	}
-	if observer.generated() != 7 {
-		t.Fatalf("终态文案要报的生成数为 %d, want 7", observer.generated())
-	}
-
-	// 窗口关掉之后迟到的报文（被取消那一批还在飞的作业）不再计入，否则下一批的基线被抬高。
-	observer.Progress(scanner.CoverProgressReport{Queued: 3, Generated: 3, Remaining: 0})
-	if observer.generated() != 7 {
-		t.Fatalf("窗口之外的迟到报文被计入了：%d, want 7", observer.generated())
-	}
-}
-
-// TestCoverRunProgressCountsSkippedCovers 守**计数推进**数的是「已结算的」而不是「生成 + 失败」：
-// 已经有封面的书既不新增一张也不是故障，漏掉它进度条到最后差着几张永远走不满。
-func TestCoverRunProgressCountsSkippedCovers(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
-	const key = "generate_covers_5"
-	progress := seedTask(t, controller.taskEngine, taskSeed{
-		Key: key, Identity: libraryTask("generate_covers", 5, variantSole), Trigger: task.TriggerChained,
-	})
-	observer := newCoverRunObserver(progress, "Main")
-
-	observer.begin()
-	// 五张：三张生成、一张失败、一张跳过（用户自己设过封面）。
-	observer.Progress(scanner.CoverProgressReport{Queued: 5, Generated: 3, Failed: 1, Remaining: 0})
-
-	run := currentTask(t, controller.taskEngine, key)
-	if run.Current != 5 || run.Total != 5 {
-		t.Fatalf("**计数推进**为 %d/%d, want 5/5 —— 跳过的那张没算进已结算", run.Current, run.Total)
-	}
-	// duration_ms 必须随每一帧写下来（毫秒级的用例里它就是 0）：缺了这个键，
-	// 存储 IO 面板会退回按挂钟算，那格速率在运行收尾之后一路衰减。
-	if _, ok := run.Metrics["duration_ms"]; !ok {
-		t.Fatalf("封面运行没报 duration_ms：%v", run.Metrics)
-	}
-}
-
-// TestCoverBatchWithoutARunIsWithdrawnAndDrained 守发起落空时的兜底只收回**自己那一批**：
-// 整个库名下抄走一次，会把并发扫描刚挂上、而且发起已经成功的那几批一起带走，
-// 认领它们的那条运行认到的是空，而它们跑在一个既不受暂停也不受取消约束的上下文里。
-func TestCoverBatchWithoutARunIsWithdrawnAndDrained(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
-	// 库不存在：封面运行的任务声明读不到它，一条运行都建不出来。
-	const missingLibraryID int64 = 4242
-	mine, err := controller.scanner.QueueMissingCovers(context.Background(), missingLibraryID)
-	if err != nil {
-		t.Fatalf("QueueMissingCovers: %v", err)
-	}
-	lib := seedCoverRunLibrary(t, controller)
-	theirs, err := controller.scanner.QueueMissingCovers(context.Background(), lib.ID)
-	if err != nil {
-		t.Fatalf("QueueMissingCovers: %v", err)
-	}
-	controller.coverRuns.enqueue(theirs)
-
-	controller.dispatchCoverBatch(mine)
-
-	if controller.coverRuns.withdraw(mine) {
-		t.Fatal("发起落空的那一批还挂在名下 —— 没有任何一条运行会来认领它")
-	}
-	if !controller.coverRuns.withdraw(theirs) {
-		t.Fatal("兜底把别人那一批也抄走了 —— 认领它的那条运行会认到空")
 	}
 }

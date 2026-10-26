@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,30 +12,33 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"manga-manager/internal/application/diskjobs"
+	"manga-manager/internal/application/intelligence"
+	"manga-manager/internal/application/maintenance"
+	"manga-manager/internal/application/relocating"
+	appruntime "manga-manager/internal/application/runtime"
+	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
 	"manga-manager/internal/metadata"
+	"manga-manager/internal/organize"
 	"manga-manager/internal/proposal"
+	"manga-manager/internal/reading"
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/seriesmeta"
-	"manga-manager/internal/storageio"
-	"manga-manager/internal/task"
 	"manga-manager/internal/taskcontrol"
-	"manga-manager/internal/taskstore"
 
 	"github.com/go-chi/chi/v5"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -47,23 +49,25 @@ type Controller struct {
 	imageCache *imageMemoryCache
 	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
 	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
-	pageArchive        *pageArchiveCache
-	progressWriteCache *lru.Cache[int64, cachedProgressWrite]
+	pageArchive *pageArchiveCache
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
 	stats   *statsCache
 	scanner *scanner.Scanner
 	config  *config.Manager
-	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
-	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**运行句柄**。
-	diskWork           *diskwork.Runner
-	koreader           *koreader.Service
-	external           *external.Manager
-	proposals          *proposal.Service
-	relocation         *relocation.Service
-	configPath         string
-	watcher            *scanner.FileWatcher
-	watcherInitErr     error
-	relocationTopology relocationTopology
+	// diskWork 引用应用运行时为唯一任务引擎装配的共享磁盘执行器。
+	diskWork       *diskwork.Runner
+	koreader       *koreader.Service
+	external       *external.Manager
+	diskJobs       *diskjobs.Service
+	intelligence   *intelligence.Service
+	proposals      *proposal.Service
+	relocation     *relocation.Service
+	configPath     string
+	scans          *scanning.Service
+	maintenance    *maintenance.Service
+	watcher        *scanner.FileWatcher
+	watcherInitErr error
+	moves          *relocating.Service
 
 	// SSE 事件推送已抽成独立组件（sse_broker.go）；Controller 仅持引用做编排。
 	sse *sseBroker
@@ -76,14 +80,8 @@ type Controller struct {
 
 	// taskEngine 是任务子域的适配层：把启动入口、控制端点与**重启函数**注册表接到
 	// internal/task 的领域引擎与 internal/taskstore 的落盘上（它自己不留任务表，理由见它的符号 doc）。
-	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 走（端点定义见 controller_tasks.go）。
+	// HTTP 控制与快照经适配层访问同一任务引擎；实际任务体归应用用例。
 	taskEngine *taskEngine
-
-	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
-	rebuildThumbAgg *rebuildThumbAggregator
-
-	// coverRuns 是「哪一批封面归哪一条**封面运行**」的配对处（cover_run.go），自带互斥锁。
-	coverRuns *coverRunQueues
 
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
@@ -95,15 +93,9 @@ type Controller struct {
 	// 该头由客户端可控，逐次打日志等于给了一个刷日志的口子。
 	untrustedProtoWarnOnce sync.Once
 
-	lifecycleOnce sync.Once
-	shutdownOnce  sync.Once
-	lifecycleMu   sync.Mutex
-	done          chan struct{}
-	closed        bool
-	backgroundWG  sync.WaitGroup
+	runtime *appruntime.Runtime
 
-	// franchise 合集重建的合并式调度已抽成独立组件（franchise_rebuilder.go）；Controller 仅持引用。
-	franchiseRebuilder *franchiseRebuilder
+	relations *organize.Relations
 }
 
 type RunSnapshot struct {
@@ -316,16 +308,7 @@ type SearchHit struct {
 	Fields map[string]interface{} `json:"fields,omitempty"`
 }
 
-const (
-	// rebuildBookHashesTaskKey 与 lowPriorityBookHashTaskKey 是 rebuild_book_hashes 这个任务类型
-	// 下两个**变体**的**任务键**：前者是用户在维护页发起的前台重建，后者是**资料库扫描**收尾串联的
-	// 低优先级回填。键只管寻址，分回哪一条跑法由变体决定，见 buildTaskRelaunchers。
-	rebuildBookHashesTaskKey     = "rebuild_book_hashes"
-	lowPriorityBookHashTaskKey   = "background_book_hash_backfill"
-	lowPriorityBookHashBatchSize = 32
-	lowPriorityBookHashBatchGap  = 100 * time.Millisecond
-	dashboardStatsCacheTTL       = 30 * time.Second
-)
+const dashboardStatsCacheTTL = 30 * time.Second
 
 // controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
 // 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
@@ -334,181 +317,59 @@ type controllerCacheSizes struct {
 	imageBytes     int64
 	page           int
 	bookPageSource int
-	progressWrite  int
 }
 
 func defaultControllerCacheSizes() controllerCacheSizes {
-	return controllerCacheSizes{imageBytes: defaultImageCacheBytes, page: 128, bookPageSource: 512, progressWrite: 2048}
+	return controllerCacheSizes{imageBytes: defaultImageCacheBytes, page: 128, bookPageSource: 512}
 }
 
-// newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
-// 它预备文件监听资源并恢复迁移；事件派发与后台服务由 NewController 启动。
+// newControllerCore binds HTTP-owned caches and projections to the application runtime graph.
+// Consistency recovery finishes before this constructor exposes any handlers.
 //
 // 白盒测试构造 Controller 必须调用这里，不得手工拼装字段：手工拼装在新增组件字段时容易漏掉，
 // 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
 func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
 	cache := newImageMemoryCache(sizes.imageBytes)
-	progressWriteCache, _ := lru.New[int64, cachedProgressWrite](sizes.progressWrite)
 	c := &Controller{
-		store:              store,
-		stats:              newStatsCache(),
-		imageCache:         cache,
-		pageArchive:        newPageArchiveCache(sizes.bookPageSource, sizes.page),
-		progressWriteCache: progressWriteCache,
-		scanner:            scan,
-		config:             cfg,
-		external:           external.NewManager(store, 30*time.Minute),
-		proposals:          proposal.NewService(proposalDB{Store: store}),
-		relocation:         relocation.NewService(store, cfg),
-		configPath:         cfgPath,
-		sse:                newSSEBroker(),
-		recommendations:    newRecommendationCache(24 * time.Hour),
-		rebuildThumbAgg:    newRebuildThumbAggregator(),
-		coverRuns:          newCoverRunQueues(),
-		openPath:           openPathInDefaultFileManager,
-		auth:               newAuthState(),
-	}
-	if scan != nil {
-		scan.SetBatchCallback(c.handleScannerBatchEvent)
-		// 扫描排出来的每一批封面都在这里换成一条**封面运行**：报文自带去处，
-		// 「扫描完成」从此只说扫描本身（ADR 0005）。
-		scan.SetCoverRunLauncher(c.dispatchCoverBatch)
+		store:           store,
+		stats:           newStatsCache(),
+		imageCache:      cache,
+		pageArchive:     newPageArchiveCache(sizes.bookPageSource, sizes.page),
+		scanner:         scan,
+		config:          cfg,
+		configPath:      cfgPath,
+		sse:             newSSEBroker(),
+		recommendations: newRecommendationCache(24 * time.Hour),
+		openPath:        openPathInDefaultFileManager,
+		auth:            newAuthState(),
 	}
 
-	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
-	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.Default)
-
-	c.koreader = koreader.NewService(store, cfg)
-
-	// franchiseRebuilder 注入 c 的领域重建方法与生命周期后台登记器（须在 c 构造完成后设置）。
-	c.franchiseRebuilder = newFranchiseRebuilder(c.RebuildFranchiseCollections, c.runBackground)
-
-	// taskEngine 依赖 c 的 SSE 投递与后台运行能力，同样须在 c 构造完成后建立。
-	// 任务快照只投给管理员：它带着作用域显示名、重启入参与失败原因，与任务列表接口
-	// （对普通用户 403）是同一份数据，两条路口径不同就等于那条 403 不存在。
-	c.taskEngine = newTaskEngine(taskEngineConfig{
-		Store:          taskstore.New(store.DB()),
-		Publish:        c.sse.publishAdmin,
-		RunBackground:  c.runBackground,
-		DiskWork:       c.diskWork,
-		Slots:          c.taskSlots,
-		Backoff:        c.taskBackoffPolicy,
-		SampleInterval: c.runSampleInterval,
-		ResumeEnabled:  c.taskResumeEnabled,
-	})
-	// 构建「再发起一次」的注册表：它同时是可重试与**可续跑**两条判据的来源，因此必须在任何运行
-	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
-	c.taskEngine.libraryIDs = c.taskLibraries
-	c.taskEngine.dispatch = c.buildTaskDispatch()
-	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
-		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
-		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },
-	})
-	c.relocation.Acquire = c.acquireLibraryExclusive
-	c.relocation.AcquireOperation = c.acquireRelocationAccess
-	c.relocation.Effects = c.relocationEffects
-	c.relocation.RestoreEffects = c.restorationEffects
-	c.relocation.ConfigPath = c.configPath
-	c.relocation.ApplyConfig = runtimecfg.Apply
-	if err := c.relocation.InterruptChecks(context.Background()); err != nil {
-		panic(fmt.Errorf("initialize relocation plans: %w", err))
-	}
-	if err := c.relocation.Recover(context.Background()); err != nil {
-		panic(fmt.Errorf("recover library relocation: %w", err))
+	if err := c.assembleRuntime(scan); err != nil {
+		panic(err)
 	}
 
-	c.config.SetAfterUpdate(c.configUpdated)
 	return c
 }
 
 func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
 	c := newControllerCore(store, scan, cfg, cfgPath, defaultControllerCacheSizes())
-
-	c.taskEngine.markInterrupted(context.Background())
-
-	c.runBackground(func() { c.sse.run(c.lifecycleDone()) })
-	c.runBackground(c.startDaemon)
-	c.runBackground(c.startPageCacheJanitor)
-	c.runBackground(c.startSessionJanitor)
-	c.runBackground(c.startRunHistoryJanitor)
-	c.runBackground(c.startRunSampler)
-
-	// 初始化文件系统监控。派生出去的扫描与清理各建一条**发起方**为「监听」的运行：
-	// 监听器自己不碰扫描器，它只知道「这个库该扫了」。
-	if c.watcherInitErr != nil {
-		slog.Warn("Failed to create file watcher", "error", c.watcherInitErr)
-	} else {
-		fw := c.watcher
-		fw.Start(c.PublishEvent)
-		// 为现有库开启监听
-		c.runBackground(func() {
-			libs, err := store.ListLibraries(context.Background())
-			if err != nil {
-				slog.Warn("Failed to list libraries for watcher", "error", err)
-				return
-			}
-			for _, lib := range libs {
-				if lib.ScanMode == "watch" {
-					if c.requireAutomaticProcessing(context.Background(), lib.ID) != nil {
-						continue
-					}
-					release, accessErr := c.taskEngine.engine.AcquireLibraryRead(lib.ID)
-					if accessErr != nil {
-						continue
-					}
-					_ = fw.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
-					release()
-				}
-			}
-		})
+	if err := c.runtime.Start(context.Background()); err != nil {
+		c.Close()
+		panic(fmt.Errorf("start application: %w", err))
 	}
-
 	return c
 }
-
-func (c *Controller) lifecycleDone() <-chan struct{} {
-	c.lifecycleOnce.Do(func() {
-		c.done = make(chan struct{})
-	})
-	return c.done
-}
-
-func (c *Controller) runBackground(fn func()) {
-	c.lifecycleDone()
-	c.lifecycleMu.Lock()
-	if c.closed {
-		c.lifecycleMu.Unlock()
-		return
-	}
-	c.backgroundWG.Add(1)
-	c.lifecycleMu.Unlock()
-	go func() {
-		defer c.backgroundWG.Done()
-		// 后台任务的 panic 不经过 middleware.Recoverer（那只覆盖 HTTP handler goroutine），
-		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让服务继续可用。
-		// 任务体这一路另有兜底：引擎在 runTaskGoroutine 里把对应任务一并置为失败态。
-		defer func() {
-			if rec := recover(); rec != nil {
-				slog.Error("Background task panicked", "panic", rec, "stack", string(debug.Stack()))
-			}
-		}()
-		fn()
-	}()
-}
-
+func (c *Controller) lifecycleDone() <-chan struct{} { return c.runtime.Done() }
+func (c *Controller) runBackground(fn func())        { c.runtime.Go(fn) }
 func (c *Controller) Close() {
-	c.lifecycleDone()
-	c.shutdownOnce.Do(func() {
-		c.lifecycleMu.Lock()
-		c.closed = true
-		close(c.done)
-		c.lifecycleMu.Unlock()
-		if c.watcher != nil {
-			c.watcher.Stop()
-		}
-		c.taskEngine.stopAllRuntimes()
-	})
-	c.backgroundWG.Wait()
+	if c.runtime != nil {
+		c.runtime.Close()
+	}
+}
+
+// Shutdown drains the HTTP host through the application-owned shutdown sequence.
+func (c *Controller) Shutdown(ctx context.Context, drain func(context.Context) error) error {
+	return c.runtime.Shutdown(ctx, drain)
 }
 
 func (c *Controller) currentConfig() config.Config {
@@ -612,12 +473,6 @@ func (c *Controller) persistConfigExpected(expected, cfg *config.Config) error {
 	}, runtimecfg.Apply, nil)
 }
 
-func (c *Controller) configUpdated() {
-	if c.taskEngine != nil {
-		c.taskEngine.releaseQueued()
-	}
-}
-
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
 	return SystemCapabilitiesResponse{
 		SupportedScanFormats:     append([]string{}, config.SupportedScanFormats...),
@@ -661,7 +516,7 @@ func openPathInDefaultFileManager(path string) error {
 	// 但**不能同步等**：这些命令拉起的是长期存活的 GUI 进程（Finder / Explorer / 文件管理器），
 	// 同步 Wait 会把 HTTP 请求一直挂到用户关掉那个窗口为止。
 	//
-	// 也刻意不走 runBackground：那会把这个 goroutine 计入 backgroundWG，于是优雅停机要等
+	// 也刻意不走 runBackground：那会把这个 goroutine 计入应用后台，于是优雅停机要等
 	// 用户关闭文件管理器才能完成。这个 goroutine 的唯一职责就是收尸，进程退出时随之消失即可。
 	//
 	// （对应地也不用 exec.CommandContext + 超时兜底：那会在超时后杀掉用户正开着的文件管理器。）
@@ -671,73 +526,9 @@ func openPathInDefaultFileManager(path string) error {
 	return nil
 }
 
-// startPageCacheJanitor 周期性地把磁盘页缓存修剪到配置的容量上限（单 goroutine 串行，经
-// runBackground 登记 backgroundWG，关闭时会退出）。
-func (c *Controller) startPageCacheJanitor() {
-	c.enforcePageCacheBudget() // 启动兜底
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.lifecycleDone():
-			return
-		case <-ticker.C:
-			c.enforcePageCacheBudget()
-		}
-	}
-}
-
-// startDaemon 每分钟看一眼有没有资料库到了它自己的扫描间隔，到了就发起一次**发起方**为
-// 「定时」的扫描运行。节拍每分钟一次，触发与否由每个库的间隔决定。
-func (c *Controller) startDaemon() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
-	// 记录各个资料库的上次扫描时间
-	lastScan := make(map[int64]time.Time)
-
-	for {
-		select {
-		case <-c.lifecycleDone():
-			return
-		case <-ticker.C:
-		}
-		c.dispatchScheduledScans(context.Background(), time.Now(), lastScan)
-	}
-}
-
-// dispatchScheduledScans 为每个到了间隔的资料库发起一次守护扫描，并把这一轮的时刻记进 lastScan。
-//
-// 撞上手动扫描不再静默跳过：那次发起进**排队中**，手动扫描收尾后由引擎放行，用户在任务中心
-// 看得见它排在那里。已经排着一条时本次被**合并**进去——守护扫描要的只是「确保扫过」。
-// 这个库被**停发**挡下时则一条运行都不建，那正是「不再每小时白转一遍盘」。
-// 三者都不是错误，因此这里只在**真的发不起来**时才记一笔。
-func (c *Controller) dispatchScheduledScans(ctx context.Context, now time.Time, lastScan map[int64]time.Time) {
-	libs, err := c.store.ListLibraries(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "Daemon failed to fetch libraries", "error", err)
-		return
-	}
-
-	for _, lib := range libs {
-		if lib.ScanMode != "interval" {
-			continue
-		}
-
-		interval := time.Duration(lib.ScanInterval) * time.Minute
-		last, ok := lastScan[lib.ID]
-		// 从未记录（或刚启动）时首个 tick 就触发一次。
-		if ok && now.Sub(last) < interval {
-			continue
-		}
-		lastScan[lib.ID] = now
-		// 说的是「到点了」而不是「已经发起」：这次发起可能被**停发**挡下（那时一条运行都不建），
-		// 落地成什么由启动入口那一处记（见 taskEngine.start）。
-		slog.InfoContext(ctx, "Library reached its scan interval", "library_id", lib.ID, "path", lib.Path)
-		if err := c.launchLibraryScanTask(lib, false, task.TriggerScheduled); err != nil {
-			slog.ErrorContext(ctx, "Auto-scan could not be started", "library_id", lib.ID, "error", err)
-		}
-	}
+// dispatchScheduledScans is the retained scheduling adapter for embedded callers.
+func (c *Controller) dispatchScheduledScans(ctx context.Context, now time.Time, last map[int64]time.Time) {
+	c.runtime.DispatchScheduledScans(ctx, now, last)
 }
 
 // PublishEvent 供 Scanner / FileWatcher 等外部投递事件消息；委托给 sseBroker（保留此方法以维持外部 API）。
@@ -1087,17 +878,16 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	books, err := c.store.ListBooksBySeries(ctx, seriesID)
+	view, err := reading.NewQueries(c.store).Series(ctx, c.currentUserID(r), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch books")
 		return
 	}
 
+	books := view.Books
 	if books == nil {
 		books = []database.Book{}
 	}
-	c.overlayUserProgress(ctx, c.currentUserID(r), books)
-	sortBooksForReading(books)
 	jsonResponse(w, http.StatusOK, books)
 }
 
@@ -1109,13 +899,12 @@ func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	book, err := c.store.GetBook(ctx, bookID)
+	book, err := reading.NewQueries(c.store).Book(ctx, c.currentUserID(r), bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book not found")
 		return
 	}
 
-	c.overlayUserProgressOne(ctx, c.currentUserID(r), &book)
 	jsonResponse(w, http.StatusOK, book)
 }
 
@@ -1193,192 +982,6 @@ func (c *Controller) bulkEditSeries(w http.ResponseWriter, r *http.Request) {
 
 	c.invalidateDashboardStatsCache("bulk_edit")
 	jsonResponse(w, http.StatusOK, map[string]interface{}{"updated": len(req.SeriesIDs)})
-}
-
-type BulkUpdateBookProgressRequest struct {
-	BookIDs []int64 `json:"book_ids"`
-	IsRead  bool    `json:"is_read"` // true=标为已读(最大页码), false=标为未读(1)
-}
-
-type BulkUpdateSeriesProgressRequest struct {
-	SeriesIDs []int64 `json:"series_ids"`
-	IsRead    bool    `json:"is_read"` // true=标为已读(最大页码), false=标为未读(清空阅读记录)
-}
-
-func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Request) {
-	var req BulkUpdateBookProgressRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	if len(req.BookIDs) == 0 {
-		jsonResponse(w, http.StatusOK, map[string]string{"message": "No books updated"})
-		return
-	}
-	if len(req.BookIDs) > maxBulkReadStateBooks {
-		jsonError(w, http.StatusBadRequest, "Too many books in one request")
-		return
-	}
-
-	ctx := r.Context()
-	// 已登录用户走每用户进度：一次事务内标记全部书并按系列刷新 user_series_progress。
-	if uid := c.currentUserID(r); uid > 0 {
-		if err := c.store.SetUserBooksReadState(ctx, uid, req.BookIDs, req.IsRead, time.Now()); err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
-			return
-		}
-		c.invalidateVolatileStatsCache("bulk_book_progress")
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk progress update completed", "updated": len(req.BookIDs)})
-		return
-	}
-
-	// 旧全局路径（首启尚无账户 / 单元测试）。按系列分组：每系列一个事务，内部逐书写入后只刷新一次
-	// series_stats，避免走 store 包装器时每本书都隐式触发一次全系列统计重算（O(N^2) 聚合 + 逐条 autocommit）。
-	booksBySeries := make(map[int64][]database.Book)
-	orderedSeries := make([]int64, 0)
-	for _, id := range req.BookIDs {
-		book, err := c.store.GetBook(ctx, id)
-		if err != nil {
-			slog.Error("Failed to load book for bulk progress update", "book_id", id, "error", err)
-			continue
-		}
-		if _, seen := booksBySeries[book.SeriesID]; !seen {
-			orderedSeries = append(orderedSeries, book.SeriesID)
-		}
-		booksBySeries[book.SeriesID] = append(booksBySeries[book.SeriesID], book)
-	}
-	updated := 0
-	for _, seriesID := range orderedSeries {
-		books := booksBySeries[seriesID]
-		if err := c.applySeriesBooksReadStateTx(ctx, seriesID, books, req.IsRead); err != nil {
-			slog.Error("Failed to bulk update book progress", "series_id", seriesID, "error", err)
-			continue
-		}
-		updated += len(books)
-	}
-	if updated > 0 {
-		c.invalidateVolatileStatsCache("bulk_book_progress")
-	}
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk progress update completed", "updated": updated})
-}
-
-func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Request) {
-	var req BulkUpdateSeriesProgressRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	if len(req.SeriesIDs) == 0 {
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "No series updated", "updated": 0})
-		return
-	}
-	// 系列 id 数本身就要限：每个都会被展开成该系列的全部书。
-	if len(req.SeriesIDs) > maxBulkReadStateSeries {
-		jsonError(w, http.StatusBadRequest, "Too many series in one request")
-		return
-	}
-
-	ctx := r.Context()
-	uid := c.currentUserID(r)
-	updated := 0
-	// 已登录用户：汇集所有系列的书，一次性走每用户读态写入。
-	if uid > 0 {
-		var bookIDs []int64
-		for _, seriesID := range req.SeriesIDs {
-			books, err := c.store.ListBooksBySeries(ctx, seriesID)
-			if err != nil {
-				slog.Error("Failed to load books for bulk series progress update", "series_id", seriesID, "error", err)
-				continue
-			}
-			for _, b := range books {
-				bookIDs = append(bookIDs, b.ID)
-			}
-		}
-		// 展开后的书数同样要挡：系列 id 数在上限内，展开结果仍可能是整库量级。
-		if len(bookIDs) > maxBulkReadStateBooks {
-			jsonError(w, http.StatusBadRequest, "Selected series expand to too many books")
-			return
-		}
-		if err := c.store.SetUserBooksReadState(ctx, uid, bookIDs, req.IsRead, time.Now()); err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to update progress")
-			return
-		}
-		if len(bookIDs) > 0 {
-			c.invalidateVolatileStatsCache("bulk_series_progress")
-		}
-		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk series progress update completed", "updated": len(bookIDs)})
-		return
-	}
-
-	// 旧全局路径。
-	for _, seriesID := range req.SeriesIDs {
-		books, err := c.store.ListBooksBySeries(ctx, seriesID)
-		if err != nil {
-			slog.Error("Failed to load books for bulk series progress update", "series_id", seriesID, "error", err)
-			continue
-		}
-		if len(books) == 0 {
-			continue
-		}
-		if err := c.applySeriesBooksReadStateTx(ctx, seriesID, books, req.IsRead); err != nil {
-			slog.Error("Failed to bulk update series progress", "series_id", seriesID, "error", err)
-			continue
-		}
-		updated += len(books)
-	}
-	if updated > 0 {
-		c.invalidateVolatileStatsCache("bulk_series_progress")
-	}
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "Bulk series progress update completed", "updated": updated})
-}
-
-// applySeriesBooksReadStateTx 在单个事务内更新一个系列下若干书的阅读状态，并在写完后只刷新一次
-// series_stats。用 tx 绑定的原始 q.UpdateBookProgress（绕开 SqlStore 包装器的逐书隐式全量刷新），
-// 把整系列标记已读/未读从「每本书 3 次 autocommit + 一次全量聚合」收敛为「一个事务 + 一次刷新」。
-func (c *Controller) applySeriesBooksReadStateTx(ctx context.Context, seriesID int64, books []database.Book, isRead bool) error {
-	return c.store.ExecTx(ctx, func(q *database.Queries) error {
-		for _, book := range books {
-			if err := applyBookReadStateTx(ctx, q, book, isRead); err != nil {
-				return err
-			}
-		}
-		return q.RefreshSeriesStats(ctx, seriesID)
-	})
-}
-
-// applyBookReadStateTx 在事务内更新单本书的阅读状态（已读=最大页码并记阅读活动，未读=清空进度），
-// 使用事务绑定的原始 q 方法，不做逐书统计刷新。
-func applyBookReadStateTx(ctx context.Context, q *database.Queries, book database.Book, isRead bool) error {
-	page := int64(1)
-	validPage := false
-	readAt := sql.NullTime{Valid: false}
-
-	if isRead {
-		if book.PageCount > 0 {
-			page = book.PageCount
-		} else {
-			page = 99999
-		}
-		validPage = true
-		readAt = sql.NullTime{Time: time.Now(), Valid: true}
-	}
-
-	if err := q.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
-		LastReadPage: sql.NullInt64{Int64: page, Valid: validPage},
-		LastReadAt:   readAt,
-		ID:           book.ID,
-	}); err != nil {
-		return err
-	}
-
-	if isRead && validPage {
-		if err := q.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: page, Date: database.ActivityDayKey(time.Now())}); err != nil {
-			slog.Error("Failed to log reading activity", "book_id", book.ID, "error", err)
-		}
-	}
-	return nil
 }
 
 func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {

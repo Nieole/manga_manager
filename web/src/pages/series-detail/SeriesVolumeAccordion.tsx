@@ -1,3 +1,4 @@
+import { bookReadingState } from '../../reading/bookState';
 import { ChevronDown, CheckCircle2, FolderOpen } from 'lucide-react';
 import type { Book } from './types';
 import type { VolumeItem } from './hooks/useSeriesVolumes';
@@ -46,8 +47,8 @@ export function SeriesVolumeAccordion({
         {volumes.map((volume) => {
           const open = isOpen(volume.name);
           const selected = selectedVolumes.includes(volume.name);
-          const isFullyRead = volume.total_pages > 0 && volume.read_pages >= volume.total_pages;
-          const progressPct = volume.total_pages > 0 ? Math.min(100, (volume.read_pages / volume.total_pages) * 100) : 0;
+          const isFullyRead = volume.is_read ?? (volume.books.length > 0 && volume.books.every((book) => bookReadingState(book).completed));
+          const progressPct = isFullyRead ? 100 : volume.total_pages > 0 ? Math.min(100, (volume.read_pages / volume.total_pages) * 100) : 0;
           const coverSrc =
             volume.cover_path?.Valid && volume.cover_path?.String && volume.cover_book_id
               ? `/api/covers/${volume.cover_book_id}${seriesUpdatedAt ? `?v=${new Date(seriesUpdatedAt).getTime()}` : ''}`

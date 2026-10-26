@@ -77,6 +77,14 @@ func TestScanAccountsArchiveFailuresAndKeepsScanning(t *testing.T) {
 			writeScannerTestSeries(t, seriesPath, "Alpha 01.cbz", brokenName, "Gamma 03.cbz")
 
 			s := NewScanner(store, config.NewManager(newSlowDiskTestConfig(t)))
+			t.Cleanup(func() {
+				// Standalone scans own asynchronous cover work; drain before the cache and store cleanups.
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := s.waitForCoverQueue(ctx); err != nil {
+					t.Errorf("drain standalone covers: %v", err)
+				}
+			})
 			tc.breakArchive(t, s, filepath.Join(seriesPath, brokenName))
 
 			observer := &spyObserver{}

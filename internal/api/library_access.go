@@ -34,7 +34,7 @@ func (c *Controller) taskLibraries(ctx context.Context, identity TaskIdentity) (
 		return []int64{series.LibraryID}, nil
 	case taskScopeSystem:
 		switch identity.taskType {
-		case cleanupRunHistoryTaskKey, "rebuild_index", "cleanup_thumbnails", "reconcile_koreader_progress", "refresh_koreader_matching":
+		case cleanupRunHistoryTaskKey:
 			return nil, nil
 		}
 		return []int64{task.AllLibraries}, nil

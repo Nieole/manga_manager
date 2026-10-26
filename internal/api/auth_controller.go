@@ -953,34 +953,3 @@ func decodeAuthJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	}
 	return true
 }
-
-// startSessionJanitor 周期性清理过期会话。
-//
-// store.DeleteExpiredSessions 早就实现了、也有 DB 层单测，但生产代码里一个调用点都没有：
-// sessions 表只增不减，一个长期运行的实例会无限积累已过期的行。
-// 随 Controller 生命周期退出（经 runBackground 登记，Close 会等待）。
-func (c *Controller) startSessionJanitor() {
-	const interval = time.Hour
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	prune := func() {
-		if c.store == nil {
-			return
-		}
-		if err := c.store.DeleteExpiredSessions(context.Background(), time.Now()); err != nil {
-			slog.Warn("Failed to prune expired sessions", "error", err)
-		}
-	}
-	// 启动时先清一次，避免实例频繁重启时永远等不到第一个 tick。
-	prune()
-
-	for {
-		select {
-		case <-c.lifecycleDone():
-			return
-		case <-ticker.C:
-			prune()
-		}
-	}
-}

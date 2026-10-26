@@ -1,3 +1,4 @@
+import { bookReadingState } from '../../reading/bookState';
 import { CheckCircle2, FolderOpen } from 'lucide-react';
 import type { VolumeItem } from './hooks/useSeriesVolumes';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -28,8 +29,8 @@ export function SeriesVolumeGrid({
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6">
       {volumes.map((volume) => {
         const selected = selectedVolumes.includes(volume.name);
-        const isFullyRead = volume.total_pages > 0 && volume.read_pages >= volume.total_pages;
-        const progressPct = volume.total_pages > 0 ? Math.min(100, (volume.read_pages / volume.total_pages) * 100) : 0;
+        const isFullyRead = volume.is_read ?? (volume.books.length > 0 && volume.books.every((book) => bookReadingState(book).completed));
+        const progressPct = isFullyRead ? 100 : volume.total_pages > 0 ? Math.min(100, (volume.read_pages / volume.total_pages) * 100) : 0;
         const coverSrc =
           volume.cover_path?.Valid && volume.cover_path?.String && volume.cover_book_id
             ? `/api/covers/${volume.cover_book_id}${seriesUpdatedAt ? `?v=${new Date(seriesUpdatedAt).getTime()}` : ''}`

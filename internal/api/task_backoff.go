@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"manga-manager/internal/application/runtime"
 	"manga-manager/internal/config"
 	"manga-manager/internal/task"
 )
@@ -24,24 +25,11 @@ const maxBackoffHours = 24 * 36500
 // 每次判定现读一遍配置快照（引擎收的是一个函数，不是一份值）：三个数在设置里可改，改完对
 // **下一次自动发起**生效。已经写进任务行的那个到期时刻不会被重新计时——它在上一次失败时
 // 就已经算好了。
-func backoffPolicyOf(cfg config.Config) task.BackoffPolicy {
-	return task.BackoffPolicy{
-		Factor:    cfg.Tasks.BackoffFactor,
-		MaxDelay:  backoffMaxDelay(cfg.Tasks.BackoffMaxHours),
-		StopAfter: cfg.Tasks.BackoffStopAfter,
-	}
-}
-
-// backoffMaxDelay 把配置里的小时数翻成封顶时长：非正数交出 0（领域侧据此退回默认封顶），
-// 大到会溢出的按 maxBackoffHours 收。
+func backoffPolicyOf(cfg config.Config) task.BackoffPolicy { return runtime.BackoffPolicy(cfg) }
 func backoffMaxDelay(hours int) time.Duration {
-	if hours > maxBackoffHours {
-		hours = maxBackoffHours
-	}
-	if hours < 0 {
-		hours = 0
-	}
-	return time.Duration(hours) * time.Hour
+	var cfg config.Config
+	cfg.Tasks.BackoffMaxHours = hours
+	return runtime.BackoffPolicy(cfg).MaxDelay
 }
 
 // taskBackoffPolicy 读此刻生效的三个阈值，理由同 taskSlots。

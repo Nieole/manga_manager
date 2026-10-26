@@ -1,3 +1,4 @@
+import { useLibraryRefresh, useLibraryInvalidation } from '../session/ApplicationSessionProvider';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { useLatestRequest } from '../hooks/useLatestRequest';
@@ -43,13 +44,13 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   const { showToast } = useToast();
 
   // When embedded, we don't have an outlet context, so we use defaults
-  let refreshTrigger = 0;
+  const refreshTrigger = useLibraryRefresh({ area: 'reviews' });
+  const invalidateLibrary = useLibraryInvalidation();
   let libraries: LibraryOption[] = [];
   try {
     if (!embedded) {
       // eslint-disable-next-line react-hooks/rules-of-hooks
-      const ctx = useOutletContext<{ refreshTrigger: number; libraries?: LibraryOption[] }>();
-      refreshTrigger = ctx?.refreshTrigger ?? 0;
+      const ctx = useOutletContext<{ libraries?: LibraryOption[] }>();
       libraries = ctx?.libraries ?? [];
     }
   } catch {
@@ -146,9 +147,9 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   }, [appliedQuery, libraryId, provider, reviewsRequest, showToast, t]);
 
   useEffect(() => {
-    setMarkedActions({});
     void loadReviews(true);
   }, [libraryId, provider, appliedQuery, refreshTrigger, loadReviews]);
+  useEffect(() => setMarkedActions({}), [libraryId, provider, appliedQuery]);
 
   // 同理：哨兵一进 DOM 就得被观察上，不留「已渲染但还没人盯着」的空窗。
   useLayoutEffect(() => {
@@ -203,12 +204,18 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
 
   const clearMarks = () => setMarkedActions({});
 
+  const changedReviewBatch = useRef(false);
+  const completedReviews = useRef(new Set<number>());
   const postMetadataBulk = async (endpoint: string, ids: number[]) => {
     let totals = emptyBulkOutcome();
     for (let index = 0; index < ids.length; index += 100) {
       const batch = ids.slice(index, index + 100);
       const res = await apiClient.post<MetadataBulkResponse>(endpoint, { review_ids: batch, mode });
       totals = accumulateBulkOutcome(totals, res.data);
+      const completed = [...(res.data.applied ?? []), ...(res.data.rejected ?? [])];
+      completed.forEach(id => completedReviews.current.add(id));
+      if (completed.length > 0 || (res.data.partial?.length ?? 0) > 0) changedReviewBatch.current = true;
+      if ((res.data.applied?.length ?? 0) + (res.data.partial?.length ?? 0) > 0) invalidateLibrary({ areas: ['catalog', 'collections', 'organize', 'stats'] });
     }
     return totals;
   };
@@ -216,6 +223,8 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
   const runMarkedActions = async () => {
     if (markedCount === 0) return;
     setActing(true);
+    changedReviewBatch.current = false;
+    completedReviews.current.clear();
     try {
       const applied = applyIds.length > 0
         ? await postMetadataBulk('/api/metadata/reviews/bulk-apply', applyIds)
@@ -237,6 +246,11 @@ export default function MetadataReviews({ embedded, onReviewChange }: MetadataRe
       onReviewChange?.();
     } catch (err: unknown) {
       showToast(getApiErrorMessage(err, t('metadataReviews.toast.actionFailed')), 'error');
+      if (changedReviewBatch.current) {
+        setMarkedActions(current => Object.fromEntries(Object.entries(current).filter(([id]) => !completedReviews.current.has(Number(id)))));
+        await loadReviews(true);
+        onReviewChange?.();
+      }
     } finally {
       setActing(false);
     }

@@ -1,7 +1,6 @@
 // 守 api 层的对外契约：请求打进 handler、结果从真库读回，断言状态码与错误语义、响应字段的
 // 形状、写路径落库后的可见结果。这些契约破了，前端拿到的是形状对而含义错的 200。
-// 任务的进度与终态先进内存再异步刷盘，相关用例必须分「内存立即可见」与「刷盘后 DB 追上」两段断言，
-// 只查 DB 会把一次异步延迟误判成丢数据。
+// 任务事实由 SQLite 持有，SSE 的投递与消费者观测另有回归覆盖。
 // 全包共用的测试装配 newTestController 也在这里。
 
 package api
@@ -13,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"manga-manager/internal/application/maintenance"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -76,8 +76,10 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 	// 与生产路径共用同一份装配（newControllerCore），只把缓存容量调小以便用几条数据触发淘汰。
 	// 不走 NewController 是因为后者还会启动守护/落盘/SSE/文件监听等后台服务，测试不需要也不该起。
 	controller := newControllerCore(store, scan, cfgManager, configPath, controllerCacheSizes{
-		imageBytes: 8 << 10, page: 8, bookPageSource: 8, progressWrite: 8,
+		imageBytes: 8 << 10, page: 8, bookPageSource: 8,
 	})
+
+	controller.taskEngine.dispatch = controller.buildTaskDispatch()
 
 	t.Cleanup(parser.ResetArchivePool)
 	t.Cleanup(controller.Close)
@@ -107,12 +109,10 @@ func requestWithRouteParams(method, path string, body []byte, params map[string]
 
 type countingStore struct {
 	database.Store
-	getBookCalls            int
-	getDashboardStatsCalls  int
-	structuralStatsCalls    int
-	volatileStatsCalls      int
-	updateBookProgressCalls int
-	logReadingActivityCalls int
+	getBookCalls           int
+	getDashboardStatsCalls int
+	structuralStatsCalls   int
+	volatileStatsCalls     int
 }
 
 func (s *countingStore) GetBook(ctx context.Context, id int64) (database.Book, error) {
@@ -133,16 +133,6 @@ func (s *countingStore) GetDashboardStructuralStats(ctx context.Context) (*datab
 func (s *countingStore) GetDashboardVolatileStats(ctx context.Context) (*database.DashboardVolatileStats, error) {
 	s.volatileStatsCalls++
 	return s.Store.GetDashboardVolatileStats(ctx)
-}
-
-func (s *countingStore) UpdateBookProgress(ctx context.Context, arg database.UpdateBookProgressParams) error {
-	s.updateBookProgressCalls++
-	return s.Store.UpdateBookProgress(ctx, arg)
-}
-
-func (s *countingStore) LogReadingActivity(ctx context.Context, arg database.LogReadingActivityParams) error {
-	s.logReadingActivityCalls++
-	return s.Store.LogReadingActivity(ctx, arg)
 }
 
 type blockingMetadataProvider struct {
@@ -948,8 +938,9 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	// 写重建任务的资格来自任务体交给聚合器的**运行句柄**：聚合器据此为每个库造一个
 	// **扫描观察者**，交不出句柄时造不出观察者，报文就无处可落。
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Identity: systemTask("rebuild_thumbnails", variantSole), Total: 1})
-	controller.initRebuildThumbAggregator(progress, 0)
-	t.Cleanup(controller.releaseRebuildThumbAggregator)
+	aggregator := maintenance.NewThumbnailProgress()
+	aggregator.Begin(progress, 0)
+	t.Cleanup(aggregator.End)
 
 	// 重建逐库扫描，每个库一个观察者：跨库总量只能这样加出来，因为每次扫描只报自己那一个库。
 	libA := database.Library{ID: 42, Name: "A", Path: filepath.Join(t.TempDir(), "a")}
@@ -962,8 +953,8 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		PausedMillis:   80,
 		DurationMillis: 60000,
 	}
-	controller.beginRebuildThumbLibrary(libA, 2).Metrics(reportA)
-	controller.beginRebuildThumbLibrary(libB, 2).Metrics(scanner.ScanMetricsReport{
+	aggregator.BeginLibrary(libA, 2).Metrics(reportA)
+	aggregator.BeginLibrary(libB, 2).Metrics(scanner.ScanMetricsReport{
 		StorageProfile: config.StorageProfileHDDExternal,
 		VolumeKey:      "e:",
 		OpenedArchives: 2,
@@ -1003,11 +994,9 @@ func TestStorageIOCoverRateComesFromTheCoverRun(t *testing.T) {
 	coverProgress := seedTask(t, controller.taskEngine, taskSeed{
 		Key: "generate_covers_42", Identity: libraryTask("generate_covers", 42, variantSole), Total: 1,
 	})
-	coverObserver := newCoverRunObserver(coverProgress, "A")
-	coverObserver.begin()
-	coverObserver.Progress(scanner.CoverProgressReport{
-		Queued: 6, Generated: 6, OpenedArchives: 6, ThumbnailWriteMillis: 50,
-	})
+	coverProgress.Report(runhandle.Frame{Metrics: map[string]int64{
+		"queued_covers": 6, "generated_covers": 6, "opened_archives": 6, "thumbnail_write_ms": 50, "duration_ms": 1,
+	}})
 
 	scanRate, coverRate, thumbnailWriteMillis := controller.recentStorageIOTaskRates()
 	if scanRate <= 0 || coverRate <= 0 || thumbnailWriteMillis != 50 {
@@ -2581,7 +2570,7 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	cfg := controller.config
 	reloaded := newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
 		filepath.Join(tempDir, "config.yaml"), controllerCacheSizes{
-			imageBytes: 8 << 10, page: 8, bookPageSource: 8, progressWrite: 8,
+			imageBytes: 8 << 10, page: 8, bookPageSource: 8,
 		})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)
@@ -3279,34 +3268,44 @@ func TestUpdateBookProgressClampsToPageCount(t *testing.T) {
 	}
 }
 
-func TestUpdateBookProgressThrottlesRepeatedWrites(t *testing.T) {
+func TestProgressFactsRefreshSamePageAndLegacyReportsAreThrottled(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 12)
-	counting := &countingStore{Store: store}
-	controller.store = counting
-
-	postProgress := func(page int64) {
+	post := func(body []byte) string {
 		t.Helper()
-		req := requestWithRouteParam(http.MethodPost, "/api/books/1/progress", []byte(`{"page":`+strconv.FormatInt(page, 10)+`}`), "bookId", strconv.FormatInt(book.ID, 10))
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, req)
+		controller.updateBookProgress(rec, requestWithRouteParam(http.MethodPost, "/", body, "bookId", strconv.FormatInt(book.ID, 10)))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("expected progress update 200, got %d body=%s", rec.Code, rec.Body.String())
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
 		}
+		return statusOf(rec)
 	}
-
-	postProgress(6)
-	postProgress(6)
-	postProgress(4)
-
-	if counting.updateBookProgressCalls != 2 {
-		t.Fatalf("expected repeated same-page progress write to be throttled, got %d writes", counting.updateBookProgressCalls)
+	if got := post([]byte(`{"page":6}`)); got != "Progress updated" {
+		t.Fatal(got)
 	}
-	if counting.logReadingActivityCalls != 1 {
-		t.Fatalf("expected reading activity only for forward progress, got %d calls", counting.logReadingActivityCalls)
+	first, err := store.GetBook(context.Background(), book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := post([]byte(`{"page":6}`)); got != "Progress unchanged" {
+		t.Fatal(got)
+	}
+	at := first.LastReadAt.Time.Add(time.Second)
+	body, err := json.Marshal(UpdateProgressRequest{Page: 6, UpdatedAt: &at, FactID: "same-page-new-reading"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := post(body); got != "Progress updated" {
+		t.Fatal(got)
+	}
+	if got := post(body); got != "Progress unchanged" {
+		t.Fatal(got)
+	}
+	updated, err := store.GetBook(context.Background(), book.ID)
+	if err != nil || !updated.LastReadAt.Time.Equal(at) || updated.LastReadPage.Int64 != 6 {
+		t.Fatalf("book=%+v err=%v", updated, err)
 	}
 }
-
 func TestBulkUpdateBookProgressMarksReadAndUnread(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 8)

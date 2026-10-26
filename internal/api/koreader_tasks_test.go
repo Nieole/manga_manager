@@ -124,12 +124,15 @@ func newKOReaderTaskRigWithMode(t *testing.T, store *koreaderTaskStore, matchMod
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, diskWork)
 	e.now = clock.Now
 
-	return &Controller{
+	c := &Controller{
 		taskEngine: e,
 		store:      store,
 		config:     manager,
 		koreader:   ksvc.NewService(store, manager),
-	}, snapshots
+	}
+	c.assembleScanUseCases()
+	c.assembleMaintenanceUseCases()
+	return c, snapshots
 }
 
 // seedKOReaderCandidates / seedUnmatchedProgress 造 n 条待处理记录。ID 从 1 起连号：两个批循环

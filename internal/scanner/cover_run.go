@@ -49,9 +49,10 @@ type CoverProgressReport struct {
 // CoverRunLauncher 由装配方注册：一次扫描第一次要为某个库排封面作业时调它**一次**，
 // 由它去建那条封面运行，并在那条运行的任务体里把这一批跑完（CoverBatch.Drain）。
 //
+// ctx 只属于同步交接与发起日志；任务体须使用封面运行自己的上下文。
 // 它**接手**这一批，扫描器此后不再管它。没有注册时扫描器自己跑完这一批——封面照样生成，
 // 只是无处可报，与交出 nil 扫描观察者是同一个形状。
-type CoverRunLauncher func(batch *CoverBatch)
+type CoverRunLauncher func(ctx context.Context, batch *CoverBatch)
 
 // SetCoverRunLauncher 注册封面运行的发起口。
 func (s *Scanner) SetCoverRunLauncher(launch CoverRunLauncher) {
@@ -190,10 +191,10 @@ func (b *CoverBatch) add(jobs []coverJob) {
 }
 
 // attach 把这一批交给注册的发起方，一批只交一次。
-func (b *CoverBatch) attach() {
+func (b *CoverBatch) attach(ctx context.Context) {
 	b.launchOnce.Do(func() {
 		if b.scanner.coverRuns != nil {
-			b.scanner.coverRuns(b)
+			b.scanner.coverRuns(ctx, b)
 			return
 		}
 		// 没有发起方接手：扫描器自己把这一批跑完。封面照样生成，只是不建运行、无处可报，

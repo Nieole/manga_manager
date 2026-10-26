@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useOutletContext, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 
+import { useLibraryRefresh, useLibraryInvalidation } from '../../session/ApplicationSessionProvider';
 import { useAuth } from '../../auth/AuthProvider';
 import AddToCollectionModal from '../../components/AddToCollectionModal';
 import BulkEditSeriesModal from '../../components/BulkEditSeriesModal';
@@ -23,7 +24,7 @@ import { useScrapeProviders } from '../../hooks/useScrapeProviders';
 import { useLibrarySeries } from './hooks/useLibrarySeries';
 import { useLibrarySelection } from './hooks/useLibrarySelection';
 import { useLibraryKeyboard } from './hooks/useLibraryKeyboard';
-import { useExternalLibrary } from './hooks/useExternalLibrary';
+import { useExternalLibrary } from '../../features/external-library/useExternalLibrary';
 import { useSeriesScraping } from './hooks/useSeriesScraping';
 import { useSmartFilters } from './hooks/useSmartFilters';
 import { smartFilterToSnapshot } from './hooks/smartFilterNormalize';
@@ -40,7 +41,8 @@ export default function LibraryPage() {
   const { showToast } = useToast();
   const { t } = useI18n();
   const { isAdmin } = useAuth();
-  const { refreshTrigger } = useOutletContext<{ refreshTrigger: number }>() || { refreshTrigger: 0 };
+  const refreshTrigger = useLibraryRefresh({ libraryId: libId });
+  const invalidateLibrary = useLibraryInvalidation();
 
   // 资料库页面的筛选状态需要同时满足三件事：URL 可回放、后端查询可复现、浏览器刷新后用户选择不丢失。
   // 因此筛选、排序、分页和智能视图都集中在 hook 层管理，页面只负责把它们编排到工具栏、列表和分页控件。
@@ -143,7 +145,7 @@ export default function LibraryPage() {
 
   // ===== 外部库 =====
   const allSeriesIds = useMemo(() => allSeries.map((s) => s.id), [allSeries]);
-  const externalLib = useExternalLibrary({ libId, refreshTrigger, allSeriesIds, onError: showError });
+  const externalLib = useExternalLibrary({ libId, allSeriesIds, onError: showError });
 
   // ===== 智能筛选 =====
   // 智能筛选保存的是一组业务视图快照：视图有哪些维度、怎么存怎么还原由 smartFilterNormalize 一侧回答，页面只负责接线与提示。
@@ -179,7 +181,6 @@ export default function LibraryPage() {
   const { rescanningId, handleCardClick, handleToggleFavorite, handleRescanSeries } = useLibraryCardActions({
     toggleSelectSeries: selection.toggleSelectSeries,
     patchSeries,
-    refreshLoadedSeries,
     showError,
     showToast,
     t,
@@ -447,6 +448,7 @@ export default function LibraryPage() {
           seriesIds={selection.selectedSeries}
           onClose={() => setShowCollectionModal(false)}
           onSuccess={() => {
+            invalidateLibrary({ areas: ['collections'] });
             showToast(t('home.selection.addToCollectionSuccess', { count: selection.selectedSeries.length }), 'success');
             selection.clearSelection();
           }}

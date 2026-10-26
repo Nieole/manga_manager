@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
+import { ApplicationSessionScope } from './session/ApplicationSessionProvider';
 import { useAuth } from './auth/AuthProvider';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AuthGate } from './auth/AuthGate';
@@ -91,7 +92,7 @@ function App() {
     <ErrorBoundary>
       <AuthGate>
       <Routes>
-        <Route path="/" element={<Layout />}>
+        <Route path="/" element={<ApplicationSessionScope><Layout /></ApplicationSessionScope>}>
           {/* 默认首页 - 仪表板 */}
           <Route index element={withRouteFallback(<Dashboard />)} />
           {/* 选择具体 Library 后的系列浏览 */}

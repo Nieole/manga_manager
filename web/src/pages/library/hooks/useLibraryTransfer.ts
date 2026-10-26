@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import type { ExternalSeriesStatus, ExternalSession, Series } from '../types';
 
@@ -34,6 +34,8 @@ export function useLibraryTransfer({
   showToast,
   t,
 }: UseLibraryTransferParams) {
+  const activeSessionId = useRef(externalSession?.session_id);
+  activeSessionId.current = externalSession?.session_id;
   const [showTransferConfirmModal, setShowTransferConfirmModal] = useState(false);
   const [pendingTransferSummary, setPendingTransferSummary] = useState<TransferSummary | null>(null);
 
@@ -58,11 +60,13 @@ export function useLibraryTransfer({
     if (unresolvedIds.length > 0) {
       try {
         const fetched = await queryExternalSeriesStatus(unresolvedIds);
+        if (activeSessionId.current !== externalSession.session_id) return;
         coverage = { ...externalSeriesMap };
         fetched.forEach((item) => {
           coverage[item.series_id] = item;
         });
       } catch (err) {
+        if (activeSessionId.current !== externalSession.session_id) return;
         console.error('Failed to resolve external coverage for the selection', err);
         showError('home.external.statusUnavailable');
         return;

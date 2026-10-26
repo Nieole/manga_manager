@@ -22,6 +22,7 @@ const OFFLINE_PROGRESS_KEY = 'manga-manager:offline-progress';
 // 没有它就无从判断「换人了」——而共享设备上最常见的情形恰恰是上一个人直接关窗口、
 // 从不点登出，登出时的清理根本不会被触发。
 const OFFLINE_OWNER_KEY = 'manga-manager:offline-owner';
+let offlineOwnerGeneration = 0;
 
 export interface OfflineBookStatus {
   bookId: string;
@@ -52,6 +53,7 @@ export interface QueuedProgress {
   bookId: string;
   page: number;
   updatedAt: string;
+  factId?: string;
   title?: string;
 }
 
@@ -397,9 +399,9 @@ function writeQueuedProgress(progress: Record<string, QueuedProgress>) {
   writeJSON(OFFLINE_PROGRESS_KEY, progress);
 }
 
-export function queueOfflineProgress(bookId: string, page: number, title?: string) {
+export function queueOfflineProgress(bookId: string, page: number, title?: string, occurredAt?: string) {
   const progress = readQueuedProgress();
-  progress[bookId] = { bookId, page, title, updatedAt: new Date().toISOString() };
+  progress[bookId] = { bookId, page, title, updatedAt: occurredAt ?? new Date().toISOString(), factId: globalThis.crypto?.randomUUID?.() ?? `offline-${Date.now()}-${nextDownloadToken()}` };
   writeQueuedProgress(progress);
 }
 
@@ -443,6 +445,7 @@ function dropOfflineData() {
 // 只有登出走这里。会话过期（后端答未登录 / 401）与断网都不是「我要离开这台设备」，
 // 那时用户还是同一个人，清了就是删他自己的书和进度，见 AuthProvider。
 export function releaseOfflineOwner(): void {
+  offlineOwnerGeneration += 1;
   try {
     localStorage.removeItem(OFFLINE_OWNER_KEY);
   } catch {
@@ -474,6 +477,7 @@ export function reconcileOfflineOwner(userId: number): boolean {
     // 写不进标记时不做清理：宁可漏清也不要每次登录都把用户自己的离线数据删掉。
     return false;
   }
+  if (previous !== next) offlineOwnerGeneration += 1;
   // previous 为空是「升级后首次登录」——此时的残留归属未知，按当前用户认领而不是清掉，
   // 否则所有老用户升级后会平白丢一次离线书目。
   if (previous === null || previous === next) return false;
@@ -495,6 +499,24 @@ function dropOfflineBookBytes() {
   }
 }
 
+// Confirm only the transmitted fact; new reading during an await owns its own queue slot.
+function confirmQueuedFact(bookId: string, sent: QueuedProgress) {
+  const current = readQueuedProgress();
+  const queued = current[bookId];
+  if (queued?.bookId === sent.bookId && queued.page === sent.page && queued.updatedAt === sent.updatedAt && queued.factId === sent.factId) {
+    delete current[bookId];
+    writeQueuedProgress(current);
+  }
+}
+
+function offlineOwner(): string | null {
+  try {
+    return window.localStorage.getItem(OFFLINE_OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncResult> {
   if (!navigator.onLine) {
     const progress = readQueuedProgress();
@@ -506,6 +528,9 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
     return { synced: 0, failed: 0, remaining: 0 };
   }
 
+  const owner = offlineOwner();
+  const generation = offlineOwnerGeneration;
+  const stillOwned = () => owner === offlineOwner() && generation === offlineOwnerGeneration;
   const payload = buildBulkSyncItems(entries.map(([, item]) => item));
 
   let synced = 0;
@@ -524,7 +549,7 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
       const results = data?.results ?? [];
       // 仅当确实拿到逐条结果时才据此增删队列。结果为空（响应解析失败/异常返回）不能证明服务端已处理，
       // 此时不删队列、bulkOk 保持 false，改走逐本回退——避免把未落库的离线进度误当已同步而丢弃。
-      if (results.length > 0) {
+      if (stillOwned() && results.length > 0) {
         bulkOk = true;
         const successIds = new Set<number>();
         for (const row of results) {
@@ -534,7 +559,7 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
         }
         for (const [bookId, item] of entries) {
           if (successIds.has(Number(item.bookId))) {
-            delete progress[bookId];
+            confirmQueuedFact(bookId, item);
             synced += 1;
           } else {
             failed += 1;
@@ -546,10 +571,11 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
     // fall through to per-book fallback
   }
 
-  if (!bulkOk) {
+  if (!bulkOk && stillOwned()) {
     synced = 0;
     failed = 0;
     for (const [bookId, item] of entries) {
+      if (!stillOwned()) break;
       try {
         const response = await fetch(`/api/books/${bookId}/progress`, {
           method: 'POST',
@@ -559,8 +585,8 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
           // 否则 bulk 端点不可用时逐本回退会把服务端较新的跨设备进度覆盖回退。
           body: JSON.stringify(buildFallbackProgressBody(item)),
         });
-        if (response.ok) {
-          delete progress[bookId];
+        if (response.ok && stillOwned()) {
+          confirmQueuedFact(bookId, item);
           synced += 1;
         } else {
           failed += 1;
@@ -571,8 +597,7 @@ export async function syncQueuedOfflineProgress(): Promise<OfflineProgressSyncRe
     }
   }
 
-  writeQueuedProgress(progress);
-  return { synced, failed, remaining: Object.keys(progress).length };
+  return { synced, failed, remaining: Object.keys(readQueuedProgress()).length };
 }
 
 // 冲突解决中视为「已同步、可从队列移除」的服务端状态。
@@ -581,11 +606,11 @@ export const SYNC_SUCCESS_STATUSES = new Set(['updated', 'skipped_stale', 'skipp
 // buildBulkSyncItems 把队列项映射为 bulk 同步请求体（过滤非法 book_id），携带 updated_at 供服务端做陈旧判定。
 export function buildBulkSyncItems(items: QueuedProgress[]) {
   return items
-    .map((item) => ({ book_id: Number(item.bookId), page: item.page, updated_at: item.updatedAt }))
+    .map((item) => ({ book_id: Number(item.bookId), page: item.page, updated_at: item.updatedAt, ...(item.factId ? { fact_id: item.factId } : {}) }))
     .filter((row) => Number.isFinite(row.book_id) && row.book_id > 0);
 }
 
 // buildFallbackProgressBody 逐本回退请求体——必须带 updated_at，否则单本端点无从判定陈旧、会覆盖较新进度。
 export function buildFallbackProgressBody(item: QueuedProgress) {
-  return { page: item.page, updated_at: item.updatedAt };
+  return { page: item.page, updated_at: item.updatedAt, ...(item.factId ? { fact_id: item.factId } : {}) };
 }

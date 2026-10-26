@@ -1,3 +1,4 @@
+import { useLibraryRefresh } from '../session/ApplicationSessionProvider';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
@@ -54,6 +55,7 @@ interface RecommendedItem {
 }
 
 export default function Dashboard() {
+  const catalogRefresh = useLibraryRefresh({ area: 'stats' });
     const { isAdmin } = useAuth();
     const { t, formatNumber } = useI18n();
     const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -91,7 +93,7 @@ export default function Dashboard() {
         return () => {
             active = false;
         };
-    }, []);
+    }, [catalogRefresh]);
 
     useEffect(() => {
         let active = true;
@@ -104,7 +106,7 @@ export default function Dashboard() {
         return () => {
             active = false;
         };
-    }, [heatmapWeeks]);
+    }, [heatmapWeeks, catalogRefresh]);
 
     const loadRecommendations = useCallback((forceRefresh = false) => {
         if (recsLoading) return;

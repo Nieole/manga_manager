@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
+import { ApplicationSessionProvider } from '../session/ApplicationSessionProvider';
 import type { RunPush } from '../api/generated';
 import { ToastProvider } from '../components/ToastProvider';
 import BackgroundTasks from './BackgroundTasks';
@@ -34,21 +35,35 @@ const i18n = vi.hoisted(() => ({
 
 vi.mock('../i18n/LocaleProvider', () => ({ useI18n: () => i18n }));
 
+class Source {
+  static CLOSED = 2;
+  static instances: Source[] = [];
+  readyState = 0;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor() { Source.instances.push(this); }
+  close() {}
+}
+
 const EMPTY_LIVE = { active: 0, queued: 0, slots: 2, paused: false, paused_all: false, runs: [] };
 
 function push(frame: RunPush) {
   act(() => {
-    window.dispatchEvent(new CustomEvent('manga-manager:run-push', { detail: frame }));
+    Source.instances.at(-1)?.onmessage?.({ data: 'run_live:' + JSON.stringify(frame) });
   });
 }
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  Source.instances = [];
 });
 
 describe('任务中心的序号缺口', () => {
   async function renderPage() {
+    vi.stubGlobal('EventSource', Source);
     mocks.get.mockImplementation((url: string) => {
       if (url.startsWith('/api/system/tasks/live')) return Promise.resolve({ data: EMPTY_LIVE });
       return Promise.resolve({ data: [] });
@@ -56,7 +71,7 @@ describe('任务中心的序号缺口', () => {
     render(
       <ToastProvider>
         <MemoryRouter>
-          <BackgroundTasks />
+          <ApplicationSessionProvider identity="1:admin" isAdmin><BackgroundTasks /></ApplicationSessionProvider>
         </MemoryRouter>
       </ToastProvider>,
     );

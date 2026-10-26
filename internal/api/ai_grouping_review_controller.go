@@ -6,22 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"manga-manager/internal/database"
-	"manga-manager/internal/metadata"
+	"manga-manager/internal/organize"
 )
-
-// errAIGroupingCollectionPreempted 表示这条候选合集在本次加载与写入之间已被别人处理掉了。
-// 它只在包内用于触发整体回滚，对外一律表达为 409——与前置检查发现的是同一件事。
-var errAIGroupingCollectionPreempted = errors.New("ai grouping review collection is no longer pending")
-
-// errAIGroupingCollectionSeriesGone 表示这条候选合集点名的系列已全部从库里删除，建不出任何东西。
-// 它不是能重试的瞬时状态，用户只能驳回这条候选，因此对外表达为 409。
-var errAIGroupingCollectionSeriesGone = errors.New("ai grouping review collection has no surviving series")
 
 type aiGroupingReviewSeriesView struct {
 	ID    int64  `json:"id"`
@@ -70,48 +61,7 @@ type updateAIGroupingReviewCollectionRequest struct {
 	SeriesIDs   []int64 `json:"series_ids"`
 }
 
-func aiGroupingParseSeriesIDs(raw string) []int64 {
-	var ids []int64
-	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
-		return []int64{}
-	}
-	clean := ids[:0]
-	seen := make(map[int64]struct{}, len(ids))
-	for _, id := range ids {
-		if id <= 0 {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		clean = append(clean, id)
-	}
-	return clean
-}
-
-// aiGroupingLiveSeriesIDs 按给定顺序滤掉库里已不存在的系列。查询与写入必须在同一个事务里，
-// 否则中间被删掉的系列仍会撞上外键。
-func aiGroupingLiveSeriesIDs(ctx context.Context, q database.Querier, ids []int64) ([]int64, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	rows, err := q.GetSeriesNamesByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	alive := make(map[int64]struct{}, len(rows))
-	for _, row := range rows {
-		alive[row.ID] = struct{}{}
-	}
-	live := make([]int64, 0, len(ids))
-	for _, id := range ids {
-		if _, ok := alive[id]; ok {
-			live = append(live, id)
-		}
-	}
-	return live, nil
-}
+func aiGroupingParseSeriesIDs(raw string) []int64 { return organize.AIGroupingSeriesIDs(raw) }
 
 // aiGroupingViewData 是渲染审核视图所需的预取数据，避免按审核、按候选合集逐条查询
 // 拖出两层 N+1（页大小 × 每条的候选合集数），也避免两步查询各自的错误被吞掉——
@@ -271,95 +221,6 @@ func aiGroupingReviewFromListRow(row database.ListAIGroupingReviewsRow) database
 	}
 }
 
-type aiGroupingReviewProposal struct {
-	Name        string
-	Description string
-	SeriesIDs   []int64
-}
-
-func normalizeAIGroupingReviewProposals(candidates []metadata.CandidateSeries, groups []metadata.AIGroupCollection) []aiGroupingReviewProposal {
-	candidateIDs := make(map[int64]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		candidateIDs[candidate.ID] = struct{}{}
-	}
-
-	proposals := make([]aiGroupingReviewProposal, 0, len(groups))
-	for _, group := range groups {
-		name := strings.TrimSpace(group.Name)
-		if name == "" {
-			continue
-		}
-		seriesIDs := make([]int64, 0, len(group.SeriesIDs))
-		seen := make(map[int64]struct{}, len(group.SeriesIDs))
-		for _, id := range group.SeriesIDs {
-			if _, ok := candidateIDs[id]; !ok {
-				continue
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			seriesIDs = append(seriesIDs, id)
-		}
-		sort.Slice(seriesIDs, func(i, j int) bool { return seriesIDs[i] < seriesIDs[j] })
-		if len(seriesIDs) == 0 {
-			continue
-		}
-		proposals = append(proposals, aiGroupingReviewProposal{
-			Name:        name,
-			Description: strings.TrimSpace(group.Description),
-			SeriesIDs:   seriesIDs,
-		})
-	}
-	return proposals
-}
-
-func (c *Controller) createAIGroupingReview(ctx context.Context, libraryID int64, providerName string, candidates []metadata.CandidateSeries, groups []metadata.AIGroupCollection) (database.AiGroupingReview, int, error) {
-	var created database.AiGroupingReview
-	proposals := normalizeAIGroupingReviewProposals(candidates, groups)
-	if len(proposals) == 0 {
-		return created, 0, nil
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"candidates":  candidates,
-		"collections": groups,
-		"proposals":   proposals,
-	})
-
-	err := c.store.ExecTx(ctx, func(q *database.Queries) error {
-		review, err := q.CreateAIGroupingReview(ctx, database.CreateAIGroupingReviewParams{
-			LibraryID:       libraryID,
-			Provider:        strings.TrimSpace(providerName),
-			Status:          "pending",
-			Summary:         "AI grouping review queued",
-			RawPayload:      string(payload),
-			CandidateCount:  int64(len(candidates)),
-			CollectionCount: int64(len(proposals)),
-		})
-		if err != nil {
-			return err
-		}
-
-		for _, proposal := range proposals {
-			rawIDs, _ := json.Marshal(proposal.SeriesIDs)
-			if _, err := q.CreateAIGroupingReviewCollection(ctx, database.CreateAIGroupingReviewCollectionParams{
-				ReviewID:    review.ID,
-				Name:        proposal.Name,
-				Description: proposal.Description,
-				SeriesIds:   string(rawIDs),
-				SeriesCount: int64(len(proposal.SeriesIDs)),
-				Status:      "pending",
-			}); err != nil {
-				return err
-			}
-		}
-
-		created = review
-		return nil
-	})
-	return created, len(proposals), err
-}
-
 func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Request) {
 	libraryID, _ := strconv.ParseInt(r.URL.Query().Get("library_id"), 10, 64)
 	if libraryID < 0 {
@@ -422,383 +283,104 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, payload)
 }
 
-func (c *Controller) getAIGroupingReviewCollectionForAction(r *http.Request) (database.AiGroupingReview, database.AiGroupingReviewCollection, bool) {
+func (c *Controller) aiGroupingActions() *organize.AIGrouping {
+	return organize.NewAIGrouping(c.store, func() { c.PublishEvent("refresh") })
+}
+func aiGroupingActionIDs(r *http.Request) (int64, int64, bool) {
 	reviewID, err := parseID(r, "reviewId")
 	if err != nil {
-		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
+		return 0, 0, false
 	}
-	collectionID, err := parseID(r, "collectionId")
-	if err != nil {
-		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
-	}
-	review, err := c.store.GetAIGroupingReview(r.Context(), reviewID)
-	if err != nil {
-		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
-	}
-	collection, err := c.store.GetAIGroupingReviewCollection(r.Context(), collectionID)
-	if err != nil || collection.ReviewID != review.ID {
-		return database.AiGroupingReview{}, database.AiGroupingReviewCollection{}, false
-	}
-	return review, collection, true
+	id, err := parseID(r, "collectionId")
+	return reviewID, id, err == nil
 }
-
+func aiGroupingActionError(w http.ResponseWriter, r *http.Request, err error, fallback string) {
+	var invalid *organize.InvalidAIGroupingEdit
+	switch {
+	case errors.Is(err, organize.ErrAIGroupingNotFound), errors.Is(err, sql.ErrNoRows):
+		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
+	case errors.Is(err, organize.ErrAIGroupingNotPending):
+		jsonError(w, http.StatusConflict, err.Error())
+	case errors.Is(err, organize.ErrAIGroupingSeriesGone):
+		jsonError(w, http.StatusConflict, apiText(requestLocale(r), "ai_grouping.collection.series_gone"))
+	case errors.Is(err, organize.ErrCollectionNameTaken):
+		jsonError(w, http.StatusConflict, "A collection with this name already exists")
+	case errors.As(err, &invalid):
+		jsonError(w, http.StatusBadRequest, err.Error())
+	default:
+		jsonError(w, http.StatusInternalServerError, fallback)
+	}
+}
 func (c *Controller) updateAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
-	review, collection, ok := c.getAIGroupingReviewCollectionForAction(r)
+	reviewID, id, ok := aiGroupingActionIDs(r)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
 		return
 	}
-	if review.Status != "pending" || collection.Status != "pending" {
-		jsonError(w, http.StatusConflict, "AI grouping review collection is not editable")
-		return
-	}
-
 	var req updateAIGroupingReviewCollectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		jsonError(w, http.StatusBadRequest, "Name is required")
-		return
-	}
-	cleanIDs := aiGroupingParseSeriesIDs(mustJSON(req.SeriesIDs))
-	if len(cleanIDs) == 0 {
-		jsonError(w, http.StatusBadRequest, "series_ids is required")
-		return
-	}
-	if !c.aiGroupingSeriesIDsBelongToReview(r.Context(), review.ID, collection.ID, cleanIDs) {
-		jsonError(w, http.StatusBadRequest, "series_ids must come from the same review")
-		return
-	}
-	rawIDs, _ := json.Marshal(cleanIDs)
-	updated, err := c.store.UpdateAIGroupingReviewCollection(r.Context(), database.UpdateAIGroupingReviewCollectionParams{
-		Name:        name,
-		Description: strings.TrimSpace(req.Description),
-		SeriesIds:   string(rawIDs),
-		SeriesCount: int64(len(cleanIDs)),
-		ID:          collection.ID,
-	})
+	updated, err := c.aiGroupingActions().EditCollection(r.Context(), reviewID, id, organize.EditAIGroupingCollection{Name: req.Name, Description: req.Description, SeriesIDs: req.SeriesIDs})
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to update AI grouping review collection")
+		aiGroupingActionError(w, r, err, "Failed to update AI grouping review collection")
 		return
 	}
-	collectionData, err := loadAIGroupingViewDataForCollection(r.Context(), c.store, updated)
+	data, err := loadAIGroupingViewDataForCollection(r.Context(), c.store, updated)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load AI grouping collection details")
 		return
 	}
-	jsonResponse(w, http.StatusOK, aiGroupingReviewCollectionToView(collectionData, updated))
+	jsonResponse(w, http.StatusOK, aiGroupingReviewCollectionToView(data, updated))
 }
-
-func mustJSON(ids []int64) string {
-	raw, _ := json.Marshal(ids)
-	return string(raw)
-}
-
-func (c *Controller) aiGroupingSeriesIDsBelongToReview(ctx context.Context, reviewID, currentCollectionID int64, ids []int64) bool {
-	collections, err := c.store.ListAIGroupingReviewCollections(ctx, reviewID)
-	if err != nil {
-		return false
-	}
-	allowed := make(map[int64]struct{})
-	for _, collection := range collections {
-		if collection.Status != "pending" && collection.ID != currentCollectionID {
-			continue
-		}
-		for _, id := range aiGroupingParseSeriesIDs(collection.SeriesIds) {
-			allowed[id] = struct{}{}
-		}
-	}
-	for _, id := range ids {
-		if _, ok := allowed[id]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
 func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
-	review, collection, ok := c.getAIGroupingReviewCollectionForAction(r)
+	reviewID, id, ok := aiGroupingActionIDs(r)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
 		return
 	}
-	if review.Status != "pending" || collection.Status != "pending" {
-		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
-		return
-	}
-	createdID, err := c.applyAIGroupingReviewCollectionTx(r.Context(), review, collection)
-	if errors.Is(err, errAIGroupingCollectionPreempted) {
-		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
-		return
-	}
-	if errors.Is(err, errAIGroupingCollectionSeriesGone) {
-		jsonError(w, http.StatusConflict, apiText(requestLocale(r), "ai_grouping.collection.series_gone"))
-		return
-	}
-	if errors.Is(err, errCollectionNameTaken) {
-		jsonError(w, http.StatusConflict, "A collection with this name already exists")
-		return
-	}
+	created, err := c.aiGroupingActions().ApplyCollection(r.Context(), reviewID, id)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review collection")
+		aiGroupingActionError(w, r, err, "Failed to apply AI grouping review collection")
 		return
 	}
-	c.PublishEvent("refresh")
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"success":               true,
-		"review_id":             review.ID,
-		"collection_id":         collection.ID,
-		"created_collection_id": createdID,
-	})
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": reviewID, "collection_id": id, "created_collection_id": created})
 }
-
 func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Request) {
-	reviewID, err := parseID(r, "reviewId")
+	id, err := parseID(r, "reviewId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid AI grouping review ID")
 		return
 	}
-	review, err := c.store.GetAIGroupingReview(r.Context(), reviewID)
+	result, err := c.aiGroupingActions().ApplyReview(r.Context(), id)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "AI grouping review not found")
+		aiGroupingActionError(w, r, err, "Failed to apply AI grouping review")
 		return
 	}
-	if review.Status != "pending" {
-		jsonError(w, http.StatusConflict, "AI grouping review is not pending")
-		return
-	}
-	collections, err := c.store.ListAIGroupingReviewCollections(r.Context(), reviewID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load AI grouping review")
-		return
-	}
-	applied := 0
-	skipped := 0
-	err = c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		for _, item := range collections {
-			if item.Status != "pending" {
-				continue
-			}
-			switch _, err := applyAIGroupingReviewCollectionWithQueries(r.Context(), q, review, item); {
-			case errors.Is(err, errAIGroupingCollectionSeriesGone):
-				// 系列全被删掉的候选建不出合集，但这不是同一审核里其他候选的错：跳过它自己，
-				// 别人照建。它留在待应用，等用户驳回——系统不替用户裁决。
-				skipped++
-			case err != nil:
-				return err
-			default:
-				applied++
-			}
-		}
-		// 跳过的那些还占着待应用，此时收尾会把审核落定成已应用/已拒绝，
-		// 界面随即禁掉它们的编辑与驳回，用户再也处置不了。
-		pending, err := q.CountPendingAIGroupingReviewCollections(r.Context(), review.ID)
-		if err != nil {
-			return err
-		}
-		if pending > 0 {
-			return nil
-		}
-		return finalizeAIGroupingReviewStatus(r.Context(), q, review.ID)
-	})
-	// 批量入口与单条入口共用同一道 CAS，因此也共用同一个结局：只要有一条候选合集在加载之后
-	// 被别人处理掉，整批回滚报 409，用户刷新后重来即可——绝不容忍「部分提交 + 重复合集」。
-	if errors.Is(err, errAIGroupingCollectionPreempted) {
-		jsonError(w, http.StatusConflict, "AI grouping review is not pending")
-		return
-	}
-	if errors.Is(err, errCollectionNameTaken) {
-		jsonError(w, http.StatusConflict, "A collection with this name already exists")
-		return
-	}
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to apply AI grouping review")
-		return
-	}
-	// 一条都没建出来时不能报成功：这一整批没有任何写入，说清缘由比让用户以为合集已经建好强。
-	if applied == 0 && skipped > 0 {
-		jsonError(w, http.StatusConflict, apiText(requestLocale(r), "ai_grouping.collection.series_gone"))
-		return
-	}
-	c.PublishEvent("refresh")
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"success":     true,
-		"review_id":   reviewID,
-		"collections": applied,
-		"skipped":     skipped,
-	})
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": id, "collections": result.Applied, "skipped": result.Skipped})
 }
-
-func (c *Controller) applyAIGroupingReviewCollectionTx(ctx context.Context, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
-	var createdID int64
-	err := c.store.ExecTx(ctx, func(q *database.Queries) error {
-		id, err := applyAIGroupingReviewCollectionWithQueries(ctx, q, review, collection)
-		if err != nil {
-			return err
-		}
-		// 先记下 id 再判收尾：应用最后一条候选合集会走进下面的提前 return，
-		// 而那恰恰是最常见的形态（只有一条候选合集的审核），漏掉就永远报不出新建合集。
-		createdID = id
-		pending, err := q.CountPendingAIGroupingReviewCollections(ctx, review.ID)
-		if err != nil {
-			return err
-		}
-		if pending == 0 {
-			return finalizeAIGroupingReviewStatus(ctx, q, review.ID)
-		}
-		return nil
-	})
-	if err != nil {
-		// 事务已整体回滚，那个 id 指向的合集并不存在。
-		return 0, err
-	}
-	return createdID, nil
-}
-
-func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database.Queries, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
-	seriesIDs := aiGroupingParseSeriesIDs(collection.SeriesIds)
-	name := strings.TrimSpace(collection.Name)
-	if name == "" || len(seriesIDs) == 0 {
-		return 0, sql.ErrNoRows
-	}
-	// 悬空 ID 一律跳过，与读侧口径一致：审核入队之后系列可能被重扫清理掉，而 series_ids
-	// 是一串裸 ID、没有外键。照原样插进 collection_series 会撞 series 外键——
-	// INSERT OR IGNORE 不抑制外键错误，整个事务回滚，用户只看到一句「服务器错误」。
-	seriesIDs, err := aiGroupingLiveSeriesIDs(ctx, q, seriesIDs)
-	if err != nil {
-		return 0, err
-	}
-	if len(seriesIDs) == 0 {
-		return 0, errAIGroupingCollectionSeriesGone
-	}
-	// 候选合集名由 AI 给出，同样受「哪里都不许出现两个同名合集」约束：查重落在事务内的 SQL 上，
-	// 因此整批应用时先建的那几条也算数——同一批里两条同名候选，第二条就在这里被挡下。
-	// 撞名不是能重试的瞬时状态，用户得先改名或驳回这条候选，因此整批回滚。
-	switch _, err := q.CollectionNameExists(ctx, name); {
-	case err == nil:
-		return 0, errCollectionNameTaken
-	case !errors.Is(err, sql.ErrNoRows):
-		return 0, err
-	}
-	created, err := q.CreateCollection(ctx, database.CreateCollectionParams{
-		Name:           name,
-		Description:    sql.NullString{String: strings.TrimSpace(collection.Description), Valid: strings.TrimSpace(collection.Description) != ""},
-		SourceType:     "ai_grouping",
-		SourceReviewID: sql.NullInt64{Int64: review.ID, Valid: true},
-	})
-	if err != nil {
-		return 0, err
-	}
-	for _, seriesID := range seriesIDs {
-		if _, err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{
-			CollectionID: created.ID,
-			SeriesID:     seriesID,
-		}); err != nil {
-			return 0, err
-		}
-	}
-	if err := q.TouchCollection(ctx, created.ID); err != nil {
-		return 0, err
-	}
-	// 同一事务内把候选合集从待应用 CAS 到已应用：建合集与状态推进原子，否则两个都读到
-	// 待应用旧快照的请求会各建一个同名合集，先建的那个还会被后写的 created_collection_id 顶掉。
-	// 守卫必须落在事务内的 SQL 上——调用方的前置检查读到的是事务外的快照，随时可能过期。
-	rows, err := q.MarkAIGroupingReviewCollectionApplied(ctx, database.MarkAIGroupingReviewCollectionAppliedParams{
-		CreatedCollectionID: sql.NullInt64{Int64: created.ID, Valid: true},
-		ID:                  collection.ID,
-	})
-	if err != nil {
-		return 0, err
-	}
-	if rows == 0 {
-		// 刚建的合集与成员随事务整体撤销。
-		return 0, errAIGroupingCollectionPreempted
-	}
-	return created.ID, nil
-}
-
 func (c *Controller) rejectAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
-	review, collection, ok := c.getAIGroupingReviewCollectionForAction(r)
+	reviewID, id, ok := aiGroupingActionIDs(r)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
 		return
 	}
-	if review.Status != "pending" || collection.Status != "pending" {
-		jsonError(w, http.StatusConflict, "AI grouping review collection is not pending")
+	if err := c.aiGroupingActions().RejectCollection(r.Context(), reviewID, id); err != nil {
+		aiGroupingActionError(w, r, err, "Failed to reject AI grouping review collection")
 		return
 	}
-	if err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		if err := q.MarkAIGroupingReviewCollectionRejected(r.Context(), collection.ID); err != nil {
-			return err
-		}
-		pending, err := q.CountPendingAIGroupingReviewCollections(r.Context(), review.ID)
-		if err != nil {
-			return err
-		}
-		if pending == 0 {
-			return finalizeAIGroupingReviewStatus(r.Context(), q, review.ID)
-		}
-		return nil
-	}); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to reject AI grouping review collection")
-		return
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"success":       true,
-		"review_id":     review.ID,
-		"collection_id": collection.ID,
-	})
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": reviewID, "collection_id": id})
 }
-
-func finalizeAIGroupingReviewStatus(ctx context.Context, q *database.Queries, reviewID int64) error {
-	applied, err := q.CountAppliedAIGroupingReviewCollections(ctx, reviewID)
-	if err != nil {
-		return err
-	}
-	status := "rejected"
-	if applied > 0 {
-		status = "applied"
-	}
-	_, err = q.UpdateAIGroupingReviewStatus(ctx, database.UpdateAIGroupingReviewStatusParams{
-		Status: status,
-		ID:     reviewID,
-	})
-	return err
-}
-
 func (c *Controller) rejectAIGroupingReview(w http.ResponseWriter, r *http.Request) {
-	reviewID, err := parseID(r, "reviewId")
+	id, err := parseID(r, "reviewId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid AI grouping review ID")
 		return
 	}
-	review, err := c.store.GetAIGroupingReview(r.Context(), reviewID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "AI grouping review not found")
+	if err := c.aiGroupingActions().RejectReview(r.Context(), id); err != nil {
+		aiGroupingActionError(w, r, err, "Failed to reject AI grouping review")
 		return
 	}
-	if review.Status != "pending" {
-		jsonError(w, http.StatusConflict, "AI grouping review is not pending")
-		return
-	}
-	if err := c.store.ExecTx(r.Context(), func(q *database.Queries) error {
-		if err := q.MarkAIGroupingReviewCollectionsRejected(r.Context(), review.ID); err != nil {
-			return err
-		}
-		_, err := q.UpdateAIGroupingReviewStatus(r.Context(), database.UpdateAIGroupingReviewStatusParams{
-			Status: "rejected",
-			ID:     review.ID,
-		})
-		return err
-	}); err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to reject AI grouping review")
-		return
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"success":   true,
-		"review_id": reviewID,
-	})
+	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": id})
 }

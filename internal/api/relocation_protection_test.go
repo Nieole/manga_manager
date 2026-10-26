@@ -59,6 +59,7 @@ func TestRelocationPreviewPollingCannotOverwriteCompletedFacts(t *testing.T) {
 	originalRuns := c.taskEngine.runStore
 	runs := &delayedPreviewRunStore{Store: originalRuns, entered: make(chan struct{}), resume: make(chan struct{})}
 	c.taskEngine.runStore = runs
+	c.assembleRelocationUseCases()
 	body, _ := json.Marshal(map[string]string{"target_root": target})
 	created := httptest.NewRecorder()
 	c.createRelocationPlan(created, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
@@ -129,6 +130,7 @@ func TestProtectedRelocationRejectsPreviouslyCheckedSeriesResume(t *testing.T) {
 	plan := startRelocationPreview(t, c, lib.ID, target)
 	delayed := &delayedSeriesAdmissionStore{Store: store, entered: make(chan struct{}), resume: make(chan struct{})}
 	c.store = delayed
+	c.assembleScanUseCases()
 	result := make(chan error, 1)
 	go func() { result <- c.launchSeriesScanTask(series.ID, false, task.TriggerResumed) }()
 	<-delayed.entered
@@ -273,7 +275,15 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 	if err = c.scanner.CleanupLibrary(ctx, lib.ID); !errors.Is(err, database.ErrLibraryProtected) {
 		t.Fatalf("direct cleanup: %v", err)
 	}
-	c.triggerGlobalScan(ctx)
+	{
+		launched, err := c.maintenance.RebuildIndex(task.TriggerManual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = c.taskEngine.engine.Await(ctx, launched.Run.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if p, e := store.LibraryRelocationProtection(ctx, lib.ID); e != nil || p == nil {
 		t.Fatalf("global scan cleared protection: %+v %v", p, e)
 	}
@@ -317,7 +327,7 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 		t.Fatal(err)
 	}
 	manager := config.NewManager(freshConfig)
-	fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, filepath.Join(root, "config.yaml"), controllerCacheSizes{imageBytes: 8192, page: 8, bookPageSource: 8, progressWrite: 8})
+	fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, filepath.Join(root, "config.yaml"), controllerCacheSizes{imageBytes: 8192, page: 8, bookPageSource: 8})
 	t.Cleanup(fresh.Close)
 	gotPlan, err := fresh.relocation.Get(ctx, plan.ID)
 	if err != nil || gotPlan.Protection == nil || gotPlan.Protection.ScanMode != "watch" || gotPlan.Protection.ScanInterval != 17 || gotPlan.Protection.ScanFormats != "cbz" {

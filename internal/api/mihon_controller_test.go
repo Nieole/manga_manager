@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -215,13 +216,13 @@ func TestMihonCollectionEndpoints(t *testing.T) {
 	_, seriesB, _ := seedBookFixture(t, store, rootDir, "Library B", "Series Beta", "Beta 01.cbz", 10)
 
 	db := controller.store.(*database.SqlStore).DB()
-	collectionResult, err := db.ExecContext(context.Background(), `INSERT INTO collections (name, description, source_type) VALUES (?, ?, ?)`, "Manual Picks", "static", "manual")
+	collectionsService := organize.NewCollections(store)
+	collectionID, err := collectionsService.Create(context.Background(), "Manual Picks", "static")
 	if err != nil {
-		t.Fatalf("insert collection failed: %v", err)
+		t.Fatal(err)
 	}
-	collectionID, _ := collectionResult.LastInsertId()
-	if _, err := db.ExecContext(context.Background(), `INSERT INTO collection_series (collection_id, series_id) VALUES (?, ?)`, collectionID, seriesA.ID); err != nil {
-		t.Fatalf("insert collection series failed: %v", err)
+	if _, err := collectionsService.AddMembers(context.Background(), collectionID, []int64{seriesA.ID}); err != nil {
+		t.Fatal(err)
 	}
 
 	tag, err := store.UpsertTag(context.Background(), "Action")

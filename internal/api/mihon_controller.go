@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
+	"manga-manager/internal/reading"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -174,15 +176,7 @@ func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) 
 
 func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request) {
 	limit := int64(positiveQueryInt(r, "limit", 30, 100))
-	var (
-		rows []database.GetRecentReadAllRow
-		err  error
-	)
-	if uid := c.currentUserID(r); uid > 0 {
-		rows, err = c.store.GetUserRecentReadAll(r.Context(), uid, limit)
-	} else {
-		rows, err = c.store.GetRecentReadAll(r.Context(), limit)
-	}
+	rows, err := reading.RecentReads(r.Context(), c.store, c.currentUserID(r), limit)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch continue reading")
 		return
@@ -230,7 +224,7 @@ func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) mihonReadingLists(w http.ResponseWriter, r *http.Request) {
-	lists, err := c.store.ListReadingLists(r.Context())
+	lists, err := c.readingLists().List(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading lists")
 		return
@@ -254,30 +248,18 @@ func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
 		return
 	}
-	if _, err := c.store.GetReadingList(r.Context(), listID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	page := positiveQueryInt(r, "page", 1, 0)
+	limit := positiveQueryInt(r, "limit", 30, 100)
+	result, err := c.readingLists().Page(r.Context(), c.currentUserID(r), listID, int64(limit), pageOffset(page, limit))
+	if err != nil {
+		if errors.Is(err, organize.ErrReadingListMissing) {
 			jsonError(w, http.StatusNotFound, "Reading list not found")
 			return
 		}
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list")
-		return
-	}
-	page := positiveQueryInt(r, "page", 1, 0)
-	limit := positiveQueryInt(r, "limit", 30, 100)
-	total, err := c.store.CountReadingListSeries(r.Context(), listID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to count reading list series")
-		return
-	}
-	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
-		ReadingListID: listID,
-		Limit:         int64(limit),
-		Offset:        pageOffset(page, limit),
-	})
-	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading list series")
 		return
 	}
+	rows, total := result.Rows, result.Total
 	items := make([]MihonSeriesResponse, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, mihonSeriesFromReadingListRow(row))
@@ -512,16 +494,12 @@ func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
 		return
 	}
-	books, err := c.store.ListBooksBySeries(r.Context(), seriesID)
+	view, err := reading.NewQueries(c.store).Series(r.Context(), c.currentUserID(r), seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch books")
 		return
 	}
-	// 与普通阅读接口保持一致：SQL 的 ORDER BY volume, sort_number, name 只是字典序，
-	// 无法处理卷号数值排序与从文件名/标题中提取的「第N话/第N卷」序数，需在代码层用
-	// booksort 重排，否则 mihon 客户端里章节顺序会乱（如 10 排在 2 之前）。
-	sortBooksForReading(books)
-	c.overlayUserProgress(r.Context(), c.currentUserID(r), books)
+	books := view.Books
 	items := make([]MihonBookResponse, 0, len(books))
 	for _, book := range books {
 		items = append(items, mihonBookFromModel(book))

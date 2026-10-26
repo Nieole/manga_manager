@@ -61,6 +61,7 @@ func TestRunSettlesByBodyError(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
+			rememberTaskKey(key, identityForTest())
 			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 				return RunResult{}, tc.bodyErr
 			}); err != nil {
@@ -106,6 +107,7 @@ func TestRunResultOverridesTerminalCode(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
+			rememberTaskKey(key, identityForTest())
 			tc.result.Params = map[string]string{"written": "3"}
 			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 				return tc.result, tc.bodyErr
@@ -130,6 +132,7 @@ func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		return RunResult{Params: map[string]string{"name": "Main"}}, nil
 	}); err != nil {
@@ -152,6 +155,7 @@ func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	bodyRan := false
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		bodyRan = true
@@ -189,6 +193,7 @@ func TestRunQueuesDuplicateActiveKey(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(func()) { handedOff++ }, nil)
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		return RunResult{}, nil
 	}); err != nil {
@@ -221,6 +226,7 @@ func TestRunQueuesWhileCancelling(t *testing.T) {
 	e, _ := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		return RunResult{}, nil
 	}); err != nil {
@@ -261,6 +267,7 @@ func TestRunReleasesRuntimeOnEveryExitPath(t *testing.T) {
 			e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 			const key = "scan_library_1"
+			rememberTaskKey(key, identityForTest())
 			if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), tc.body); err != nil {
 				t.Fatalf("启动入口返回了 %v，应为 nil", err)
 			}
@@ -282,6 +289,7 @@ func TestRunPanicStillMarksTaskFailed(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		panic("boom")
 	}); err != nil {
@@ -305,6 +313,7 @@ func TestRunLandsWholeSpecAtBirth(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
 
 	const key = "scan_library_7"
+	rememberTaskKey(key, libraryTask("scan_library", 7, variantSole))
 	spec := specForTest(key)
 	spec.ScopeName = "Main Library"
 	spec.Metadata = map[string]string{"force": "true", "scan_profile": "balanced"}
@@ -350,6 +359,7 @@ func TestRunLeavesLimitUnsetWhenSpecOmitsIt(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(context.Context, *runhandle.Handle) (RunResult, error) {
 		return RunResult{}, nil
 	}); err != nil {
@@ -369,6 +379,7 @@ func TestTaskProgressAdvanceAndPhaseAreIndependent(t *testing.T) {
 	e.now = clock.Now
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (RunResult, error) {
 		handle.Advance(3, 20, "progress.scanning", map[string]string{"current": "3"})
 		if task := lastPublishedTask(t, snapshots(), key); task.Current != 3 || task.Total != 20 || task.Phase != "" {
@@ -414,6 +425,7 @@ func TestTaskProgressIgnoredAfterTerminal(t *testing.T) {
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 
 	const key = "scan_library_1"
+	rememberTaskKey(key, identityForTest())
 	var captured *runhandle.Handle
 	if err := e.Run(identityForTest(), task.TriggerManual, specForTest(key), func(_ context.Context, handle *runhandle.Handle) (RunResult, error) {
 		captured = handle

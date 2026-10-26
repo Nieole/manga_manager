@@ -428,8 +428,8 @@ func TestAddBookReadingTimeBehavior(t *testing.T) {
 	if rec := call(&user, bid, `{"seconds":99999}`); rec.Code != http.StatusOK {
 		t.Fatalf("cap want 200 got %d", rec.Code)
 	}
-	if got := totalFor(user); got != maxReadingTimeReportSeconds {
-		t.Fatalf("seconds should cap at %d, got %d", maxReadingTimeReportSeconds, got)
+	if got := totalFor(user); got != 3600 {
+		t.Fatalf("seconds should cap at %d, got %d", 3600, got)
 	}
 }
 
@@ -1033,4 +1033,18 @@ func TestDashboardActiveDaysIsPerUser(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestReadingTimeStorageFailureIsObservable(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
+	user := mkTestUser(t, store, "time-failure", database.RoleRegular)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := withUserContext(requestWithRouteParam(http.MethodPost, "/x", []byte(`{"seconds":30}`), "bookId", "1"), user)
+	rec := httptest.NewRecorder()
+	controller.addBookReadingTime(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("storage failure status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }

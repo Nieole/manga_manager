@@ -62,6 +62,7 @@ type Book struct {
 	CoverLocked          bool            `json:"cover_locked"`
 	LastReadPage         sql.NullInt64   `json:"last_read_page"`
 	LastReadAt           sql.NullTime    `json:"last_read_at"`
+	IsRead               bool            `json:"is_read"`
 	FileHash             sql.NullString  `json:"file_hash"`
 	QuickHash            sql.NullString  `json:"quick_hash"`
 	PathFingerprint      sql.NullString  `json:"path_fingerprint"`
@@ -115,19 +116,20 @@ type KoreaderAccount struct {
 }
 
 type KoreaderProgress struct {
-	ID         int64         `json:"id"`
-	Username   string        `json:"username"`
-	Document   string        `json:"document"`
-	Progress   string        `json:"progress"`
-	Percentage float64       `json:"percentage"`
-	Device     string        `json:"device"`
-	DeviceID   string        `json:"device_id"`
-	BookID     sql.NullInt64 `json:"book_id"`
-	MatchedBy  string        `json:"matched_by"`
-	Timestamp  int64         `json:"timestamp"`
-	CreatedAt  time.Time     `json:"created_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
-	RawPayload string        `json:"raw_payload"`
+	ID           int64         `json:"id"`
+	Username     string        `json:"username"`
+	Document     string        `json:"document"`
+	Progress     string        `json:"progress"`
+	Percentage   float64       `json:"percentage"`
+	Device       string        `json:"device"`
+	DeviceID     string        `json:"device_id"`
+	BookID       sql.NullInt64 `json:"book_id"`
+	MatchedBy    string        `json:"matched_by"`
+	Timestamp    int64         `json:"timestamp"`
+	ReceivedAtNs int64         `json:"received_at_ns"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	RawPayload   string        `json:"raw_payload"`
 }
 
 type KoreaderSetting struct {

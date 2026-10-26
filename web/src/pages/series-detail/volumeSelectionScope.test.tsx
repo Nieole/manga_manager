@@ -118,6 +118,8 @@ describe('系列详情批量选择的范围', () => {
     expect(post).toHaveBeenCalledWith('/api/books/bulk-progress', {
       book_ids: [301, 302],
       is_read: true,
+      occurred_at: expect.any(String),
+      operation_id: expect.any(String),
     });
   });
 
@@ -144,6 +146,8 @@ describe('系列详情批量选择的范围', () => {
     expect(post).toHaveBeenCalledWith('/api/books/bulk-progress', {
       book_ids: [101, 102, 301, 302, 900],
       is_read: true,
+      occurred_at: expect.any(String),
+      operation_id: expect.any(String),
     });
   });
 });

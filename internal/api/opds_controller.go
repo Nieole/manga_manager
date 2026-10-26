@@ -9,13 +9,13 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
+	"manga-manager/internal/reading"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -641,7 +641,7 @@ func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
-	lists, err := c.store.ListReadingLists(r.Context())
+	lists, err := c.readingLists().List(r.Context())
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -680,31 +680,19 @@ func (c *Controller) opdsReadingListSeries(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Invalid reading list ID", http.StatusBadRequest)
 		return
 	}
-	list, err := c.store.GetReadingList(r.Context(), listID)
+	page := opdsPositiveQueryInt(r, "page", 1, 0)
+	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
+	result, err := c.readingLists().Page(r.Context(), c.currentUserID(r), listID, int64(limit), pageOffset(page, limit))
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, organize.ErrReadingListMissing) {
 			http.Error(w, "Reading list not found", http.StatusNotFound)
 			return
 		}
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-	page := opdsPositiveQueryInt(r, "page", 1, 0)
-	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
-	total, err := c.store.CountReadingListSeries(r.Context(), listID)
-	if err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
-	}
-	rows, err := c.store.ListReadingListSeriesPage(r.Context(), database.ListReadingListSeriesPageParams{
-		ReadingListID: listID,
-		Limit:         int64(limit),
-		Offset:        pageOffset(page, limit),
-	})
-	if err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
-	}
+	rows, total := result.Rows, result.Total
+	list := result.List
 	entries := make([]OPDSEntry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, opdsSeriesEntryFromReadingListRow(row))
@@ -951,15 +939,12 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	books, err := c.store.ListBooksBySeries(r.Context(), seriesID)
+	view, err := reading.NewQueries(c.store).Series(r.Context(), c.currentUserID(r), seriesID)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-	// 与全站阅读顺序口径对齐：SQL 的 ORDER BY volume, sort_number, name 在 sort_number 缺失时
-	// 会退化为按名称的字典序（第 10 话排到第 2 话之前）。用 booksort 规范化处理中文卷话等格式。
-	slices.SortStableFunc(books, booksort.CompareBooks)
-	c.overlayUserProgress(r.Context(), c.currentUserID(r), books)
+	books := view.Books
 
 	// 不存在的系列必须回 404 而不是 200 + 空 feed：吞掉这个错误会让阅读器把
 	// 「系列已被删除」显示成「这个系列一本书都没有」，用户无从判断。
@@ -1038,15 +1023,7 @@ func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request)
 func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	limit := int64(opdsPositiveQueryInt(r, "limit", 30, 100))
-	var (
-		items []database.GetRecentReadAllRow
-		err   error
-	)
-	if uid := c.currentUserID(r); uid > 0 {
-		items, err = c.store.GetUserRecentReadAll(r.Context(), uid, limit)
-	} else {
-		items, err = c.store.GetRecentReadAll(r.Context(), limit)
-	}
+	items, err := reading.RecentReads(r.Context(), c.store, c.currentUserID(r), limit)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return

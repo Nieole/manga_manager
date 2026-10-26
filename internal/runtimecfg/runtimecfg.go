@@ -19,3 +19,6 @@ func Apply(cfg *config.Config) error {
 	images.InitProcessor(cfg.Scanner.MaxAiConcurrency)
 	return logger.SetLevel(cfg.Logging.Level)
 }
+
+// Close releases process configuration resources after request and task owners have exited.
+func Close() { parser.CloseArchivePool() }

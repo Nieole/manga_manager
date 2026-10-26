@@ -1,26 +1,17 @@
-// 本文件是任务子域的 HTTP 层与装配层：八个端点（六个按**任务键**寻址，全部暂停 / 全部恢复作用在
-// 全体运行上）、「再发起一次」的注册表（（类型，**变体**）-> 重启函数与**可续跑**），
-// 以及任务面板上报的 IO 实况（帧指标与任务参数两条通道）与有效并发数推导。
-//
-// 引擎的适配层在 task_engine.go（状态机与落盘在 internal/task 与 internal/taskstore），
-// 纯转换函数在 task_model.go；本文件只经 c.taskEngine 的方法操作运行，不碰它的字段。
+// HTTP task controls and filtering adapt to the application-owned task engine and restart registry.
 
 package api
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"manga-manager/internal/database"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"manga-manager/internal/config"
-	"manga-manager/internal/metadata"
-	"manga-manager/internal/runhandle"
-	"manga-manager/internal/scanner"
+	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/task"
 )
 
@@ -83,162 +74,15 @@ func writeTaskLaunchError(w http.ResponseWriter, err error, conflict, failure st
 	jsonError(w, http.StatusInternalServerError, failure)
 }
 
-// libraryScopeName 取资料库在界面上的显示名，取不到返回空串。
-//
-// 读不到库名不是启动失败：任务声明的其余部分不依赖它，而 claimTaskSlot 对空串本就无操作。
-// 为一次读库失败挡下整个任务，用户失去的是任务本身，换来的只是一个标签。
-func (c *Controller) libraryScopeName(libraryID int64) string {
-	lib, err := c.store.GetLibrary(context.Background(), libraryID)
-	if err != nil {
-		return ""
+func runDomainIdentity(run RunSnapshot) task.Identity {
+	id := task.Identity{Type: task.Type(run.Type), Scope: task.Scope(run.Scope), Variant: task.Variant(run.Variant)}
+	if run.ScopeID != nil {
+		id.ScopeID = *run.ScopeID
 	}
-	return lib.Name
-}
-
-// taskParam 读一个**任务参数**，缺了给空串。**重启函数**靠它读回原始入参：一个任务重试时
-// 除了作用域就只剩这些参数，读丢了不会有编译错误，后果是重试静默换了跑法（换成默认刮削源、
-// 换个语种、丢掉发起理由）。
-func taskParam(run RunSnapshot, key string) string {
-	if run.Params == nil {
-		return ""
-	}
-	return run.Params[key]
-}
-
-// buildTaskDispatch 注册（类型，**变体**）-> 这个类型怎么再发起一次、以及重启之后能不能自己发起。
-// 它是**可重试**与**可续跑**两条判据的唯一事实来源，两份清单一旦分家，界面上说不可续跑的类型
-// 会在重启后自己跑起来。
-//
-// **可续跑白名单**（规格关键决定 7）：资料库扫描、系列扫描、封面生成、重建缩略图、清理缩略图、
-// 书哈希重建与低优先级回填、文件身份重建、KOReader 进度对账与匹配刷新。
-//
-// **不可续跑**的那几个（清理资料库、外部库扫描与传输、ComicInfo 回写、刮削、AI 分组）
-// 各自的理由都写在它那一行上：要么改磁盘内容、要么花钱。它们照样可重试——那是用户按下的那一下。
-func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
-	libraryID := func(run RunSnapshot) (int64, error) {
-		if run.ScopeID == nil {
-			return 0, fmt.Errorf("task %d missing library id", run.TaskID)
-		}
-		return *run.ScopeID, nil
-	}
-	forceParam := func(run RunSnapshot) bool {
-		return taskParam(run, "force") == "true"
-	}
-	return map[taskDispatchKey]taskDispatch{
-		{Type: "scan_library", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			lib, err := c.store.GetLibrary(ctx, id)
-			if err != nil {
-				return err
-			}
-			// 启动入口本就返回「同类任务已在运行」哨兵错误，重启函数原样透传即可，
-			// 不必再把一个布尔值转换回哨兵错误。
-			return c.launchLibraryScanTask(lib, forceParam(run), trigger)
-		}},
-		// 封面生成的重启函数不认领任何批（进程里那一批随重启一起没了），
-		// 而是把这个库里还缺封面的书重新排一遍，见 launchCoverRun。
-		{Type: "generate_covers", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			return c.launchCoverRun(id, trigger, true)
-		}},
-		{Type: "scan_series", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			if run.ScopeID == nil {
-				return fmt.Errorf("task %d missing series id", run.TaskID)
-			}
-			return c.launchSeriesScanTask(*run.ScopeID, forceParam(run), trigger)
-		}},
-		// 不可续跑：它删的是记录，而「这些记录该不该删」在无人看着时没人裁决。
-		{Type: "cleanup_library", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			return c.launchCleanupLibraryTask(id, trigger)
-		}},
-		// 不可续跑：它重灌完索引还要**同步等一次全量扫描**，白名单里没有这一条。
-		{Type: "rebuild_index", Variant: variantSole}: {Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildIndexTask(trigger)
-		}},
-		{Type: "rebuild_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildThumbnailsTask(trigger)
-		}},
-		{Type: "cleanup_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchCleanupThumbnailsTask(trigger)
-		}},
-		// 刮削两个变体都不可续跑：它们要调外部源，有的按次计费。
-		{Type: "scrape", Variant: variantScrapeAllLibraries}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			return c.launchBatchScrapeAllSeriesTask(ctx, taskParam(run, "provider"), trigger)
-		}},
-		{Type: "scrape", Variant: variantScrapeOneLibrary}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			return c.launchLibraryScrapeTask(ctx, id, taskParam(run, "provider"), trigger)
-		}},
-		// 不可续跑：它调 LLM，那是花钱的。
-		{Type: "ai_grouping", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			// locale 优先取任务持久化的原始值，其次取本次重试请求的语言（ctx 注入），最后回退 zh-CN。
-			locale := firstNonEmptyTaskValue(taskParam(run, "locale"), metadata.LocaleFromContext(ctx))
-			return c.launchAIGroupingTask(id, firstNonEmptyTaskValue(locale, "zh-CN"), trigger)
-		}},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildBookHashesTask(trigger)
-		}},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			// 发起理由是这个变体的原始入参，再发起一次要沿用而不是另编一个。
-			return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(taskParam(run, "reason"), "manual_retry"), trigger)
-		}},
-		{Type: "rebuild_file_identities", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildFileIdentitiesTask(trigger)
-		}},
-		{Type: "reconcile_koreader_progress", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchReconcileKOReaderProgressTask(trigger)
-		}},
-		{Type: "refresh_koreader_matching", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRefreshKOReaderMatchingTask(trigger)
-		}},
-	}
+	return id
 }
 
 // ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----
-
-// taskIOFrameMetrics 是**运行句柄**的 IO 实况在**一帧**里的那几个键。
-// reportHashProgress 与 koreaderFingerprintFrame 共用一份，键名不会各自漂移。
-func taskIOFrameMetrics(handleIO runhandle.IOMetrics) map[string]int64 {
-	return map[string]int64{
-		"hashed_files": handleIO.HashedFiles,
-		"io_wait_ms":   handleIO.IOWaitMillis,
-		"paused_ms":    handleIO.PausedMillis,
-	}
-}
-
-// taskIOMetricsParams 是同一份实况在**任务参数**那条通道里的形状：存储 IO 面板按参数名读它。
-// 空的档位与卷键滤掉不写，理由见 koreaderFingerprintFrame。
-func taskIOMetricsParams(handleIO runhandle.IOMetrics) map[string]string {
-	params := map[string]string{
-		"io_wait_ms":   strconv.FormatInt(handleIO.IOWaitMillis, 10),
-		"paused_ms":    strconv.FormatInt(handleIO.PausedMillis, 10),
-		"hashed_files": strconv.FormatInt(handleIO.HashedFiles, 10),
-	}
-	if handleIO.StorageProfile != "" {
-		params["storage_profile"] = handleIO.StorageProfile
-	}
-	if handleIO.VolumeKey != "" {
-		params["volume_key"] = handleIO.VolumeKey
-	}
-	return params
-}
 
 // runLimitsForPath 拼出任务面板上那块并发徽章：这条路径上的存储画像，加上 scanner.WorkerCount
 // 在它上面给出的 worker 数。
@@ -246,23 +90,7 @@ func taskIOMetricsParams(handleIO runhandle.IOMetrics) map[string]string {
 // 入参必须是一条**真的会被扫**的库路径，否则报出来的数字没有对应的实物——只有扫描任务调它，
 // 别的后台任务受**磁盘作业**按工种裁定的上限约束，与扫描 worker 数无关。
 func (c *Controller) runLimitsForPath(path string) RunLimits {
-	cfg := c.currentConfig()
-	profile := scanner.NormalizeScanProfile(cfg.Scanner.ScanProfile)
-	policy := config.ResolveStoragePolicy(cfg, path)
-	return RunLimits{
-		ScanProfile:                string(profile),
-		ScannerWorkersConfigured:   cfg.Scanner.Workers,
-		ScannerWorkersEffective:    scanner.WorkerCount(cfg, path, scanner.ScanOptions{Profile: profile}),
-		StorageProfile:             policy.StorageProfile,
-		VolumeKey:                  policy.VolumeKey,
-		ScanConcurrency:            policy.IOPolicy.ScanConcurrency,
-		ArchiveOpenConcurrency:     policy.IOPolicy.ArchiveOpenConcurrency,
-		CoverConcurrency:           policy.IOPolicy.CoverConcurrency,
-		HashConcurrency:            policy.IOPolicy.HashConcurrency,
-		PauseBackgroundWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
-		IdleOnlyHeavyTasks:         policy.IOPolicy.IdleOnlyHeavyTasks,
-		DisableSameDiskPageCache:   policy.IOPolicy.DisableSameDiskPageCache,
-	}
+	return *runLimitsFromDomain(scanning.LimitsForPath(c.currentConfig(), path))
 }
 
 // ---- HTTP 端点 ----

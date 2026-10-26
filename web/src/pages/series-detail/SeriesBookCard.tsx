@@ -1,3 +1,4 @@
+import { bookReadingState } from '../../reading/bookState';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BookImage, CheckCircle2, MoreHorizontal } from 'lucide-react';
@@ -60,10 +61,9 @@ export function SeriesBookCard({
     return () => document.removeEventListener('mousedown', handle);
   }, [menuOpen]);
 
-  const isFinished = book.last_read_page?.Valid && book.last_read_page.Int64 >= book.page_count && book.page_count > 0;
-  const readPage = book.last_read_page?.Valid ? book.last_read_page.Int64 : 0;
-  const progressPct = book.page_count > 0 ? Math.min(100, (readPage / book.page_count) * 100) : 0;
-  const showProgress = book.page_count > 0 && readPage > 0;
+  const { completed: isFinished, readPages: readPage } = bookReadingState(book);
+  const progressPct = isFinished ? 100 : book.page_count > 0 ? Math.min(100, (readPage / book.page_count) * 100) : 0;
+  const showProgress = isFinished || (book.page_count > 0 && readPage > 0);
   const showResumeBadge = readPage > 0 && !isFinished && book.page_count > 0;
 
   // 只在**显式**重建封面后才加 ?v=（coverBust），不用 book.updated_at：该列会因封面

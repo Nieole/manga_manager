@@ -6,12 +6,13 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 )
 
 // TestSmartCollectionCountMatchesListing 是主判据：对同一个用户，
@@ -64,15 +65,15 @@ func TestSmartCollectionCountMatchesListing(t *testing.T) {
 	}
 
 	alice := mkTestUser(t, store, "alice", database.RoleRegular)
-	if err := store.SetUserBooksReadState(ctx, alice.ID, all[0].bookIDs, true, time.Now()); err != nil {
-		t.Fatalf("SetUserBooksReadState: %v", err)
+	if _, err := reading.New(store, nil).MarkBooks(ctx, reading.MarkBooksInput{UserID: alice.ID, BookIDs: all[0].bookIDs, IsRead: true}); err != nil {
+		t.Fatalf("MarkBooks: %v", err)
 	}
 
 	completed := "completed"
 	filter, err := store.UpsertSmartFilter(ctx, database.UpsertSmartFilterParams{
 		LibraryID: lib.ID,
 		Name:      "已读完",
-		ReadState: nullStringFromPointer(&completed),
+		ReadState: sql.NullString{String: completed, Valid: true},
 	})
 	if err != nil {
 		t.Fatalf("UpsertSmartFilter: %v", err)
@@ -102,7 +103,7 @@ func TestSmartCollectionCountMatchesListing(t *testing.T) {
 				t.Fatal("书架列表里找不到这个智能书架")
 			}
 
-			_, gotTotal, err := controller.loadSmartCollectionSeries(ctx, smartFilterFromDB(filter), 50, 0, tc.userID)
+			_, gotTotal, err := controller.loadSmartCollectionSeries(ctx, SmartFilter{ID: filter.ID}, 50, 0, tc.userID)
 			if err != nil {
 				t.Fatalf("loadSmartCollectionSeries: %v", err)
 			}
@@ -145,13 +146,13 @@ func TestSmartCollectionCountIsPerUser(t *testing.T) {
 
 	alice := mkTestUser(t, store, "alice", database.RoleRegular)
 	bob := mkTestUser(t, store, "bob", database.RoleRegular)
-	if err := store.SetUserBooksReadState(ctx, alice.ID, []int64{bookID}, true, time.Now()); err != nil {
-		t.Fatalf("SetUserBooksReadState: %v", err)
+	if _, err := reading.New(store, nil).MarkBooks(ctx, reading.MarkBooksInput{UserID: alice.ID, BookIDs: []int64{bookID}, IsRead: true}); err != nil {
+		t.Fatalf("MarkBooks: %v", err)
 	}
 
 	completed := "completed"
 	filter, err := store.UpsertSmartFilter(ctx, database.UpsertSmartFilterParams{
-		LibraryID: lib.ID, Name: "已读完", ReadState: nullStringFromPointer(&completed),
+		LibraryID: lib.ID, Name: "已读完", ReadState: sql.NullString{String: completed, Valid: true},
 	})
 	if err != nil {
 		t.Fatalf("UpsertSmartFilter: %v", err)

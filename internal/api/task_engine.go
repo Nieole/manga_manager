@@ -1,8 +1,4 @@
-// 任务子域在 api 这一侧的**适配层**：把控制端点（暂停 / 恢复 / 取消按**运行 id** 寻址，
-// 重试与禁用按**任务 id**，清除仍按筛选条件，全部暂停 / 全部恢复作用在全体运行上）、对外那份 RunSnapshot 形状与
-// **重启函数**注册表，接到 `internal/task` 的领域引擎与 `internal/taskstore` 的落盘上。
-// **事实来源只有库，这一层不留任务表**（去留的论证见 taskEngine 的符号 doc）。
-// 启动仪式在同包的 task_run.go，纯转换与派生字段在 task_model.go。
+// HTTP task control, history and SSE projections use the application-owned engine and registry.
 
 package api
 
@@ -10,13 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
-	"manga-manager/internal/diskwork"
-	"manga-manager/internal/logger"
+	"manga-manager/internal/application"
+	"manga-manager/internal/application/runtime"
 	"manga-manager/internal/task"
 )
 
@@ -54,35 +49,6 @@ const (
 	runLiveEventPrefix     = "run_live:"
 )
 
-// taskEngineConfig 是任务引擎的全部外部依赖，一次性在装配期交齐。
-//
-// 收成结构体而不是位置参数：这几项里有三个都是函数，接反了不会有编译错误。
-type taskEngineConfig struct {
-	// Store 是任务与运行的落盘端口，不得为 nil：准入判据在它那里。
-	Store task.Store
-	// Publish 是推送通道本身：一帧已经序列化好的事件（运行快照与**实况汇总**都走它）。
-	// 为 nil 时整条通道不接。
-	Publish func(string)
-	// RunBackground 开一个受停机管辖的 goroutine，不得为 nil。
-	RunBackground func(func())
-	// DiskWork 是交给**运行句柄**的**磁盘作业**入口，留 nil 的后果见 runhandle.New。
-	DiskWork *diskwork.Runner
-	// Now 让测试注入可控时钟；为 nil 时走 time.Now。
-	Now func() time.Time
-	// Slots 读**运行槽位**上限。它是函数而不是数：上限在设置里可改，改了要对**新的放行**生效，
-	// 而不打断已经在跑的。为 nil 时领域引擎取它的默认值（task.DefaultSlots）。
-	Slots func() int
-	// Backoff 读**退避**的三个阈值，同样是函数而不是值，理由同 Slots。
-	// 为 nil 时领域引擎取它的默认值（task.DefaultBackoff）。
-	Backoff func() task.BackoffPolicy
-	// SampleInterval 读**采样**的取点间隔，同样是函数而不是值，理由同 Slots。
-	// 为 nil 时领域引擎取它的默认值（task.DefaultSampleInterval）。
-	SampleInterval func() time.Duration
-	// ResumeEnabled 读**可续跑**的全局开关（默认开），为 nil 即开着。
-	// 它只管开关：哪些类型可续跑由重启函数注册表那一列说了算。
-	ResumeEnabled func() bool
-}
-
 // taskEngine 是领域引擎的适配器：两侧的翻译、按**运行**与**任务**寻址的那几个入口，与一份身份缓存。
 //
 // **内存表的去留**：没有了。旧引擎那张表当年是活动任务的唯一可写副本，列表还要把它盖在库记录上，
@@ -102,6 +68,7 @@ type taskEngine struct {
 
 	libraryIDs func(context.Context, TaskIdentity) ([]int64, error)
 	engine     *task.Engine
+	runs       *application.Runs
 	runStore   task.Store
 
 	// runBackground 与 now 是本层为**测试接缝**留下的两处间接。领域引擎在构造期就把它们收进去了，
@@ -120,14 +87,13 @@ type taskEngine struct {
 	backoff        func() task.BackoffPolicy
 	sampleInterval func() time.Duration
 	// resumeEnabled 读**可续跑**的全局开关；为 nil 即开着（默认开）。
-	// 白名单本身不从这里来，它由 dispatch 那一列派生，见 buildResumePolicy。
+	// 单独 adapter 测试使用此开关；生产从应用注册表和同一 Manager 快照派生。
 	resumeEnabled func() bool
 
-	// dispatch 是「再发起一次」的注册表（(类型, **变体**) -> 重启函数与**可续跑**），
-	// 也是「可重试」与「可续跑」两条判据的唯一事实来源。
-	// 在 newControllerCore 中一次性填好（重启函数要调 Controller 的领域方法，故由 Controller 构建），
-	// 此后只读，不需要持锁。
+	// dispatch supports isolated adapter fixtures; production capabilities are read from registry.
 	dispatch map[taskDispatchKey]taskDispatch
+	runtime  *runtime.Runtime
+	registry *runtime.Registry
 
 	// ---- 受 pushMutex 保护的状态 ----
 
@@ -143,45 +109,6 @@ type taskEngine struct {
 	// 它只服务投递：领域引擎在自己的临界区里调投递函数，那一刻不能再去查库。身份行建出之后
 	// 不再变，因此这份缓存读不坏；查询路径一律走 LoadTasks 直接问库，不碰它。
 	identities map[int64]TaskIdentity
-}
-
-func newTaskEngine(cfg taskEngineConfig) *taskEngine {
-	// 领域引擎自己也拦这一道，但它收到的是本层那个转发闭包——非 nil，于是拦不住。
-	// 不在这里补一句，装配期漏掉后台能力就要等到第一个任务体启动时才炸。
-	if cfg.RunBackground == nil {
-		panic("api: taskEngineConfig.RunBackground 不得为 nil")
-	}
-	e := &taskEngine{
-		runStore:       cfg.Store,
-		runBackground:  cfg.RunBackground,
-		now:            cfg.Now,
-		slots:          cfg.Slots,
-		backoff:        cfg.Backoff,
-		sampleInterval: cfg.SampleInterval,
-		resumeEnabled:  cfg.ResumeEnabled,
-		identities:     make(map[int64]TaskIdentity),
-	}
-	e.engine = task.New(task.Config{
-		Store:              cfg.Store,
-		Publish:            e.publisher(cfg.Publish),
-		PublishLive:        e.livePublisher(cfg.Publish),
-		RunBackground:      func(fn func()) { e.runBackground(fn) },
-		DiskWork:           cfg.DiskWork,
-		DecorateRunContext: decorateRunContext,
-		Now:                e.clock,
-		Slots:              e.slotLimit,
-		Backoff:            e.backoffPolicy,
-		SampleInterval:     e.samplingInterval,
-		Resume:             e.buildResumePolicy,
-		ControlCodes: task.ControlCodes{
-			Paused:      "task.msg.control.paused",
-			Resumed:     "task.msg.control.resumed",
-			Cancelling:  "task.msg.control.cancelling",
-			Panicked:    taskPanicMessageCode,
-			Interrupted: taskInterruptedMessageCode,
-		},
-	})
-	return e
 }
 
 // slotLimit 读此刻的**运行槽位**上限。领域引擎收的是这个方法而不是 cfg.Slots，
@@ -216,14 +143,6 @@ func (e *taskEngine) samplingInterval() time.Duration {
 	return e.sampleInterval()
 }
 
-// sampleActiveRuns 催领域引擎给每条活动运行取一个**采样**点。
-//
-// 节拍在 Controller 那边（startRunSampler），但它经这道门面下来而不是自己伸手抓 e.engine：
-// 「谁能碰领域引擎」这件事，本层是唯一的答案，绕过去一次就多一条谁也没在看的路。
-func (e *taskEngine) sampleActiveRuns(ctx context.Context) {
-	e.engine.SampleActiveRuns(ctx)
-}
-
 // clock 返回当前时刻（测试可经 now 字段注入）。领域引擎收的是这个方法而不是 cfg.Now，
 // 好让构造之后换掉时钟仍然生效。
 func (e *taskEngine) clock() time.Time {
@@ -242,7 +161,7 @@ func (e *taskEngine) clock() time.Time {
 // 键取自**运行声明**而不是运行行：它不落盘（ADR 0007），而队列放行那条路上的运行是从库里
 // 读回来的。取运行行上的话，排过队的那些任务体日志会静静地少掉任务键那一格。
 func decorateRunContext(ctx context.Context, run task.Run, spec task.RunSpec) context.Context {
-	return logger.WithRunID(logger.WithTaskKey(ctx, spec.Key), run.ID)
+	return application.DecorateRunContext(ctx, run, spec)
 }
 
 // publisher 把领域快照翻成对外的任务快照并交给 SSE。publish 为 nil 时整条通道不接。
@@ -346,6 +265,15 @@ func (e *taskEngine) isRetryableTask(taskType string, variant TaskVariant) bool 
 
 // relauncherFor 返回这个（类型，**变体**）的重启函数；未注册即不可重试。
 func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRelauncher, bool) {
+	if e.registry != nil {
+		if !e.registry.Retryable(task.Type(taskType), task.Variant(variant)) {
+			return nil, false
+		}
+		return func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
+			return taskLaunchError(e.registry.Restart(ctx, runDomainIdentity(run), run.Params, trigger))
+		}, true
+	}
+
 	entry, ok := e.dispatch[taskDispatchKey{Type: taskType, Variant: variant}]
 	if !ok || entry.Relaunch == nil {
 		return nil, false
@@ -360,6 +288,10 @@ func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRe
 //
 // 装配期没给开关就按**开着**算，理由同 slotLimit：不合法与没给都交给领域侧兜底。
 func (e *taskEngine) buildResumePolicy() task.ResumePolicy {
+	if e.registry != nil && e.runtime != nil {
+		return e.registry.Policy(e.runtime.Config())
+	}
+
 	keys := make([]task.ResumeKey, 0, len(e.dispatch))
 	for key, entry := range e.dispatch {
 		if entry.Resumable {
@@ -417,19 +349,7 @@ func (e *taskEngine) live(ctx context.Context) (RunLive, error) {
 // 等的判据是运行的状态，不是「任务体返回了没有」：**排队中**被取消的运行任务体根本不会执行
 // （用户在实况区按下那张排队卡片上的取消就是这一种），只等任务体的话，等待方会一直挂到停机。
 func (e *taskEngine) awaitRunOutcome(ctx context.Context, runID int64) error {
-	run, err := e.engine.Await(ctx, runID)
-	if err != nil {
-		return err
-	}
-	switch run.Status {
-	case task.StatusCompleted:
-		return nil
-	case task.StatusCancelled:
-		// 取消不是故障：等待方（文件监听器）据此不记错误日志，但也不会把它当成功。
-		return context.Canceled
-	default:
-		return fmt.Errorf("run %d ended as %s: %s", runID, run.Status, run.Error)
-	}
+	return e.runs.AwaitOutcome(ctx, runID)
 }
 
 // listTaskSummaries 取任务清单：一个任务一行，行上带它最近一次运行。
@@ -596,14 +516,6 @@ func (e *taskEngine) clear(ctx context.Context, filters taskFilters) (int64, err
 	return e.runStore.DeleteRuns(ctx, runFilterFrom(filters, task.OrderSequenceDesc))
 }
 
-// pruneHistory 按**分层保留**裁剪历史，返回各层清掉的行数。
-//
-// 它经领域引擎而不是直接问落盘端口：「活动态与排队中的运行永不被带走」是领域的不变量，
-// 而清理运行不清掉自己这一条，靠的正是裁剪发生在它自己那条运行还活着的时候（见 task.Engine.PruneHistory）。
-func (e *taskEngine) pruneHistory(ctx context.Context, policy task.RetentionPolicy) (task.PruneResult, error) {
-	return e.engine.PruneHistory(ctx, policy)
-}
-
 // setTaskDisabled 翻转人工禁用开关，**按任务 id 寻址**（规格关键决定 15：禁用作用在**任务**上）。
 // 它一条运行都不动——禁用一个正在跑的任务，那次运行照常跑到底。
 func (e *taskEngine) setTaskDisabled(ctx context.Context, taskID int64, disabled bool) error {
@@ -710,67 +622,21 @@ func taskControlError(err error) error {
 // 先把这批运行的身份读进缓存再转写：转写过程中每条都会投递一帧，而投递那一刻在领域引擎的
 // 临界区里，补不了身份。缓存不上不是失败，只是那几帧少了类型与作用域——它们发生在任何
 // SSE 订阅者接上之前。
-func (e *taskEngine) markInterrupted(ctx context.Context) {
-	live, err := e.runStore.ListRuns(ctx, task.RunFilter{Statuses: task.LiveStatuses()})
-	if err != nil {
-		slog.Warn("Failed to list live runs for recovery", "error", err)
-	} else {
-		taskIDs := make([]int64, 0, len(live))
-		for _, run := range live {
-			taskIDs = append(taskIDs, run.TaskID)
-		}
-		if _, err := e.resolveIdentities(ctx, taskIDs); err != nil {
-			slog.Warn("Failed to resolve identities for recovery", "error", err)
-		}
-	}
-
-	outcome, err := e.engine.MarkInterrupted(ctx)
-	if err != nil {
-		slog.Warn("Failed to recover interrupted runs", "error", err)
-	}
-	if outcome.Marked > 0 {
-		slog.Info("Recovered interrupted runs", "count", outcome.Marked)
-	}
-	e.resumeRuns(ctx, outcome.Resume)
-}
-
-// resumeRuns 把**可续跑**白名单挑出来的那几条中断运行重新发起一次，**发起方记恢复**。
-//
-// 恢复出来的是**新一次运行**：原来那条留在**中断**，不改回运行中——「上一次断在哪」是用户要的答案。
-// 重排队走的是同一个启动入口，因此槽位上限照样管着它们：一次重启恢复出十条也不会同时开跑。
-//
-// **一条失败不拖累其余**：库被删了、路径没了都会让某个重启函数当场出错，而这一切发生在开机那一刻、
-// 用户还没登录。整批中断的话，剩下那些既不会跑，也没有人知道它们本该跑。
-func (e *taskEngine) resumeRuns(ctx context.Context, snapshots []task.Snapshot) {
-	if len(snapshots) == 0 {
-		return
-	}
-	runs, err := e.statusesFrom(ctx, snapshots)
-	if err != nil {
-		slog.Warn("Failed to resolve runs for resume", "error", err)
-		return
-	}
-	resumed := 0
-	for _, run := range runs {
-		relaunch, ok := e.relauncherFor(run.Type, run.Variant)
-		// 白名单与重启函数同出一张注册表，因此走不到这里；留着是因为「白名单里有、却没人发得起」
-		// 的类型只会静默什么都不做，而那种漏配值得留一行日志。
-		if !ok {
-			slog.Warn("Resumable run has no relauncher", "run_id", run.RunID, "task_id", run.TaskID, "task_type", run.Type)
-			continue
-		}
-		if err := relaunch(ctx, run, task.TriggerResumed); err != nil {
-			slog.Warn("Failed to resume interrupted run", "run_id", run.RunID, "task_id", run.TaskID, "task_type", run.Type, "error", err)
-			continue
-		}
-		resumed++
-	}
-	if resumed > 0 {
-		slog.Info("Resumed interrupted runs", "count", resumed)
-	}
-}
-
 // stopAllRuntimes 在停机时逐个取消运行的 ctx 并放行它的**暂停闸门**。
 func (e *taskEngine) stopAllRuntimes() {
 	e.engine.StopAll()
+}
+
+func (e *taskEngine) observeIdentity(ctx context.Context, id task.Identity) error {
+	owner, err := e.runStore.EnsureTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	identity := TaskIdentity{taskType: string(id.Type), scope: string(id.Scope), variant: TaskVariant(id.Variant)}
+	if id.Scope != task.ScopeSystem {
+		scopeID := id.ScopeID
+		identity.scopeID = &scopeID
+	}
+	e.rememberIdentity(owner.ID, identity)
+	return nil
 }

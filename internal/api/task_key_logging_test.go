@@ -70,6 +70,7 @@ func newScanFailureRig(t *testing.T) (*Controller, string) {
 		controller.config,
 	)
 
+	controller.assembleScanUseCases()
 	logPath := filepath.Join(filepath.Dir(controller.currentConfig().Database.Path), "manga_manager.log")
 	captureLogsInto(t, logPath)
 
@@ -103,6 +104,7 @@ func TestFailedLibraryScanLogsAreFilterableByTaskKey(t *testing.T) {
 	}
 
 	const key = "scan_library_7"
+	rememberTaskKey(key, libraryTask("scan_library", 7, variantSole))
 	status := currentTask(t, controller.taskEngine, key).Status
 	if status != "failed" {
 		t.Fatalf("扫描任务终态为 %q, want failed —— 这个用例要守的是一次**失败**的扫描", status)
@@ -141,6 +143,7 @@ func TestAutomaticScanLogsCarryTaskKeyAndRunID(t *testing.T) {
 	controller.dispatchScheduledScans(context.Background(), time.Now(), map[int64]time.Time{})
 
 	key := "scan_library_" + strconv.FormatInt(lib.ID, 10)
+	rememberTaskKey(key, libraryTask("scan_library", lib.ID, variantSole))
 	run := currentTask(t, controller.taskEngine, key)
 	if run.Trigger != string(task.TriggerScheduled) {
 		t.Fatalf("守护扫描的发起方为 %q, want scheduled", run.Trigger)

@@ -17,10 +17,9 @@ import { SidebarTaskBubble } from './SidebarTaskBubble';
 import { SidebarGroup, SidebarLink } from './layout/SidebarNav';
 import { UserMenu } from './layout/UserMenu';
 import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
-import { useTaskBubbles } from './layout/useTaskBubbles';
+import { useTaskBubbles } from '../features/task-observation/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
-import { useServerEvents } from './layout/useServerEvents';
-import { parseRunPush } from '../utils/runPush';
+import { useLibraryInvalidation } from '../session/ApplicationSessionProvider';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -103,15 +102,11 @@ export default function Layout() {
     const [editLibId, setEditLibId] = useState("");
     const editForm = useLibraryForm(EMPTY_LIBRARY_FORM);
 
-    // 用于向所有 Outlet 子路由向下传递全局刷新信号的计数器
-    const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const invalidateLibrary = useLibraryInvalidation();
+    const outletContext = useMemo(() => ({ libraries }), [libraries]);
 
-    // 稳定化 Outlet context 对象：Layout 在扫描期间会因 SSE 任务进度状态高频重渲染，若每次渲染都新建
-    // { refreshTrigger, libraries } 会让所有子路由（含库页大量卡片）跟着重渲染。仅当二者真正变化时才换引用。
-    const outletContext = useMemo(() => ({ refreshTrigger, libraries }), [refreshTrigger, libraries]);
-
-    // 全局任务进度气泡：状态、终态延时清理定时器与进度覆盖事件监听均封装在 useTaskBubbles 内。
-    const { entries: taskBubbleEntries, ingestRunSnapshot, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
+    // 任务气泡自行消费会话，持有终态延时清理与手动关闭状态。
+    const { entries: taskBubbleEntries, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
 
     // 文件夹浏览器状态与请求逻辑封装在 useDirectoryBrowser 内。
     const { browsing, setBrowsing, browseDirs, browseCurrent, browseParent, browseDrives, openDirectoryBrowser, navigateDirectoryBrowser } = useDirectoryBrowser();
@@ -286,30 +281,6 @@ export default function Layout() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // 全站实时刷新：SSE 断线由 useServerEvents 指数退避重连，因为 EventSource 只在网络层
-    // 断开时自愈——服务端返回非 2xx（会话过期的 401、反代 502）会让它进入 CLOSED 并永久停止重试。
-    useServerEvents('/api/events', {
-        onMessage: (data) => {
-            if (data === 'refresh') {
-                // 仅递增刷新信号通知当前活跃的子页面重新拉取数据。
-                // 不调用 fetchLibraries()：避免闭包捕获过期路由状态导致页面跳转，
-                // 且侧边栏资料库列表无需因扫描而刷新。
-                setRefreshTrigger((prev) => prev + 1);
-            } else {
-                // 推送通道上的帧统一在这里解开再转成自定义事件：这条 EventSource 是全站唯一一条，
-                // 序号与上一帧的序号因此也只有它读得到——任务中心据此判自己漏没漏帧（见 runPush.ts）。
-                const frame = parseRunPush(data);
-                if (!frame) return;
-                window.dispatchEvent(new CustomEvent('manga-manager:run-push', { detail: frame }));
-                if (frame.run) {
-                    // 任务气泡与外部库那条路只要运行快照本身，不关心投递链，因此仍收这个事件。
-                    window.dispatchEvent(new CustomEvent('manga-manager:run-snapshot', { detail: frame.run }));
-                    ingestRunSnapshot(frame.run);
-                }
-            }
-        },
-    });
-
     useLayoutShortcuts({
         onOpenSearch: () => setIsSearchModalOpen(true),
         onToggleShortcuts: () => setShortcutsOpen((prev) => !prev),
@@ -329,9 +300,9 @@ export default function Layout() {
             addForm.reset(EMPTY_LIBRARY_FORM);
             saveRecentLibraryPath(addForm.values.path);
             fetchLibraries();
-            // 只有新增会拨 refreshTrigger：新库需要让各处的列表重新拉一遍；
+            // 新库需要让各处的列表重新拉一遍；
             // 编辑改的是已有库的配置，不涉及集合变化。
-            setRefreshTrigger(prev => prev + 1);
+            invalidateLibrary();
         } catch (error) {
             console.error(error);
             showToast(extractErrorMessage(error, t('layout.toast.addLibraryFailed')), 'error');

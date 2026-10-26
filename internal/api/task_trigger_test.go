@@ -59,6 +59,7 @@ func newAutomaticScanRig(t *testing.T) (*Controller, database.Library, func()) {
 	}
 	t.Cleanup(releaseFn)
 	controller.scanner = scanner.NewScanner(blockingScanStore{Store: store, release: release}, controller.config)
+	controller.assembleScanUseCases()
 
 	libPath := filepath.Join(t.TempDir(), "library")
 	if err := os.MkdirAll(libPath, 0o755); err != nil {
@@ -74,6 +75,8 @@ func newAutomaticScanRig(t *testing.T) (*Controller, database.Library, func()) {
 	if err != nil {
 		t.Fatalf("建资料库失败: %v", err)
 	}
+	rememberTaskKey(scanKeyFor(lib), libraryTask("scan_library", lib.ID, variantSole))
+	rememberTaskKey("cleanup_library_"+strconv.FormatInt(lib.ID, 10), libraryTask("cleanup_library", lib.ID, variantSole))
 	return controller, lib, releaseFn
 }
 

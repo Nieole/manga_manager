@@ -1,9 +1,3 @@
-// 本文件是「每用户阅读进度」的数据访问层（多用户阶段2）。它把旧的全局
-// books.last_read_page/last_read_at 拆成按用户的 user_book_progress，并派生每用户 × 每系列的
-// user_series_progress 聚合（进度条/已读·完成计数/最近阅读），供列表、看板、继续阅读按当前用户取数。
-// 维护要点：写入进度后必须按 (user, series) 增量刷新 user_series_progress；旧全局进度在首个管理员
-// 创建时经 MigrateGlobalProgressToUser 迁移过来（幂等）。books 表的旧进度列保留为迁移来源，不再读写。
-
 package database
 
 import (
@@ -17,6 +11,7 @@ import (
 type UserBookProgress struct {
 	LastReadPage sql.NullInt64
 	LastReadAt   sql.NullTime
+	IsRead       bool
 }
 
 // refreshUserSeriesProgressForSeriesStmt 增量刷新单个 (user, series) 的派生进度。占位符顺序见下方调用。
@@ -32,9 +27,9 @@ const refreshUserSeriesProgressForSeriesStmt = `
 			FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
 			WHERE ubp.user_id = ? AND b.series_id = ?), 0),
 		COALESCE((SELECT COUNT(*) FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
-			WHERE ubp.user_id = ? AND b.series_id = ? AND ubp.last_read_page IS NOT NULL AND ubp.last_read_page > 0), 0),
+			WHERE ubp.user_id = ? AND b.series_id = ? AND (ubp.is_read OR ubp.last_read_page > 0)), 0),
 		COALESCE((SELECT COUNT(*) FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
-			WHERE ubp.user_id = ? AND b.series_id = ? AND b.page_count > 0 AND ubp.last_read_page >= b.page_count), 0),
+			WHERE ubp.user_id = ? AND b.series_id = ? AND (ubp.is_read OR (b.page_count > 0 AND ubp.last_read_page >= b.page_count))), 0),
 		(SELECT ubp.last_read_at FROM user_book_progress ubp JOIN books b ON b.id = ubp.book_id
 			WHERE ubp.user_id = ? AND b.series_id = ? AND ubp.last_read_at IS NOT NULL
 			ORDER BY ubp.last_read_at DESC, ubp.book_id DESC LIMIT 1),
@@ -60,8 +55,8 @@ const refreshUserSeriesProgressAllStmt = `
 			WHEN ubp.last_read_page IS NULL OR ubp.last_read_page <= 0 THEN 0
 			WHEN b.page_count > 0 AND ubp.last_read_page > b.page_count THEN b.page_count
 			ELSE ubp.last_read_page END),
-		SUM(CASE WHEN ubp.last_read_page IS NOT NULL AND ubp.last_read_page > 0 THEN 1 ELSE 0 END),
-		SUM(CASE WHEN b.page_count > 0 AND ubp.last_read_page >= b.page_count THEN 1 ELSE 0 END),
+		SUM(CASE WHEN (ubp.is_read OR ubp.last_read_page > 0) THEN 1 ELSE 0 END),
+		SUM(CASE WHEN (ubp.is_read OR (b.page_count > 0 AND ubp.last_read_page >= b.page_count)) THEN 1 ELSE 0 END),
 		MAX(ubp.last_read_at),
 		COALESCE((SELECT ubp2.book_id FROM user_book_progress ubp2 JOIN books b2 ON b2.id = ubp2.book_id
 			WHERE ubp2.user_id = ubp.user_id AND b2.series_id = b.series_id AND ubp2.last_read_at IS NOT NULL
@@ -99,7 +94,7 @@ func (s *SqlStore) SetUserBookProgress(ctx context.Context, userID, bookID, page
 			`INSERT INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, updated_at)
 			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 			 ON CONFLICT(user_id, book_id) DO UPDATE SET
-			   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, updated_at = CURRENT_TIMESTAMP`,
+			   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, is_read=FALSE, updated_at = CURRENT_TIMESTAMP`,
 			userID, bookID, page, at); err != nil {
 			return err
 		}
@@ -114,117 +109,12 @@ func (s *SqlStore) SetUserBookProgress(ctx context.Context, userID, bookID, page
 	})
 }
 
-// ClearUserBookProgress 清除某用户对某本书的进度（标记未读），并刷新其系列聚合。
-func (s *SqlStore) ClearUserBookProgress(ctx context.Context, userID, bookID int64) error {
-	return s.ExecTx(ctx, func(q *Queries) error {
-		seriesID, err := q.GetSeriesIDByBookID(ctx, bookID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if _, err := q.db.ExecContext(ctx,
-			`DELETE FROM user_book_progress WHERE user_id = ? AND book_id = ?`, userID, bookID); err != nil {
-			return err
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return refreshUserSeriesProgressTx(ctx, q, userID, seriesID)
-	})
-}
-
-// setUserBooksReadStateBatch 是「一批书」的读状态写入，整批在一个事务内完成。
-const setUserBooksReadStateBatch = 500
-
-// SetUserBooksReadState 批量把若干书标记为已读（进度=页数）或未读（清除），并刷新受影响系列。
-//
-// 分批而不是一个大事务：DSN 里的 _txlock=immediate 让 BeginTx 当场就握住 SQLite 写锁，
-// 而这条路径的书数由用户选区决定（bulkUpdateSeriesProgress 甚至能把几个系列展开成整库几万本）。
-// 6 万本书实测要 12 万条语句、连续持写锁约 2.5 秒——期间扫描器落库与所有阅读进度保存全部排队，
-// 最长要等满 busy_timeout。
-//
-// 分批的代价是整体不再原子：中途失败会留下「前几批已生效」的状态。这对读状态标记是可接受的
-// ——它本就是幂等的逐本操作，用户重试一次即可，而且部分成功比「点了没反应还把库锁死两秒」更好。
-func (s *SqlStore) SetUserBooksReadState(ctx context.Context, userID int64, bookIDs []int64, isRead bool, at time.Time) error {
-	for start := 0; start < len(bookIDs); start += setUserBooksReadStateBatch {
-		end := start + setUserBooksReadStateBatch
-		if end > len(bookIDs) {
-			end = len(bookIDs)
-		}
-		if err := s.setUserBooksReadStateChunk(ctx, userID, bookIDs[start:end], isRead, at); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *SqlStore) setUserBooksReadStateChunk(ctx context.Context, userID int64, bookIDs []int64, isRead bool, at time.Time) error {
-	if len(bookIDs) == 0 {
-		return nil
-	}
-	at = LocalWallClock(at)
-	placeholders, idArgs := sqlInClause(bookIDs)
-
-	return s.ExecTx(ctx, func(q *Queries) error {
-		// 一次查出这批书涉及的系列，顺带天然过滤掉已不存在的 book_id。
-		affected := make(map[int64]struct{})
-		rows, err := q.db.QueryContext(ctx,
-			`SELECT DISTINCT series_id FROM books WHERE id IN (`+placeholders+`)`, idArgs...)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var seriesID int64
-			if err := rows.Scan(&seriesID); err != nil {
-				rows.Close()
-				return err
-			}
-			affected[seriesID] = struct{}{}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if len(affected) == 0 {
-			return nil // 这批 id 全都不存在
-		}
-
-		if isRead {
-			// 已读：进度设为该书页数（page_count 为 0 时用大哨兵值，语义同旧 UpdateBookProgress）。
-			args := append([]interface{}{userID, at}, idArgs...)
-			if _, err := q.db.ExecContext(ctx,
-				`INSERT INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, updated_at)
-				 SELECT ?, id, CASE WHEN page_count > 0 THEN page_count ELSE 99999 END, ?, CURRENT_TIMESTAMP
-				 FROM books WHERE id IN (`+placeholders+`)
-				 ON CONFLICT(user_id, book_id) DO UPDATE SET
-				   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, updated_at = CURRENT_TIMESTAMP`,
-				args...); err != nil {
-				return err
-			}
-		} else {
-			args := append([]interface{}{userID}, idArgs...)
-			if _, err := q.db.ExecContext(ctx,
-				`DELETE FROM user_book_progress WHERE user_id = ? AND book_id IN (`+placeholders+`)`,
-				args...); err != nil {
-				return err
-			}
-		}
-
-		// 刷新留在本批事务内：跨批挪到最后会让「写已生效但聚合还没更新」的窗口横跨整个操作。
-		for seriesID := range affected {
-			if err := refreshUserSeriesProgressTx(ctx, q, userID, seriesID); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 // GetUserBookProgress 返回某用户对某本书的进度；无记录时 found=false。
 func (s *SqlStore) GetUserBookProgress(ctx context.Context, userID, bookID int64) (UserBookProgress, bool, error) {
 	var p UserBookProgress
 	err := s.db.QueryRowContext(ctx,
-		`SELECT last_read_page, last_read_at FROM user_book_progress WHERE user_id = ? AND book_id = ?`,
-		userID, bookID).Scan(&p.LastReadPage, &p.LastReadAt)
+		`SELECT last_read_page, last_read_at, is_read FROM user_book_progress WHERE user_id = ? AND book_id = ?`,
+		userID, bookID).Scan(&p.LastReadPage, &p.LastReadAt, &p.IsRead)
 	if errors.Is(err, sql.ErrNoRows) {
 		return UserBookProgress{}, false, nil
 	}
@@ -248,7 +138,7 @@ func (s *SqlStore) GetUserBookProgressMap(ctx context.Context, userID int64, boo
 	// 叠加进度展示，叠加本身也从不与写入串行；要保持快照语义得把整个循环包进只读事务，
 	// 为一次展示付这个代价不值得。
 	err := sqlInBatches(bookIDs, func(placeholders string, args []interface{}) error {
-		query := `SELECT book_id, last_read_page, last_read_at FROM user_book_progress WHERE user_id = ? AND book_id IN (` + placeholders + `)`
+		query := `SELECT book_id, last_read_page, last_read_at, is_read FROM user_book_progress WHERE user_id = ? AND book_id IN (` + placeholders + `)`
 		fullArgs := append([]interface{}{userID}, args...)
 		rows, err := s.db.QueryContext(ctx, query, fullArgs...)
 		if err != nil {
@@ -258,7 +148,7 @@ func (s *SqlStore) GetUserBookProgressMap(ctx context.Context, userID int64, boo
 		for rows.Next() {
 			var bookID int64
 			var p UserBookProgress
-			if err := rows.Scan(&bookID, &p.LastReadPage, &p.LastReadAt); err != nil {
+			if err := rows.Scan(&bookID, &p.LastReadPage, &p.LastReadAt, &p.IsRead); err != nil {
 				return err
 			}
 			out[bookID] = p
@@ -308,7 +198,7 @@ func (s *SqlStore) GetUserRecentReadAll(ctx context.Context, userID, limit int64
 		LEFT JOIN user_book_progress ubp ON ubp.user_id = usp.user_id AND ubp.book_id = usp.last_read_book_id
 		LEFT JOIN series_stats sc ON sc.series_id = s.id
 		WHERE usp.user_id = ? AND usp.last_read_at IS NOT NULL AND usp.last_read_book_id > 0
-		  AND ubp.last_read_page IS NOT NULL AND ubp.last_read_page > 0
+		  AND (ubp.is_read OR ubp.last_read_page > 0)
 		ORDER BY usp.last_read_at DESC, s.name ASC
 		LIMIT ?`, userID, limit)
 	if err != nil {
@@ -369,7 +259,7 @@ func (s *SqlStore) GetUserRecentReadSeries(ctx context.Context, userID, libraryI
 func (s *SqlStore) GetUserReadBooksCount(ctx context.Context, userID int64) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM user_book_progress WHERE user_id = ? AND last_read_page IS NOT NULL AND last_read_page > 0`,
+		`SELECT COUNT(*) FROM user_book_progress WHERE user_id = ? AND (is_read OR last_read_page > 0)`,
 		userID).Scan(&n)
 	return n, err
 }
@@ -379,83 +269,14 @@ func (s *SqlStore) GetUserReadBooksCount(ctx context.Context, userID int64) (int
 func (s *SqlStore) MigrateGlobalProgressToUser(ctx context.Context, userID int64) error {
 	return s.ExecTx(ctx, func(q *Queries) error {
 		if _, err := q.db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO user_book_progress (user_id, book_id, last_read_page, last_read_at)
-			 SELECT ?, id, last_read_page, last_read_at FROM books WHERE last_read_page IS NOT NULL AND last_read_page > 0`,
+			`INSERT OR IGNORE INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, is_read)
+			 SELECT ?, id, last_read_page, last_read_at, is_read FROM books WHERE (is_read OR last_read_page > 0)`,
 			userID); err != nil {
 			return err
 		}
 		_, err := q.db.ExecContext(ctx, refreshUserSeriesProgressAllStmt, userID)
 		return err
 	})
-}
-
-// ListUserReadingListItems 是 ListReadingListItems 的每用户版本。
-//
-// sqlc 生成的那版把 next_book_id（「继续阅读」按钮的落点）算在全局 books.last_read_page 上，
-// 而多用户改造后该列已停写——于是不论读到哪一卷，按钮永远指回第一卷。
-// user_book_progress 位于 schema_handwritten.sql（刻意避开 sqlc 以防模型重名），
-// 无法在 sql/query.sql 里 JOIN，故这条查询手写在此。
-//
-// userID<=0 时不应调用本方法（走 sqlc 版即可）；即便调用，LEFT JOIN 无匹配行会让
-// COALESCE 回落到全局列，行为与旧版一致。
-func (s *SqlStore) ListUserReadingListItems(ctx context.Context, userID, readingListID int64) ([]ListReadingListItemsRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT
-			rli.id,
-			rli.reading_list_id,
-			rli.series_id,
-			rli.sort_order,
-			rli.note,
-			rli.created_at,
-			rli.updated_at,
-			s.name AS series_name,
-			COALESCE(s.title, '') AS series_title,
-			s.book_count,
-			CAST(COALESCE((
-				SELECT b.cover_path
-				FROM books b
-				WHERE b.series_id = s.id AND b.cover_path IS NOT NULL AND b.cover_path != ''
-				ORDER BY b.sort_number, b.name
-				LIMIT 1
-			), '') AS TEXT) AS cover_path,
-			CAST(COALESCE((
-				SELECT b.id
-				FROM books b
-				LEFT JOIN user_book_progress ubp ON ubp.book_id = b.id AND ubp.user_id = ?
-				WHERE b.series_id = s.id
-				ORDER BY
-					CASE
-						WHEN b.page_count = 0 THEN 0
-						WHEN COALESCE(ubp.last_read_page, b.last_read_page) IS NULL THEN 0
-						WHEN COALESCE(ubp.last_read_page, b.last_read_page) < b.page_count THEN 0
-						ELSE 1
-					END,
-					b.sort_number,
-					b.name
-				LIMIT 1
-			), 0) AS INTEGER) AS next_book_id
-		FROM reading_list_items rli
-		JOIN series s ON s.id = rli.series_id
-		WHERE rli.reading_list_id = ?
-		ORDER BY rli.sort_order, s.name`, userID, readingListID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var items []ListReadingListItemsRow
-	for rows.Next() {
-		var i ListReadingListItemsRow
-		if err := rows.Scan(
-			&i.ID, &i.ReadingListID, &i.SeriesID, &i.SortOrder, &i.Note,
-			&i.CreatedAt, &i.UpdatedAt, &i.SeriesName, &i.SeriesTitle,
-			&i.BookCount, &i.CoverPath, &i.NextBookID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
 }
 
 // RefreshUserSeriesProgressForAllUsers 重算某系列在所有用户下的派生进度聚合。
