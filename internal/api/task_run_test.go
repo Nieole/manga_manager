@@ -148,6 +148,7 @@ func TestRunKeepsSpecCodeWhenResultCodeEmpty(t *testing.T) {
 // TestRunClaimsSlotSynchronouslyAndDefersBody 钉住那条被刻意保留的不变量：
 // 槽位闸门同步、任务体异步。启动入口返回时任务已在列表里且任务体尚未开跑，HTTP 层才能立即返回 202。
 func TestRunClaimsSlotSynchronouslyAndDefersBody(t *testing.T) {
+	rememberTaskKey("scan_library_1", identityForTest())
 	var deferred []func()
 	e, snapshots := newBackgroundTestEngine(t, func(fn func()) { deferred = append(deferred, fn) }, nil)
 

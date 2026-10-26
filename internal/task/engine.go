@@ -164,6 +164,8 @@ type Engine struct {
 	codes          ControlCodes
 
 	mu               sync.Mutex
+	stopping         bool
+	pendingLaunches  sync.WaitGroup
 	libraryVersion   uint64
 	libraryExclusive map[int64]bool
 	libraryReaders   map[int64]int

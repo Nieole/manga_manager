@@ -18,7 +18,7 @@ func TestRelationWritesKeepFranchiseProtocolAndGraphIdentity(t *testing.T) {
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create %d: %s", create.Code, create.Body.String())
 	}
-	c.backgroundWG.Wait()
+	c.runtime.WaitBackground()
 	snapshots := readFranchises(t, store)
 	if len(snapshots) != 1 {
 		t.Fatalf("snapshots=%+v", snapshots)
@@ -33,7 +33,7 @@ func TestRelationWritesKeepFranchiseProtocolAndGraphIdentity(t *testing.T) {
 	if update.Code != http.StatusOK {
 		t.Fatalf("update %d: %s", update.Code, update.Body.String())
 	}
-	c.backgroundWG.Wait()
+	c.runtime.WaitBackground()
 	after := readFranchises(t, store)
 	if len(after) != 1 || after[0].ID != collectionID {
 		t.Fatalf("identity=%+v", after)

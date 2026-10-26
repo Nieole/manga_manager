@@ -67,6 +67,8 @@ func TestRelocationKeepsIndependentNestedLibraryWatching(t *testing.T) {
 				if err = c.watcher.WatchLibrary(nested.ID, nested.Path, ""); err != nil {
 					t.Fatal(err)
 				}
+				// Replace the watcher at its application owner as well as the HTTP fixture reference.
+				c.runtime.Watcher = c.watcher
 				c.watcher.Start(func(string) {})
 				body, _ := json.Marshal(map[string]string{"source_root": filepath.Clean(strings.Replace(lib.Path, "/SOURCE", "/source", 1)), "target_root": target})
 				rec := httptest.NewRecorder()

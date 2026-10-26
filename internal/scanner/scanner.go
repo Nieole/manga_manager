@@ -35,10 +35,13 @@ type Scanner struct {
 	store  database.Store
 	config *config.Manager
 	// diskWork 执行扫描器的**磁盘作业**：闸门、策略、上限、令牌与观测都收在它里面。
-	diskWork    *diskwork.Runner
-	openArchive func(string) (parser.Archive, error)
-	coverOnce   sync.Once
-	coverQueue  chan coverJob
+	diskWork     *diskwork.Runner
+	openArchive  func(string) (parser.Archive, error)
+	coverOnce    sync.Once
+	coverMu      sync.RWMutex
+	coverClosed  bool
+	coverWorkers sync.WaitGroup
+	coverQueue   chan coverJob
 	// coverRuns 是**封面运行**的发起口，装配期注册（见 SetCoverRunLauncher）。
 	// 留 nil 的进程里封面照样生成，只是不建运行、无处可报。
 	coverRuns CoverRunLauncher
@@ -1535,6 +1538,11 @@ func (s *Scanner) enqueueCoverJobs(ctx context.Context, covers *CoverBatch, metr
 // 池是共享的：两个库的封面运行会在里面交错推进，这是预期行为——限住并发的是池的大小与
 // **存储令牌**，而不是运行的条数。
 func (s *Scanner) dispatchCover(ctx context.Context, batch *CoverBatch, job coverJob) error {
+	s.coverMu.RLock()
+	defer s.coverMu.RUnlock()
+	if s.coverClosed {
+		return context.Canceled
+	}
 	s.startCoverWorkers()
 	job.ctx = ctx
 	job.batch = batch
@@ -1572,7 +1580,9 @@ func (s *Scanner) startCoverWorkers() {
 			workers = 1
 		}
 		for i := 0; i < workers; i++ {
+			s.coverWorkers.Add(1)
 			go func() {
+				defer s.coverWorkers.Done()
 				for job := range s.coverQueue {
 					s.runCoverJob(job)
 				}
@@ -1958,4 +1968,22 @@ func (s *Scanner) CleanupThumbnails(ctx context.Context, progressCb func(deleted
 	}
 
 	return nil
+}
+
+// Close joins standalone cover batches and releases the shared cover workers.
+// Callers must first stop scan inputs and wait for owned scan and cover runs.
+func (s *Scanner) Close() {
+	if s == nil {
+		return
+	}
+	s.selfDrained.Wait()
+	s.coverMu.Lock()
+	if !s.coverClosed {
+		s.coverClosed = true
+		if s.coverQueue != nil {
+			close(s.coverQueue)
+		}
+	}
+	s.coverMu.Unlock()
+	s.coverWorkers.Wait()
 }

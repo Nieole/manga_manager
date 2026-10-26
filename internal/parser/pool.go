@@ -69,10 +69,12 @@ func fileSignature(path string) (time.Time, int64) {
 
 // ArchivePool 实现一个简单的句柄 LRU 缓存池
 type ArchivePool struct {
-	mu      sync.Mutex
-	items   map[string]*poolItem
-	maxSize int
-	stopCh  chan struct{} // 停止 GC 协程的信号
+	mu       sync.Mutex
+	items    map[string]*poolItem
+	maxSize  int
+	done     chan struct{}
+	stopOnce sync.Once
+	stopCh   chan struct{} // 停止 GC 协程的信号
 }
 
 var (
@@ -94,6 +96,7 @@ func InitPool(size int) {
 			items:   make(map[string]*poolItem),
 			maxSize: size,
 			stopCh:  make(chan struct{}),
+			done:    make(chan struct{}),
 		}
 		go globalPool.gcLoop()
 		return
@@ -104,13 +107,37 @@ func InitPool(size int) {
 
 // StopGC 停止后台 GC 协程（应用退出时调用）
 func StopGC() {
-	if globalPool != nil {
-		close(globalPool.stopCh)
+	poolMu.Lock()
+	p := globalPool
+	poolMu.Unlock()
+	if p != nil {
+		p.stopOnce.Do(func() { close(p.stopCh) })
+		<-p.done
 	}
 }
 
+// CloseArchivePool joins the collector and releases cached handles after all process owners have exited.
+func CloseArchivePool() {
+	poolMu.Lock()
+	p := globalPool
+	globalPool = nil
+	poolMu.Unlock()
+	if p == nil {
+		return
+	}
+	p.stopOnce.Do(func() { close(p.stopCh) })
+	<-p.done
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key, item := range p.items {
+		p.evictLocked(key, item)
+	}
+}
+func currentPool() *ArchivePool { poolMu.Lock(); defer poolMu.Unlock(); return globalPool }
+
 // gcLoop 定期清理超过 10 分钟未被访问的过期句柄，释放文件描述符
 func (p *ArchivePool) gcLoop() {
+	defer close(p.done)
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
@@ -167,10 +194,11 @@ func (p *ArchivePool) max() int {
 
 // PoolMaxSize 返回当前全局归档池的容量上限（未初始化时为 0）。供运行时诊断与配置生效的回归测试观测。
 func PoolMaxSize() int {
-	if globalPool == nil {
+	pool := currentPool()
+	if pool == nil {
 		return 0
 	}
-	return globalPool.max()
+	return pool.max()
 }
 
 // GetArchiveFromPool 尝试从池中获取已打开的文件，如果不存在则延迟创建。
@@ -179,7 +207,8 @@ func PoolMaxSize() int {
 // 引用计数归零之前不会真正关闭，这样淘汰/GC 就不会在别人读到一半时抽走文件描述符。
 // release 幂等，且在返回 error 时也非 nil，调用方可以无条件 defer。
 func GetArchiveFromPool(path string) (Archive, func(), error) {
-	if globalPool == nil || globalPool.max() <= 0 {
+	pool := currentPool()
+	if pool == nil || pool.max() <= 0 {
 		// 不经池：句柄归调用方独占，release 负责关闭。
 		arc, err := OpenArchive(path)
 		if err != nil {
@@ -188,20 +217,20 @@ func GetArchiveFromPool(path string) (Archive, func(), error) {
 		return arc, func() { _ = arc.Close() }, nil
 	}
 
-	globalPool.mu.Lock()
-	if item, ok := globalPool.items[path]; ok {
+	pool.mu.Lock()
+	if item, ok := pool.items[path]; ok {
 		// 校验文件是否在缓存后被更新：mtime/size 变化则移出池并走下方重建路径，
 		// 避免文件更新后最长 10 分钟仍返回旧内容。
 		mt, sz := fileSignature(path)
 		if mt.Equal(item.modTime) && sz == item.size {
 			item.lastUsed = time.Now()
-			globalPool.retainLocked(item)
-			globalPool.mu.Unlock()
-			return item.archive, globalPool.releaseFor(item), nil
+			pool.retainLocked(item)
+			pool.mu.Unlock()
+			return item.archive, pool.releaseFor(item), nil
 		}
-		globalPool.evictLocked(path, item)
+		pool.evictLocked(path, item)
 	}
-	globalPool.mu.Unlock()
+	pool.mu.Unlock()
 
 	// 池中没有，创建一个新的
 	arc, err := OpenArchive(path)
@@ -209,29 +238,29 @@ func GetArchiveFromPool(path string) (Archive, func(), error) {
 		return nil, noopRelease, err
 	}
 
-	globalPool.mu.Lock()
-	defer globalPool.mu.Unlock()
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
 
 	// 再次检查确认（双检锁变体，防止并发创建）
-	if item, ok := globalPool.items[path]; ok {
+	if item, ok := pool.items[path]; ok {
 		arc.Close() // 关闭多余的
 		item.lastUsed = time.Now()
-		globalPool.retainLocked(item)
-		return item.archive, globalPool.releaseFor(item), nil
+		pool.retainLocked(item)
+		return item.archive, pool.releaseFor(item), nil
 	}
 
 	// 检查是否超过最大限制，执行淘汰
-	if len(globalPool.items) >= globalPool.maxSize {
+	if len(pool.items) >= pool.maxSize {
 		var oldestKey string
 		var oldestTime time.Time
-		for k, v := range globalPool.items {
+		for k, v := range pool.items {
 			if oldestKey == "" || v.lastUsed.Before(oldestTime) {
 				oldestKey = k
 				oldestTime = v.lastUsed
 			}
 		}
 		if oldestKey != "" {
-			globalPool.evictLocked(oldestKey, globalPool.items[oldestKey])
+			pool.evictLocked(oldestKey, pool.items[oldestKey])
 		}
 	}
 
@@ -243,39 +272,41 @@ func GetArchiveFromPool(path string) (Archive, func(), error) {
 		modTime:  mt,
 		size:     sz,
 	}
-	globalPool.items[path] = item
-	globalPool.retainLocked(item)
+	pool.items[path] = item
+	pool.retainLocked(item)
 
-	return arc, globalPool.releaseFor(item), nil
+	return arc, pool.releaseFor(item), nil
 }
 
 // EvictArchiveFromPool 把某路径的缓存句柄移出池；仍被借用时推迟到引用归零后关闭。
 func EvictArchiveFromPool(path string) {
-	if globalPool == nil {
+	pool := currentPool()
+	if pool == nil {
 		return
 	}
 
-	globalPool.mu.Lock()
-	defer globalPool.mu.Unlock()
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
 
-	item, ok := globalPool.items[path]
+	item, ok := pool.items[path]
 	if !ok {
 		return
 	}
 
-	globalPool.evictLocked(path, item)
+	pool.evictLocked(path, item)
 }
 
 // ResetArchivePool 移出全部缓存句柄；仍被借用的推迟到引用归零后关闭。
 func ResetArchivePool() {
-	if globalPool == nil {
+	pool := currentPool()
+	if pool == nil {
 		return
 	}
 
-	globalPool.mu.Lock()
-	defer globalPool.mu.Unlock()
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
 
-	for key, item := range globalPool.items {
-		globalPool.evictLocked(key, item)
+	for key, item := range pool.items {
+		pool.evictLocked(key, item)
 	}
 }

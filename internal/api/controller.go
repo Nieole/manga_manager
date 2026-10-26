@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +21,7 @@ import (
 	"manga-manager/internal/application/intelligence"
 	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/application/relocating"
+	appruntime "manga-manager/internal/application/runtime"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -36,10 +36,7 @@ import (
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/seriesmeta"
-	"manga-manager/internal/storageio"
-	"manga-manager/internal/task"
 	"manga-manager/internal/taskcontrol"
-	"manga-manager/internal/taskstore"
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/sync/singleflight"
@@ -57,8 +54,7 @@ type Controller struct {
 	stats   *statsCache
 	scanner *scanner.Scanner
 	config  *config.Manager
-	// diskWork 是任务体发起**磁盘作业**要用的执行器。Controller 自己不再直接用它——
-	// 它只经 newTaskEngine 交给引擎，由引擎装进每个任务的**运行句柄**。
+	// diskWork 引用应用运行时为唯一任务引擎装配的共享磁盘执行器。
 	diskWork       *diskwork.Runner
 	koreader       *koreader.Service
 	external       *external.Manager
@@ -97,12 +93,7 @@ type Controller struct {
 	// 该头由客户端可控，逐次打日志等于给了一个刷日志的口子。
 	untrustedProtoWarnOnce sync.Once
 
-	lifecycleOnce sync.Once
-	shutdownOnce  sync.Once
-	lifecycleMu   sync.Mutex
-	done          chan struct{}
-	closed        bool
-	backgroundWG  sync.WaitGroup
+	runtime *appruntime.Runtime
 
 	relations *organize.Relations
 }
@@ -332,8 +323,8 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 	return controllerCacheSizes{imageBytes: defaultImageCacheBytes, page: 128, bookPageSource: 512}
 }
 
-// newControllerCore 完成 Controller 的**装配**：建组件、接扫描器回调、填任务重试注册表。
-// 它预备文件监听资源并恢复迁移；事件派发与后台服务由 NewController 启动。
+// newControllerCore binds HTTP-owned caches and projections to the application runtime graph.
+// Consistency recovery finishes before this constructor exposes any handlers.
 //
 // 白盒测试构造 Controller 必须调用这里，不得手工拼装字段：手工拼装在新增组件字段时容易漏掉，
 // 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
@@ -346,9 +337,6 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		pageArchive:     newPageArchiveCache(sizes.bookPageSource, sizes.page),
 		scanner:         scan,
 		config:          cfg,
-		external:        external.NewManager(store, 30*time.Minute),
-		proposals:       proposal.NewService(proposalDB{Store: store}),
-		relocation:      relocation.NewService(store, cfg),
 		configPath:      cfgPath,
 		sse:             newSSEBroker(),
 		recommendations: newRecommendationCache(24 * time.Hour),
@@ -356,136 +344,32 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		auth:            newAuthState(),
 	}
 
-	// diskWork 读的是 c 的当前配置快照，须在 c 构造完成后建立。
-	c.diskWork = diskwork.NewRunner(c.currentConfig, storageio.Default)
-
-	c.koreader = koreader.NewService(store, cfg, koreader.WithReadingPositions(reading.New(store, func() { c.invalidateVolatileStatsCache("koreader_progress") })))
-
-	// Relations owns coalesced franchise rebuilding; background work remains lifecycle registered.
-	c.relations = organize.NewRelations(c.store, c.runBackground)
-
-	// taskEngine 依赖 c 的 SSE 投递与后台运行能力，同样须在 c 构造完成后建立。
-	// 任务快照只投给管理员：它带着作用域显示名、重启入参与失败原因，与任务列表接口
-	// （对普通用户 403）是同一份数据，两条路口径不同就等于那条 403 不存在。
-	c.taskEngine = newTaskEngine(taskEngineConfig{
-		Store:          taskstore.New(store.DB()),
-		Publish:        c.sse.publishAdmin,
-		RunBackground:  c.runBackground,
-		DiskWork:       c.diskWork,
-		Slots:          c.taskSlots,
-		Backoff:        c.taskBackoffPolicy,
-		SampleInterval: c.runSampleInterval,
-		ResumeEnabled:  c.taskResumeEnabled,
-	})
-	// 构建「再发起一次」的注册表：它同时是可重试与**可续跑**两条判据的来源，因此必须在任何运行
-	// 落地（列表要问「可重试吗」）与重启转**中断**（要问「可续跑吗」）之前填好。
-	c.taskEngine.libraryIDs = c.taskLibraries
-	c.taskEngine.dispatch = c.buildTaskDispatch()
-	c.assembleScanUseCases()
-	c.assembleMaintenanceUseCases()
-	c.assembleDiskUseCases()
-	c.assembleIntelligenceUseCases()
-	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{
-		ScanLibrary: c.runWatchedLibraryScan, CleanupLibrary: c.runWatchedLibraryCleanup,
-		LibraryScanRunning: func(id int64) bool { return scan != nil && scan.LibraryScanActive(id) },
-	})
-	c.assembleRelocationUseCases()
-	if err := c.moves.Recover(context.Background()); err != nil {
-		panic(fmt.Errorf("initialize library relocation: %w", err))
+	if err := c.assembleRuntime(scan); err != nil {
+		panic(err)
 	}
 
-	c.config.SetAfterUpdate(c.configUpdated)
 	return c
 }
 
 func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
 	c := newControllerCore(store, scan, cfg, cfgPath, defaultControllerCacheSizes())
-
-	c.taskEngine.markInterrupted(context.Background())
-
-	c.runBackground(func() { c.sse.run(c.lifecycleDone()) })
-	c.runBackground(c.startDaemon)
-	c.runBackground(c.startPageCacheJanitor)
-	c.runBackground(c.startSessionJanitor)
-	c.runBackground(c.startRunHistoryJanitor)
-	c.runBackground(c.startRunSampler)
-
-	// 初始化文件系统监控。派生出去的扫描与清理各建一条**发起方**为「监听」的运行：
-	// 监听器自己不碰扫描器，它只知道「这个库该扫了」。
-	if c.watcherInitErr != nil {
-		slog.Warn("Failed to create file watcher", "error", c.watcherInitErr)
-	} else {
-		fw := c.watcher
-		fw.Start(c.PublishEvent)
-		// 为现有库开启监听
-		c.runBackground(func() {
-			libs, err := store.ListLibraries(context.Background())
-			if err != nil {
-				slog.Warn("Failed to list libraries for watcher", "error", err)
-				return
-			}
-			for _, lib := range libs {
-				if lib.ScanMode == "watch" {
-					if c.requireAutomaticProcessing(context.Background(), lib.ID) != nil {
-						continue
-					}
-					release, accessErr := c.taskEngine.engine.AcquireLibraryRead(lib.ID)
-					if accessErr != nil {
-						continue
-					}
-					_ = fw.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
-					release()
-				}
-			}
-		})
+	if err := c.runtime.Start(context.Background()); err != nil {
+		c.Close()
+		panic(fmt.Errorf("start application: %w", err))
 	}
-
 	return c
 }
-
-func (c *Controller) lifecycleDone() <-chan struct{} {
-	c.lifecycleOnce.Do(func() {
-		c.done = make(chan struct{})
-	})
-	return c.done
-}
-
-func (c *Controller) runBackground(fn func()) {
-	c.lifecycleDone()
-	c.lifecycleMu.Lock()
-	if c.closed {
-		c.lifecycleMu.Unlock()
-		return
-	}
-	c.backgroundWG.Add(1)
-	c.lifecycleMu.Unlock()
-	go func() {
-		defer c.backgroundWG.Done()
-		// 后台任务的 panic 不经过 middleware.Recoverer（那只覆盖 HTTP handler goroutine），
-		// 未捕获会直接终止整个进程。这里统一兜底：记录 panic 与栈后让服务继续可用。
-		// 任务体这一路另有兜底：引擎在 runTaskGoroutine 里把对应任务一并置为失败态。
-		defer func() {
-			if rec := recover(); rec != nil {
-				slog.Error("Background task panicked", "panic", rec, "stack", string(debug.Stack()))
-			}
-		}()
-		fn()
-	}()
-}
-
+func (c *Controller) lifecycleDone() <-chan struct{} { return c.runtime.Done() }
+func (c *Controller) runBackground(fn func())        { c.runtime.Go(fn) }
 func (c *Controller) Close() {
-	c.lifecycleDone()
-	c.shutdownOnce.Do(func() {
-		c.lifecycleMu.Lock()
-		c.closed = true
-		close(c.done)
-		c.lifecycleMu.Unlock()
-		if c.watcher != nil {
-			c.watcher.Stop()
-		}
-		c.taskEngine.stopAllRuntimes()
-	})
-	c.backgroundWG.Wait()
+	if c.runtime != nil {
+		c.runtime.Close()
+	}
+}
+
+// Shutdown drains the HTTP host through the application-owned shutdown sequence.
+func (c *Controller) Shutdown(ctx context.Context, drain func(context.Context) error) error {
+	return c.runtime.Shutdown(ctx, drain)
 }
 
 func (c *Controller) currentConfig() config.Config {
@@ -589,12 +473,6 @@ func (c *Controller) persistConfigExpected(expected, cfg *config.Config) error {
 	}, runtimecfg.Apply, nil)
 }
 
-func (c *Controller) configUpdated() {
-	if c.taskEngine != nil {
-		c.taskEngine.releaseQueued()
-	}
-}
-
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
 	return SystemCapabilitiesResponse{
 		SupportedScanFormats:     append([]string{}, config.SupportedScanFormats...),
@@ -638,7 +516,7 @@ func openPathInDefaultFileManager(path string) error {
 	// 但**不能同步等**：这些命令拉起的是长期存活的 GUI 进程（Finder / Explorer / 文件管理器），
 	// 同步 Wait 会把 HTTP 请求一直挂到用户关掉那个窗口为止。
 	//
-	// 也刻意不走 runBackground：那会把这个 goroutine 计入 backgroundWG，于是优雅停机要等
+	// 也刻意不走 runBackground：那会把这个 goroutine 计入应用后台，于是优雅停机要等
 	// 用户关闭文件管理器才能完成。这个 goroutine 的唯一职责就是收尸，进程退出时随之消失即可。
 	//
 	// （对应地也不用 exec.CommandContext + 超时兜底：那会在超时后杀掉用户正开着的文件管理器。）
@@ -648,73 +526,9 @@ func openPathInDefaultFileManager(path string) error {
 	return nil
 }
 
-// startPageCacheJanitor 周期性地把磁盘页缓存修剪到配置的容量上限（单 goroutine 串行，经
-// runBackground 登记 backgroundWG，关闭时会退出）。
-func (c *Controller) startPageCacheJanitor() {
-	c.enforcePageCacheBudget() // 启动兜底
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.lifecycleDone():
-			return
-		case <-ticker.C:
-			c.enforcePageCacheBudget()
-		}
-	}
-}
-
-// startDaemon 每分钟看一眼有没有资料库到了它自己的扫描间隔，到了就发起一次**发起方**为
-// 「定时」的扫描运行。节拍每分钟一次，触发与否由每个库的间隔决定。
-func (c *Controller) startDaemon() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
-	// 记录各个资料库的上次扫描时间
-	lastScan := make(map[int64]time.Time)
-
-	for {
-		select {
-		case <-c.lifecycleDone():
-			return
-		case <-ticker.C:
-		}
-		c.dispatchScheduledScans(context.Background(), time.Now(), lastScan)
-	}
-}
-
-// dispatchScheduledScans 为每个到了间隔的资料库发起一次守护扫描，并把这一轮的时刻记进 lastScan。
-//
-// 撞上手动扫描不再静默跳过：那次发起进**排队中**，手动扫描收尾后由引擎放行，用户在任务中心
-// 看得见它排在那里。已经排着一条时本次被**合并**进去——守护扫描要的只是「确保扫过」。
-// 这个库被**停发**挡下时则一条运行都不建，那正是「不再每小时白转一遍盘」。
-// 三者都不是错误，因此这里只在**真的发不起来**时才记一笔。
-func (c *Controller) dispatchScheduledScans(ctx context.Context, now time.Time, lastScan map[int64]time.Time) {
-	libs, err := c.store.ListLibraries(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "Daemon failed to fetch libraries", "error", err)
-		return
-	}
-
-	for _, lib := range libs {
-		if lib.ScanMode != "interval" {
-			continue
-		}
-
-		interval := time.Duration(lib.ScanInterval) * time.Minute
-		last, ok := lastScan[lib.ID]
-		// 从未记录（或刚启动）时首个 tick 就触发一次。
-		if ok && now.Sub(last) < interval {
-			continue
-		}
-		lastScan[lib.ID] = now
-		// 说的是「到点了」而不是「已经发起」：这次发起可能被**停发**挡下（那时一条运行都不建），
-		// 落地成什么由启动入口那一处记（见 taskEngine.start）。
-		slog.InfoContext(ctx, "Library reached its scan interval", "library_id", lib.ID, "path", lib.Path)
-		if err := c.launchLibraryScanTask(lib, false, task.TriggerScheduled); err != nil {
-			slog.ErrorContext(ctx, "Auto-scan could not be started", "library_id", lib.ID, "error", err)
-		}
-	}
+// dispatchScheduledScans is the retained scheduling adapter for embedded callers.
+func (c *Controller) dispatchScheduledScans(ctx context.Context, now time.Time, last map[int64]time.Time) {
+	c.runtime.DispatchScheduledScans(ctx, now, last)
 }
 
 // PublishEvent 供 Scanner / FileWatcher 等外部投递事件消息；委托给 sseBroker（保留此方法以维持外部 API）。

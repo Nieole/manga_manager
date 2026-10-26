@@ -27,8 +27,6 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/logger"
-	"manga-manager/internal/runtimecfg"
-	"manga-manager/internal/scanner"
 	"manga-manager/web"
 )
 
@@ -72,20 +70,9 @@ func main() {
 	slog.Info("Starting Manga Manager...", "version", Version, "commit", Commit, "build_time", BuildTime,
 		"config", resolvedConfigPath, "data_dir", resolvedDataDir)
 
-	// 初始化配置派生的运行时资源（归档句柄池、AI 并发、日志级别）。与热重载 / API 保存走同一 runtimecfg.Apply，
-	// 保证三条生效路径的副作用一致。这里重复设置日志级别是幂等的，不会有副作用。
-	if err := runtimecfg.Apply(cfg); err != nil {
-		slog.Warn("Failed to apply runtime config at startup", "error", err)
-	}
 	cfgManager := config.NewManager(cfg)
 
-	// 启动配置热重载监听
-	// 配置热重载监听：拿住句柄以便停机时停掉，避免停机排空的 20 秒里仍落地一次重载，
-	// 改写日志级别、归档句柄池与 AI 并发。
-	// 启动时也跑一次值域校验，理由是「热重载会拒绝不合法的配置」这条规则必须对用户可见：
-	// 否则一个配置本就非法的实例，表现是「改了文件却怎么都不生效」，而日志里只有一行
-	// rejected，用户无从知道问题出在哪、也不知道热重载已经变成哑巴了。
-	// 这里刻意不 fatal——保持既有的可启动性，坏值的实际影响由各使用点自行承担。
+	// Report invalid startup values before the application config watcher enforces reload validation.
 	if result := config.ValidateConfigValues(cfg); !result.Valid {
 		slog.Warn("Configuration has invalid values",
 			"path", resolvedConfigPath,
@@ -159,18 +146,7 @@ func main() {
 	}
 
 	// API 端点挂载
-	scan := scanner.NewScanner(store, cfgManager)
-	apiController := api.NewController(store, scan, cfgManager, resolvedConfigPath)
-
-	cfgWatcher, watchErr := config.StartWatcher(resolvedConfigPath, cfgManager, runtimecfg.Apply)
-	if watchErr != nil {
-		// 监听建不起来只影响「改文件自动生效」，服务本身照常跑（经设置页保存仍立即生效）。
-		slog.Warn("Config hot-reload disabled", "path", resolvedConfigPath, "error", watchErr)
-	}
-
-	// 注意：扫描完成回调由 NewController 内部注册（handleScannerBatchEvent），它会失效并预热
-	// dashboard 统计缓存、并以真实 action 名发 SSE。此处不要再 SetBatchCallback，否则单字段覆盖
-	// 语义会把富回调替换成只发 "refresh" 的闭包，导致手动/watch 扫描后统计缓存不刷新且事件名丢失语义。
+	apiController := api.NewController(store, nil, cfgManager, resolvedConfigPath)
 
 	apiController.SetupRoutes(r)
 	apiController.SetupOPDSRoutes(r)
@@ -223,11 +199,6 @@ func main() {
 		IdleTimeout: 60 * time.Second,
 	}
 
-	// SSE 是长连接，Shutdown 的「排空在途请求」对它永远不会自然完成——不先切断的话，
-	// 只要有一个浏览器标签开着，每次停机都必然跑满 20 秒超时。RegisterOnShutdown 的
-	// 回调会在 Shutdown 一开始被同步调用，正好用于此。
-	srv.RegisterOnShutdown(apiController.ShutdownNotify)
-
 	// 优雅停机：捕获 SIGINT/SIGTERM，先停止接收新连接并排空在途请求，再收尾后台任务与资源。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -244,18 +215,11 @@ func main() {
 	stop() // 恢复默认信号处理：停机过程中再次 Ctrl-C 可强制退出
 	slog.Info("Shutdown signal received, draining in-flight requests...")
 
-	// 先停配置监听：排空期间不该再有热重载去改写日志级别 / 归档句柄池 / AI 并发。
-	// apiController.Close() 停的是库目录的 scanner.FileWatcher，与配置监听是两回事。
-	cfgWatcher.Stop()
-
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	if err := apiController.Shutdown(shutdownCtx, srv.Shutdown); err != nil {
 		slog.Error("Graceful HTTP shutdown failed", "error", err)
 	}
-
-	// 收尾后台服务：恢复暂停闸、取消后台任务并等待其退出。
-	apiController.Close()
 	slog.Info("Shutdown complete")
 }
 
