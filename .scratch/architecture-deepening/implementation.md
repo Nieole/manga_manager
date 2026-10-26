@@ -68,3 +68,7 @@
 ## 本机验收范围
 
 以 AGENTS.md 的本地 Go 测试、gofmt、golangci-lint，以及受影响前端测试/构建/lint、SQL 与 TypeScript 生成检查为必需门禁。已核对 .github/workflows/ci.yml：govulncheck 与 race 仅在 Ubuntu job 执行；本 Windows 实施不宣称这些检查通过，如实列为未执行，不要求更改安全策略或作为额外交付阻塞。其他平台 CI 结果也不由本机结果代替。
+
+## 最终审查的清单首书回退修复
+
+票 06/13 的全读回退契约由 `organize.ReadingLists` 的单一目标选择落实，保留清单来源的 sort_number/name 顺序与共享主体读态；没有改动父规格或全局 NextUnread 语义。真实 SQLite 红绿、HTTP/协议、页面及适用门禁证据集中见 [联合验收](acceptance.md#清单首书回退审查修复证据)。受影响包首次运行时 API 被 Application Control 拒执行；随后正常全仓门禁中 API 完整包（含最后增补的目标书详情断言）实际通过。全仓另三包被策略拦截，结果和日志保留于联合验收。

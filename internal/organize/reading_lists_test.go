@@ -103,12 +103,12 @@ func TestReadingListProgressFollowsReaderFactsAndNeverCreatesActivity(t *testing
 			t.Fatalf("user=%d page=%+v err=%v", uid, page, err)
 		}
 	}
-	assertProgress(0, 2, 2, 0)
+	assertProgress(0, 2, 2, 1)
 	assertProgress(1, 0, 0, 1)
 	if _, err = writes.MarkSeries(ctx, reading.MarkSeriesInput{UserID: 1, SeriesIDs: []int64{1}, IsRead: true, OccurredAt: &at}); err != nil {
 		t.Fatal(err)
 	}
-	assertProgress(1, 2, 2, 0)
+	assertProgress(1, 2, 2, 1)
 	assertProgress(2, 0, 0, 1)
 	unknown, err := reading.NewQueries(store).Book(ctx, 1, 2)
 	if err != nil || !unknown.IsRead || unknown.LastReadPage.Valid {
@@ -139,5 +139,52 @@ func TestReadingListProgressFollowsReaderFactsAndNeverCreatesActivity(t *testing
 	page, err := lists.Page(ctx, 1, list.ID, 10, 0)
 	if err != nil || page.List.ID != list.ID || page.Total != 0 || len(page.Rows) != 0 {
 		t.Fatalf("deleted member=%+v err=%v", page, err)
+	}
+}
+
+func TestReadingListTargetsKeepCatalogueOrderAndCompletedFallback(t *testing.T) {
+	store, _ := newCollections(t)
+	ctx := context.Background()
+	if _, err := store.(*database.SqlStore).DB().Exec(`
+INSERT INTO libraries(id,name,path) VALUES(1,'Library','library');
+INSERT INTO series(id,library_id,name,path) VALUES(1,1,'Series','series'),(2,1,'Empty','empty');
+INSERT INTO books(id,library_id,series_id,name,path,volume,sort_number,page_count,size,file_modified_at) VALUES
+(1,1,1,'02','one','1',2,10,1,CURRENT_TIMESTAMP),
+(2,1,1,'10','two','2',1,10,1,CURRENT_TIMESTAMP),
+(3,1,1,'03','three','3',1,10,1,CURRENT_TIMESTAMP),
+(4,1,1,'04','four','4',NULL,10,1,CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	lists := organize.NewReadingLists(store)
+	list, err := lists.Create(ctx, "Order", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sid := range []int64{1, 2} {
+		if _, err := lists.Add(ctx, list.ID, sid, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertTarget := func(want int64) {
+		t.Helper()
+		items, err := lists.Items(ctx, 0, list.ID)
+		if err != nil || len(items) != 2 || items[0].NextBookID != want || items[1].NextBookID != 0 {
+			t.Fatalf("items=%+v err=%v want target=%d and empty=0", items, err, want)
+		}
+		page, err := lists.Page(ctx, 0, list.ID, 10, 0)
+		if err != nil || len(page.Rows) != 2 || page.Rows[0].NextBookID != want || page.Rows[1].NextBookID != 0 {
+			t.Fatalf("page=%+v err=%v want target=%d and empty=0", page, err, want)
+		}
+	}
+	assertTarget(4) // NULL sort number precedes numbered books, independently of volume.
+	writes := reading.New(store, nil)
+	for _, step := range []struct {
+		ids  []int64
+		want int64
+	}{{[]int64{4}, 3}, {[]int64{3}, 2}, {[]int64{2}, 1}, {[]int64{1}, 4}} {
+		if _, err := writes.MarkBooks(ctx, reading.MarkBooksInput{BookIDs: step.ids, IsRead: true}); err != nil {
+			t.Fatal(err)
+		}
+		assertTarget(step.want)
 	}
 }
