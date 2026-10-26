@@ -1,10 +1,10 @@
 # 任务子域拆成领域包与落盘包
 
-状态：已裁决，尚未实施（2026-09-06）。
+状态：已实施。`task.Engine` 保持领域规则，`taskstore.New` 提供落盘，`application/runtime.New` 装配两者。
 
 任务子域拆成两个包：`internal/task` 放**任务**与**运行**的领域模型、状态机、队列与槽位、
 **退避**、保留裁剪，它**不知道 SQL**；`internal/taskstore` 放表结构与查询。
-`internal/api` 只剩 HTTP handler 与装配，**重启函数**继续在装配期注册（沿用 ADR 0001）。
+`internal/api` 持有 HTTP 控制与投影适配，应用图和生命周期归 `internal/application/runtime`，**重启函数**继续在装配期注册（沿用 ADR 0001）。
 
 在此之前整个子域住在 `internal/api`：任务引擎、启动仪式、模型转换与 HTTP 层合计约 1950 行，
 与另外六十来个 handler 文件同居一个包，而 AGENTS.md 的规矩是「handlers 要薄，逻辑推进

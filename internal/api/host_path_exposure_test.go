@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -57,7 +58,7 @@ func newHostPathFixture(t *testing.T) hostPathFixture {
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	order := []database.Book{book, book2}
-	sortBooksForReading(order)
+	reading.SortBooks(order)
 	return hostPathFixture{router: r, srv: srv, lib: lib, series: series, book: book, book2: book2, order: order, root: rootDir}
 }
 

@@ -63,7 +63,7 @@ const SESSION_B = {
 
 // A 在这台设备上下载了 42 号书，并在断网时读到了第 77 页——那一页还没回传。
 function seedOwnedOfflineData() {
-  localStorage.setItem('manga_reader_theme', JSON.stringify('sepia'));
+  localStorage.setItem('manga_reader_theme', JSON.stringify('comimi'));
   localStorage.setItem(OWNER_KEY, '1');
   localStorage.setItem(BOOKS_KEY, JSON.stringify({
     '42': { bookId: '42', title: '飞机上读的那本', pageCount: 120, cachedPages: 120, cachedAt: 'T1', imageProfile: 'webp 80', urls: [] },
@@ -215,7 +215,7 @@ describe('显式登出交还这台设备', () => {
     expect(readBooks()).toEqual({});
     expect(readQueue()).toEqual({});
     expect(deleted).toEqual([BOOK_CACHE]);
-    expect(localStorage.getItem('manga_reader_theme')).toBe(JSON.stringify('sepia'));
+    expect(localStorage.getItem('manga_reader_theme')).toBe(JSON.stringify('comimi'));
   });
 });
 
@@ -236,6 +236,6 @@ describe('真正换用户时仍然清干净', () => {
     expect(readQueue()).toEqual({});
     expect(localStorage.getItem(OWNER_KEY)).toBe('2');
     expect(deleted).toEqual([BOOK_CACHE]);
-    expect(localStorage.getItem('manga_reader_theme')).toBe(JSON.stringify('sepia'));
+    expect(localStorage.getItem('manga_reader_theme')).toBe(JSON.stringify('comimi'));
   });
 });
