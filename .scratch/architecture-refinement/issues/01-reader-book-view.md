@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 15、16、17、18、19、20、23、24、25、26、27、28、29、30。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -25,4 +25,10 @@
 - TDD：先执行新模型与导航查询测试，确认缺少入口导致失败，再实现至通过；HTTP 非法主体回归先确认原入口返回 200/404，再迁移至明确 400。执行记录位于本工作树 `.tmp/ticket01-*.log`。
 - Go 1.26.10：`go test ./internal/reading ./internal/api` 通过；`gofmt -l ./cmd ./internal` 无输出；独立缓存执行 `golangci-lint run --allow-parallel-runners` 为 `0 issues.`。
 - 前端：`npm run test` 全量 94 文件、915 测试通过；`npm run lint` 与 `npm run build` 通过。额外阅读器定向回归 31 项通过。
-- 本票验收已满足；Status 保持就绪，待集成分支验证后由协调者关闭。
+- 本票验收已满足并通过集成验证。
+
+### 集成验收
+
+- 已合入 `codex/architecture-refinement`：01 为 `f06f77b`，10 为 `afffb1e`，08 为 `53e11c8`；合并无冲突。
+- 01/10 合并后的 reading、proposal、api 完整包测试全部通过（API 117.205s）；08 合并后 seriesediting、seriesmeta 与人工保存 HTTP 定向回归全部通过。
+- 三票合并后 `gofmt` 无输出，独立缓存的 `golangci-lint run --allow-parallel-runners` 返回 `0 issues.`；阅读器/审核消费者 13 项、编辑/上下文/会话消费者 18 项通过。原始集成输出在主工作树 `.tmp/merge-first-*.log`。
