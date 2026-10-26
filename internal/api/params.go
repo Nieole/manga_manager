@@ -27,10 +27,6 @@ const (
 	maxScrapeSearchLimit  = 50
 	maxScrapeSearchOffset = 1000
 
-	// maxCollectionBatchSize 是「一次批量操作最多涉及多少个条目」的上限，
-	// 用于合集批量添加、阅读清单重排这类接受 ID 数组的端点。
-	maxCollectionBatchSize = 1000
-
 	// maxExternalTransferSeries 是外部库传输一次能选多少个系列。
 	// 与阅读批量系列选择上限同量级：这个端点收到的也是系列 id，
 	// 每个都会被展开成整个系列的书，再逐本读盘拷贝到外接盘。

@@ -123,4 +123,24 @@ describe('阅读清单切换取数', () => {
     expect(screen.queryByText('甲的系列')).toBeNull();
     expect(screen.getByText('加载阅读清单成员失败')).toBeTruthy();
   });
+  it('按响应顺序显示进度，完成系列禁用继续阅读且普通用户没有编辑入口', async () => {
+    mocks.get.mockImplementation((url: string) => {
+      if (url === '/api/reading-lists/') return Promise.resolve({ data: [LIST_A] });
+      if (url === '/api/reading-lists/1/items') return Promise.resolve({ data: [
+        { ...item(2, '已完成系列'), read_books: 1, completed_books: 1 },
+        { ...item(1, '待阅读系列'), next_book_id: 42 },
+      ] });
+      return Promise.resolve({ data: [] });
+    });
+    renderPage();
+    await waitFor(() => expect(screen.getByText('待阅读系列')).toBeTruthy());
+    const seriesButtons = screen.getAllByRole('button').filter((button) => ['已完成系列', '待阅读系列'].includes(button.textContent || ''));
+    expect(seriesButtons.map((button) => button.textContent)).toEqual(['已完成系列', '待阅读系列']);
+    const next = screen.getAllByRole('button', { name: zhCN['readingLists.readNext'] }) as HTMLButtonElement[];
+    expect(next[0].disabled).toBe(true);
+    expect(next[1].disabled).toBe(false);
+    expect(screen.queryByTitle(zhCN['common.edit'])).toBeNull();
+    expect(screen.getAllByText('100%').length).toBe(1);
+  });
+
 });

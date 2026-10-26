@@ -1,4 +1,4 @@
-// Package organize owns collection and relation use cases, derived membership, names and source ownership.
+// Package organize owns catalogue organization use cases, ordered lists, derived membership and source ownership.
 package organize
 
 import (

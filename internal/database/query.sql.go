@@ -1768,53 +1768,6 @@ func (q *Queries) GetReadingList(ctx context.Context, id int64) (ReadingList, er
 	return i, err
 }
 
-const getReadingListItemProgressByList = `-- name: GetReadingListItemProgressByList :many
-SELECT
-    rli.series_id,
-    COALESCE(ss.read_book_count, 0) AS read_books,
-    COALESCE(ss.completed_book_count, 0) AS completed_books,
-    COALESCE(s.book_count, 0) AS total_books
-FROM reading_list_items rli
-JOIN series s ON s.id = rli.series_id
-LEFT JOIN series_stats ss ON ss.series_id = rli.series_id
-WHERE rli.reading_list_id = ?
-`
-
-type GetReadingListItemProgressByListRow struct {
-	SeriesID       int64 `json:"series_id"`
-	ReadBooks      int64 `json:"read_books"`
-	CompletedBooks int64 `json:"completed_books"`
-	TotalBooks     int64 `json:"total_books"`
-}
-
-func (q *Queries) GetReadingListItemProgressByList(ctx context.Context, readingListID int64) ([]GetReadingListItemProgressByListRow, error) {
-	rows, err := q.db.QueryContext(ctx, getReadingListItemProgressByList, readingListID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetReadingListItemProgressByListRow
-	for rows.Next() {
-		var i GetReadingListItemProgressByListRow
-		if err := rows.Scan(
-			&i.SeriesID,
-			&i.ReadBooks,
-			&i.CompletedBooks,
-			&i.TotalBooks,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getRecentReadAll = `-- name: GetRecentReadAll :many
 SELECT
     s.name AS series_name,
@@ -4579,22 +4532,7 @@ SELECT
         ORDER BY b.sort_number, b.name
         LIMIT 1
     ), '') AS TEXT) as cover_path,
-    CAST(COALESCE((
-        SELECT b.id
-        FROM books b
-        WHERE b.series_id = s.id
-        ORDER BY
-            CASE
-                WHEN b.is_read THEN 1
-                WHEN b.page_count = 0 THEN 0
-                WHEN b.last_read_page IS NULL THEN 0
-                WHEN b.last_read_page < b.page_count THEN 0
-                ELSE 1
-            END,
-            b.sort_number,
-            b.name
-        LIMIT 1
-    ), 0) AS INTEGER) as next_book_id
+    CAST(0 AS INTEGER) as next_book_id
 FROM reading_list_items rli
 JOIN series s ON s.id = rli.series_id
 WHERE rli.reading_list_id = ?
@@ -4616,6 +4554,7 @@ type ListReadingListItemsRow struct {
 	NextBookID    int64     `json:"next_book_id"`
 }
 
+// Reader continuation is projected by organize.ReadingLists; next_book_id preserves the result shape.
 func (q *Queries) ListReadingListItems(ctx context.Context, readingListID int64) ([]ListReadingListItemsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listReadingListItems, readingListID)
 	if err != nil {
@@ -4683,22 +4622,7 @@ SELECT
         ORDER BY b.sort_number, b.name
         LIMIT 1
     ), 0) AS INTEGER) as cover_book_id,
-    CAST(COALESCE((
-        SELECT b.id
-        FROM books b
-        WHERE b.series_id = s.id
-        ORDER BY
-            CASE
-                WHEN b.is_read THEN 1
-                WHEN b.page_count = 0 THEN 0
-                WHEN b.last_read_page IS NULL THEN 0
-                WHEN b.last_read_page < b.page_count THEN 0
-                ELSE 1
-            END,
-            b.sort_number,
-            b.name
-        LIMIT 1
-    ), 0) AS INTEGER) as next_book_id
+    CAST(0 AS INTEGER) as next_book_id
 FROM reading_list_items rli
 JOIN series s ON s.id = rli.series_id
 WHERE rli.reading_list_id = ?1
@@ -4733,6 +4657,7 @@ type ListReadingListSeriesPageRow struct {
 	NextBookID    int64     `json:"next_book_id"`
 }
 
+// Reader continuation is projected by organize.ReadingLists; next_book_id preserves the result shape.
 func (q *Queries) ListReadingListSeriesPage(ctx context.Context, arg ListReadingListSeriesPageParams) ([]ListReadingListSeriesPageRow, error) {
 	rows, err := q.db.QueryContext(ctx, listReadingListSeriesPage, arg.ReadingListID, arg.Offset, arg.Limit)
 	if err != nil {
