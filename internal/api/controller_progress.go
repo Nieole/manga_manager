@@ -28,12 +28,17 @@ func (c *Controller) getAdjacentBook(w http.ResponseWriter, r *http.Request, nex
 	if next {
 		message = "No next book"
 	}
-	book, err := reading.NewQueries(c.store).Adjacent(r.Context(), c.currentUserID(r), id, next)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	book, err := reading.NewQueries(c.store).AdjacentView(r.Context(), subject, id, next)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, message)
 		return
 	}
-	jsonResponse(w, http.StatusOK, book)
+	jsonResponse(w, http.StatusOK, readerBookResponse(book))
 }
 
 type UpdateProgressRequest struct {

@@ -89,75 +89,92 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 		}
 		return ApplyResult{}, err
 	}
-	// 事务外的这道前置检查省下一次写锁，也给出快速的冲突结论；真正的防线是下面事务内的 CAS。
+	// 事务外的这道前置检查省下一次写锁，也给出快速的冲突结论；真正的防线是写锁内的状态重读与终态 CAS。
 	// 两条发现路径必须给出同一个分类：对用户来说「已经被别人处理过了」就是一件事。
 	if !isPending(proposal.Status) {
 		return ApplyResult{Status: ApplyConflict, SeriesID: proposal.SeriesID}, nil
 	}
 
-	// 走批量查询传单个 id：逐条版不在 Queries 里，本包因此没有第二种取字段行的写法。
-	all, err := s.db.ListMetadataReviewFieldsByReviews(ctx, []int64{proposalID})
-	if err != nil {
-		return ApplyResult{}, err
-	}
-
-	series, err := s.db.GetSeries(ctx, proposal.SeriesID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// 系列被删了，提案随之级联删除，只是这次加载抢在了删除中间。
-			// 对调用方来说与「提案查不到」是同一件事。
-			return ApplyResult{Status: ApplyNotFound}, nil
-		}
-		return ApplyResult{}, err
-	}
-	// 系列的存值必须在按模式筛之前读出来：fill_empty 判的是「此刻还空着吗」。
-	// 集合字段一并读，它们的「空」同样只能由系列此刻挂着的成员回答。
-	tags, err := s.db.GetTagsForSeries(ctx, series.ID)
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	authors, err := s.db.GetAuthorsForSeries(ctx, series.ID)
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	selected := fieldsForMode(all, mode, storedFieldValues(series, tags, authors))
-	if len(selected) == 0 {
-		return ApplyResult{Status: ApplyNoChanges, SeriesID: proposal.SeriesID}, nil
-	}
-
-	// 入队之后用户又给字段加了锁：写入器内部本来就会跳过它们，但那是静默的——整条提案
-	// 照样被关单，用户看不出哪些提案没被写进去。在这里先筛一遍，全被筛光时明确报
-	// ApplyLockedSkipped，让调用方给出「去解锁」这条可行动的提示。
-	locked := lockedFieldSet(series)
-	applicable := make([]database.MetadataReviewField, 0, len(selected))
-	for _, field := range selected {
-		if locked[field.FieldName] {
-			continue
-		}
-		applicable = append(applicable, field)
-	}
-	if len(applicable) == 0 {
-		return ApplyResult{Status: ApplyLockedSkipped, SeriesID: proposal.SeriesID}, nil
-	}
-
 	out := ApplyResult{SeriesID: proposal.SeriesID}
-	appliedNames := make(map[string]bool, len(applicable))
-	for _, field := range applicable {
-		appliedNames[field.FieldName] = true
-		out.Applied = append(out.Applied, field.FieldName)
-	}
-	for _, field := range all {
-		if !appliedNames[field.FieldName] {
-			out.Remaining = append(out.Remaining, field.FieldName)
-		}
-	}
-	partial := len(out.Remaining) > 0
-
-	confidence := proposal.Confidence
-	if confidence <= 0 {
-		confidence = defaultConfidence(proposal.Provider)
-	}
 	err = s.db.ExecTx(ctx, func(q Queries) error {
+		// The write transaction serializes decisions: every selection uses the latest
+		// pending proposal, remaining fields, series values and locks.
+		proposal, err := q.GetMetadataReview(ctx, proposalID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return errPreempted
+		}
+		if err != nil {
+			return err
+		}
+		if !isPending(proposal.Status) {
+			return errPreempted
+		}
+		// 走批量查询传单个 id：逐条版不在 Queries 里，本包因此没有第二种取字段行的写法。
+		all, err := q.ListMetadataReviewFieldsByReviews(ctx, []int64{proposalID})
+		if err != nil {
+			return err
+		}
+
+		series, err := q.GetSeries(ctx, proposal.SeriesID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				// 提案对应的系列已不存在，撤销本次裁决。
+				return errPreempted
+			}
+			return err
+		}
+		// 系列的存值必须在按模式筛之前读出来：fill_empty 判的是「此刻还空着吗」。
+		// 集合字段一并读，它们的「空」同样只能由系列此刻挂着的成员回答。
+		tags, err := q.GetTagsForSeries(ctx, series.ID)
+		if err != nil {
+			return err
+		}
+		authors, err := q.GetAuthorsForSeries(ctx, series.ID)
+		if err != nil {
+			return err
+		}
+		selected := fieldsForMode(all, mode, storedFieldValues(series, tags, authors))
+		if len(selected) == 0 {
+			out.Status = ApplyNoChanges
+			return nil
+		}
+
+		// 入队之后用户又给字段加了锁：写入器内部本来就会跳过它们，但那是静默的——整条提案
+		// 照样被关单，用户看不出哪些提案没被写进去。在这里先筛一遍，全被筛光时明确报
+		// ApplyLockedSkipped，让调用方给出「去解锁」这条可行动的提示。
+		locked := lockedFieldSet(series)
+		applicable := make([]database.MetadataReviewField, 0, len(selected))
+		for _, field := range selected {
+			if locked[field.FieldName] {
+				continue
+			}
+			applicable = append(applicable, field)
+		}
+		if len(applicable) == 0 {
+			out.Status = ApplyLockedSkipped
+			return nil
+		}
+
+		appliedNames := make(map[string]bool, len(applicable))
+		for _, field := range applicable {
+			appliedNames[field.FieldName] = true
+			out.Applied = append(out.Applied, field.FieldName)
+		}
+		for _, field := range all {
+			if !appliedNames[field.FieldName] {
+				out.Remaining = append(out.Remaining, field.FieldName)
+			}
+		}
+		partial := len(out.Remaining) > 0
+		out.Status = ApplyApplied
+		if partial {
+			out.Status = ApplyPartial
+		}
+
+		confidence := proposal.Confidence
+		if confidence <= 0 {
+			confidence = defaultConfidence(proposal.Provider)
+		}
 		if err := seriesmeta.ApplyProposal(ctx, q, series, metadataFromFields(proposal, applicable), seriesmeta.ProposalInput{
 			ProviderName: proposal.Provider,
 			SourceURL:    proposal.SourceUrl,
@@ -174,10 +191,6 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 			// 删行而不是留着，是因为它们的提案值已经写进系列了——留下会在收件箱里
 			// 陈列一个「当前值 → 提案值」完全相同的假 diff。
 			// 提案保持待裁决也让下一轮刮削的去重签名能自然命中它。
-			//
-			// 这条分支没有终态 CAS：提案本来就要留在待裁决，没有状态可推进。代价是
-			// 「加载之后被并发拒绝」在这里挡不住——元数据仍会写入，来源沿革会挂到一条
-			// 已被拒绝的提案上。上面那道前置检查覆盖了绝大多数情形。
 			for _, name := range out.Applied {
 				if err := q.DeleteMetadataReviewField(ctx, database.DeleteMetadataReviewFieldParams{
 					ReviewID:  proposal.ID,
@@ -215,11 +228,6 @@ func (s *Service) Apply(ctx context.Context, proposalID int64, mode ApplyMode) (
 		return ApplyResult{}, err
 	}
 
-	if partial {
-		out.Status = ApplyPartial
-	} else {
-		out.Status = ApplyApplied
-	}
 	return out, nil
 }
 
