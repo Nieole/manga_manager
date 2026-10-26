@@ -544,7 +544,7 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions
 					return updated, total, err
 				}
 				if hashErr != nil {
-					slog.Warn("Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
+					slog.WarnContext(ctx, "Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
 					afterID = book.ID
 					continue
 				}
@@ -584,6 +584,11 @@ func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions
 // ReconcileProgress 给尚未匹配到书的进度记录补上归属。它一次盘都不读，只用到 task 的
 // **计数推进**与**暂停闸门**；task 不得为 nil。
 func (s *Service) ReconcileProgress(ctx context.Context, limit int, task TaskHandle) (int, int, error) {
+	return s.ReconcileProgressWithMatching(ctx, limit, task, s.currentMatchConfig())
+}
+
+// ReconcileProgressWithMatching replays stored facts with the matching configuration retained by a run.
+func (s *Service) ReconcileProgressWithMatching(ctx context.Context, limit int, task TaskHandle, matchConfig MatchConfig) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -612,7 +617,6 @@ func (s *Service) ReconcileProgress(ctx context.Context, limit int, task TaskHan
 			if err := task.Checkpoint(ctx); err != nil {
 				return updated, total, err
 			}
-			matchConfig := s.currentMatchConfig()
 			documentKey := normalizeDocumentForMatch(item.Document, matchConfig)
 			match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension)
 			if matchErr == nil {

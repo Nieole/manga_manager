@@ -27,6 +27,8 @@ type Store interface {
 
 // Scanner owns ingestion, rename reconnection and missing-record removal.
 type Scanner interface {
+	ScanLibraryWithOptions(context.Context, int64, string, scanner.LibraryScanOptions, scanner.ScanObserver) error
+	CleanupThumbnails(context.Context, func(int, int)) error
 	ScanLibrary(context.Context, int64, string, bool, scanner.ScanObserver) error
 	ScanSeries(context.Context, int64, bool, scanner.ScanObserver) error
 	CleanupLibrary(context.Context, int64) error

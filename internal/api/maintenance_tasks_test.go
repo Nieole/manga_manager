@@ -122,6 +122,8 @@ func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, c.diskWork)
 	e.now = clock.Now
 	c.taskEngine = e
+	c.assembleScanUseCases()
+	c.assembleMaintenanceUseCases()
 	return c, snapshots, clock
 }
 
@@ -229,6 +231,8 @@ func TestCleanupThumbnailsReportsPhaseThenCounts(t *testing.T) {
 	c, snapshots, _ := newMaintenanceRig(t, store)
 	cfg := c.currentConfig()
 	c.scanner = scanner.NewScanner(store, config.NewManager(&cfg))
+	c.assembleScanUseCases()
+	c.assembleMaintenanceUseCases()
 
 	for _, name := range []string{"a.webp", "b.webp", "c.webp"} {
 		if err := os.WriteFile(filepath.Join(cfg.Cache.Dir, name), []byte("x"), 0o644); err != nil {
