@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"manga-manager/internal/database"
 	"manga-manager/internal/reading"
 )
 
@@ -36,8 +35,6 @@ func (c *Controller) getAdjacentBook(w http.ResponseWriter, r *http.Request, nex
 	}
 	jsonResponse(w, http.StatusOK, book)
 }
-
-func sortBooksForReading(books []database.Book) { reading.SortBooks(books) }
 
 type UpdateProgressRequest struct {
 	Page      int64      `json:"page"`

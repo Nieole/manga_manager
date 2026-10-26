@@ -4,7 +4,7 @@
 
 **Blocked by:** 18: 手动、定时与监听扫描清理；19: 扫描封面批与封面运行；20: 资料库迁移与保护恢复编排；21: 维护及 KOReader 校准运行发起；22: 外部库与 ComicInfo 磁盘用例发起；23: 刮削与 AI 分组后台发起
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -18,7 +18,7 @@
 - [x] 应用装配不反向依赖 HTTP Controller，HTTP 路由、响应和 SSE 传输 adapter 保留合适归属，避免形成另一个吸收所有业务的大对象。
 - [x] 移除已无调用方的旧运行桥、启动循环和重复装配，尚属其他功能的规则不以本票为借口继续搬家。
 - [x] 以生产等价装配和可控依赖验证恢复前不放行、配置更新一致、历史任务可重试、停机取消到任务体及全部后台退出。
-- [ ] 完成相关后端、前端契约与生成门禁，记录实际验证和仍然有效的装配限制。
+- [x] 完成相关后端、前端契约与生成门禁，记录实际验证和仍然有效的装配限制。
 
 
 ## Comments
@@ -45,3 +45,8 @@
 - 修复后的 Release 四分支与原 Claims 各用完整锚定名称精确选择一次，执行均被 Windows Application Control 拦截，未运行到断言。日志分别为 `.tmp/fixture24-release-final.log`、`.tmp/fixture24-claims-final.log`；两者不能记作绿证据，不对未变源码重复抽签。
 - `gofmt -l ./cmd ./internal` 空输出，`golangci-lint run` 为 `0 issues.`。未重复无关全量门禁。
 - 实施与此前已核实的生命周期行为保留；本票暂回 `ready-for-agent`，最后门禁项等待票 25 在最新集成上补验这些独立选择。补验成功后再恢复 `done`。
+
+### 联合补验（2026-10-26）
+
+- 25 合入 `cb85378` 后，分别精确执行 `^TestRunReleasesRuntimeOnEveryExitPath$` 与 `^TestRunClaimsSlotSynchronouslyAndDefersBody$`，两次实际进入断言且退出 0；Release 四分支与 Claims 均通过，恢复 done。日志在库外 `C:/Users/saber/.codex/tmp/architecture-deepening/acceptance-25/runtime-release-exact.jsonl` 与 `runtime-claims-exact.jsonl`。
+- 本轮清理前完整 Go 30 包退出 0；随后仅移除 API 无生产调用的排序转发，受影响 API/reading 和静态门禁通过，额外全量五包受系统拒执行；原始完整绿 JSON 被覆盖的证据限制、派生映射和完整门禁范围见 [联合验收](../acceptance.md)。未把断言失败、系统拒执行或不同基线证据混同。
