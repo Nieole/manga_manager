@@ -30,7 +30,6 @@ export function useReaderProgressIndicator({
   const [status, setStatus] = useState<ProgressSyncStatus>('idle');
   const viewGeneration = useRef(0);
   const inFlightRef = useRef(0);
-  const lastFactTimeRef = useRef(0);
   const syncedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -70,8 +69,7 @@ export function useReaderProgressIndicator({
     if (bookId !== pagesBookIdRef.current) return;
     if (pageNumber <= 0) return;
 
-    lastFactTimeRef.current = Math.max(Date.now(), lastFactTimeRef.current + 1);
-    const occurredAt = new Date(lastFactTimeRef.current).toISOString();
+    const occurredAt = new Date().toISOString();
 
     if (!isOnline) {
       queueOfflineReaderProgress(pageNumber, occurredAt);
