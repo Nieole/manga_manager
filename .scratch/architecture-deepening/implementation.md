@@ -17,7 +17,7 @@
 - booksort 与 koreader 测试可执行文件仍被 Application Control 拦截，因此该次全量门禁失败；不能用其他包通过代替完整门禁。
 - 日志：`C:/Users/saber/.codex/tmp/architecture-deepening/integration-go-test.log`。后续按原工具链正常验证，不修改编译器路径或系统策略。
 
-- 2026-10-25：已安装 CI 固定 govulncheck v1.6.0，原路径正常执行被 Windows Application Control 明确拦截，漏洞扫描未运行；未改名、改路径或绕过策略。最终联合验收须补齐该门禁。
+- 2026-10-25：已安装 CI 固定 govulncheck v1.6.0，原路径正常执行被 Windows Application Control 明确拦截，漏洞扫描未运行；未改名、改路径或绕过策略。该项在 CI 仅 Ubuntu 执行，Windows 本机不将其列为交付阻塞；验收保留未执行记录。
 
 ## 已合入
 
@@ -59,6 +59,10 @@
 
 04 时钟修复 4e68d8d 已合入 9b55d36。固定时钟的用户/匿名、按书/系列及跨位置/标记的日界连续操作已红绿验证；reading 和 HTTP 定向回归通过，等待本次集成全量结果。
 
-最终补验：9b55d36 的完整 Go、lint 与格式门禁全部通过（post-clock-go-test.log）。03、04 恢复 done，10、20 关闭。旧执行受阻/回归发现记录保留为证据，当前状态以票据 Status 和本次补验为准。govulncheck 仍被系统策略拦截，未执行，25 不得因此关闭。
+最终补验：9b55d36 的完整 Go、lint 与格式门禁全部通过（post-clock-go-test.log）。03、04 恢复 done，10、20 关闭。旧执行受阻/回归发现记录保留为证据，当前状态以票据 Status 和本次补验为准。govulncheck 未执行；按本机适用门禁验收，Linux CI 的额外检查单独记录。
 
 当前实施前沿：01—23 均已提交并合入，票内验收完成；24 正在实施，25 未开始最终验收。112 条故事的只读证据草图在仓库外准备，不能视为最终验收。
+
+## 本机验收范围
+
+以 AGENTS.md 的本地 Go 测试、gofmt、golangci-lint，以及受影响前端测试/构建/lint、SQL 与 TypeScript 生成检查为必需门禁。已核对 .github/workflows/ci.yml：govulncheck 与 race 仅在 Ubuntu job 执行；本 Windows 实施不宣称这些检查通过，如实列为未执行，不要求更改安全策略或作为额外交付阻塞。其他平台 CI 结果也不由本机结果代替。
