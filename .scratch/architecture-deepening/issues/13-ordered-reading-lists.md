@@ -4,7 +4,7 @@
 
 **Blocked by:** 06: 共享阅读状态查询与继续阅读
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -29,3 +29,10 @@
 - 红绿证据：新增完整用例先因缺少 `NewReadingLists` 失败，新增 HTTP 进度用例在旧实现返回 `completed_books=0/read_books=0/next_book_id=1` 时失败，接入完整功能后通过。
 - 本票基线最终门禁：Go 1.26.10 `go test ./...` 全通过；`gofmt -l ./cmd ./internal` 无输出；独立缓存 `golangci-lint run --allow-parallel-runners` 为 `0 issues.`；前端 `npm run test` 92 文件/903 测试通过，`npm run build` 与 `npm run lint` 通过。
 - PowerShell `sqlc generate` 成功；`go run ./cmd/tsgen` 成功且生成前端契约无漂移；`git diff --check` 通过。运行数据、构建输出和依赖未纳入提交。
+
+### 2026-10-26 集成后验收
+
+- 实现提交 `0fd41c8`；无冲突 merge `ad86c67` 与 `245b563`，本分支对应 merge 为 `5f05446`、`a0a1cd6`。本票代码已提交，全部验收项完成。
+- `scripts/check-doc-style.sh` 已结束且退出码为 0，仅报告仓库既有历史叙述提示。
+- 最新 merge 后 `go test ./internal/reading ./internal/organize` 全通过；清单、OPDS/Mihon、离线与进度严格前缀选择的 API 回归通过；清单页面定向回归 1 文件/3 测试通过。格式检查与 `git diff --check` 通过。保留本票基线完整门禁证据，未重复无关全量检查。
+- 补测期间过宽的 `Sync` 名称选择器选中了无关 `TestRunClaimsSlotSynchronouslyAndDefersBody`，该测试缺少 `scan_library_1` 身份登记而失败，完整套此前通过，表现为旧测试顺序依赖。已交集成维护者登记到 24；本票不修改无关任务 fixture。严格限定的阅读与清单相关回归均通过。
