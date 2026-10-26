@@ -8,8 +8,8 @@
 
 - Go 工具链使用 CI 的 `go1.26.10`，共享仓库 `.gocache`，每树独立 lint 缓存。
 - `golangci-lint run`：通过，`0 issues.`。
-- 前端全量 Vitest：912 通过，`ApplicationRoutes.test.tsx` 一例等待请求超时；该文件单独重跑 1/1 通过。首次全量运行有失败，不能记作全量通过。
-- 后端全量测试：执行中，原始输出在本地 `.tmp/refinement-baseline-go.log`。
+- 前端全量 Vitest：初次 912 通过、1 个超时；定向重跑 1/1 通过，降低并发后全量 94 文件、913/913 通过（`.tmp/refinement-baseline-web.log`）。前端 lint 与 build 通过。
+- 后端全量测试：部分包通过，部分测试程序遭 Application Control 随机拦截，已重试并保留各次结果；scanner 长时间未结束，待捕获超时后定向复验。原始输出在本地 `.tmp/refinement-baseline-go.log`，重试为 `.tmp/refinement-baseline-retry.log` 等。
 
 ## 实施状态
 
