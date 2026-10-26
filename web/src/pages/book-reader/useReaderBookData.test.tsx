@@ -7,6 +7,7 @@
  * 现场是一块外置盘被拔掉，落在那个资料库上的书取页全部 500。
  */
 
+import { useState } from 'react';
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -45,17 +46,21 @@ function renderReaderData() {
   const currentBookIdRef = { current: BOOK_ID as string | null };
   const tRef = { current: t };
   const cache: Record<string, Record<string, unknown>> = {};
-  return renderHook(() => useReaderBookData({
-    bookId: BOOK_ID,
-    currentBookIdRef,
-    tRef,
-    getBookCache: (id: string) => (cache[id] ??= {}) as never,
-    setCachedPageImageUrls: () => {},
-    cachedImageUrlsForBook: () => ({}),
-    retainBookCaches: () => {},
-    setCurrentPageIndex: () => {},
-    setSliderValue: () => {},
-  }));
+  return renderHook(() => {
+    const [pageIndex, setPageIndex] = useState(0);
+    const data = useReaderBookData({
+      bookId: BOOK_ID,
+      currentBookIdRef,
+      tRef,
+      getBookCache: (id: string) => (cache[id] ??= {}) as never,
+      setCachedPageImageUrls: () => {},
+      cachedImageUrlsForBook: () => ({}),
+      retainBookCaches: () => {},
+      setCurrentPageIndex: setPageIndex,
+      setSliderValue: () => {},
+    });
+    return { ...data, pageIndex };
+  });
 }
 
 // translateInLocale 只读已进缓存的词条表，没预热就会原样回吐 key。
@@ -177,5 +182,34 @@ describe('useReaderBookData 的失败路径', () => {
     await waitFor(() => expect(result.current.readerLoading).toBe(false));
     expect(result.current.loadError).toBeNull();
     expect(result.current.activePages.map((page) => page.number)).toEqual([1, 2]);
+  });
+});
+
+describe('reader consumes the flat subject-bound book response', () => {
+  it.each([
+    { name: 'a newer backward position', page: 3, valid: true, completed: false, expectedIndex: 2 },
+    { name: 'an unknown-page completion without a page sentinel', page: 0, valid: false, completed: true, expectedIndex: 0 },
+  ])('opens $name and keeps the navigation target', async ({ page, valid, completed, expectedIndex }) => {
+    vi.spyOn(apiClient, 'get').mockImplementation((async (url: string) => {
+      if (url.startsWith('/api/pages/')) {
+        return { data: [1, 2, 3, 4, 5].map((number) => ({ number, url: `/api/books/page/${BOOK_ID}/${number}` })) };
+      }
+      if (url.startsWith('/api/book-next/')) {
+        return { data: { id: 3108128, name: 'next', series_id: 7, last_read_page: { Int64: 0, Valid: false }, is_read: false } };
+      }
+      return { data: {
+        id: Number(BOOK_ID), name: 'volume', title: { String: 'Selected reader book', Valid: true },
+        volume: '02', series_id: 7, page_count: valid ? 5 : 0,
+        last_read_page: { Int64: page, Valid: valid }, is_read: completed,
+      } };
+    }) as never);
+
+    const { result } = renderReaderData();
+    await waitFor(() => expect(result.current.nextBookId).toBe(3108128));
+    expect(result.current.readerLoading).toBe(false);
+    expect(result.current.pageIndex).toBe(expectedIndex);
+    expect(result.current.bookTitle).toBe('Selected reader book');
+    expect(result.current.bookVolume).toBe('02');
+    expect(result.current.seriesIdRef.current).toBe(7);
   });
 });

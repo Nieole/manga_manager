@@ -878,15 +878,20 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view, err := reading.NewQueries(c.store).Series(ctx, c.currentUserID(r), seriesID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.NewQueries(c.store).SeriesBooks(ctx, subject, seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch books")
 		return
 	}
 
-	books := view.Books
-	if books == nil {
-		books = []database.Book{}
+	books := make([]database.Book, len(view.Books))
+	for i, book := range view.Books {
+		books[i] = readerBookResponse(book)
 	}
 	jsonResponse(w, http.StatusOK, books)
 }
@@ -899,13 +904,18 @@ func (c *Controller) getBookInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	book, err := reading.NewQueries(c.store).Book(ctx, c.currentUserID(r), bookID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	book, err := reading.NewQueries(c.store).BookView(ctx, subject, bookID)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, "Book not found")
 		return
 	}
 
-	jsonResponse(w, http.StatusOK, book)
+	jsonResponse(w, http.StatusOK, readerBookResponse(book))
 }
 
 type BulkUpdateSeriesRequest struct {
