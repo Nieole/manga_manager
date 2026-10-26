@@ -1,4 +1,4 @@
-// Package reading owns reading position rules, persistence coordination and activity follow-up.
+// Package reading owns reading state, bookmarks, persistence coordination and activity follow-up.
 // Inputs identify their reader explicitly; transport parsing stays with adapters.
 package reading
 

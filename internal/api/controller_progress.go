@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"net/http"
-	"strings"
 	"time"
 
 	"manga-manager/internal/database"
@@ -44,18 +43,6 @@ type UpdateProgressRequest struct {
 	Page      int64      `json:"page"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	FactID    string     `json:"fact_id,omitempty"`
-}
-
-// clampPageToBook 把用户报上来的页码夹进这本书的合法范围。page_count 为 0 表示页数未知
-// （快速扫描不开归档，首扫即得 0），此时只保证下界，不把页码夹成 1。
-func clampPageToBook(page, pageCount int64) int64 {
-	if page < 1 {
-		return 1
-	}
-	if pageCount > 0 && page > pageCount {
-		return pageCount
-	}
-	return page
 }
 
 func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) {
@@ -165,22 +152,14 @@ func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
 		return
 	}
-	if _, err := c.store.GetBook(r.Context(), bookID); err != nil {
-		jsonError(w, http.StatusNotFound, "Book not found")
-		return
-	}
-
-	// 书签必须按用户隔离（携带 user_id），否则多用户之间可互读、覆盖、删除对方的书签与私人笔记。
-	items, err := c.store.ListReadingBookmarks(r.Context(), database.ListReadingBookmarksParams{
-		UserID: c.currentUserID(r),
-		BookID: bookID,
-	})
+	items, err := reading.NewBookmarks(c.store).List(r.Context(), c.currentUserID(r), bookID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load reading bookmarks")
+		if errors.Is(err, reading.ErrBookmarkBookUnavailable) {
+			jsonError(w, http.StatusNotFound, "Book not found")
+		} else {
+			jsonError(w, http.StatusInternalServerError, "Failed to load reading bookmarks")
+		}
 		return
-	}
-	if items == nil {
-		items = []database.ReadingBookmark{}
 	}
 	jsonResponse(w, http.StatusOK, items)
 }
@@ -198,21 +177,18 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	book, err := c.store.GetBook(r.Context(), bookID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "Book not found")
-		return
-	}
-	page := clampPageToBook(req.Page, book.PageCount)
-
-	item, err := c.store.UpsertReadingBookmark(r.Context(), database.UpsertReadingBookmarkParams{
+	item, err := reading.NewBookmarks(c.store).Save(r.Context(), reading.BookmarkInput{
 		UserID: c.currentUserID(r),
 		BookID: bookID,
-		Page:   page,
-		Note:   strings.TrimSpace(req.Note),
+		Page:   req.Page,
+		Note:   req.Note,
 	})
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to save reading bookmark")
+		if errors.Is(err, reading.ErrBookmarkBookUnavailable) {
+			jsonError(w, http.StatusNotFound, "Book not found")
+		} else {
+			jsonError(w, http.StatusInternalServerError, "Failed to save reading bookmark")
+		}
 		return
 	}
 	jsonResponse(w, http.StatusOK, item)
@@ -229,17 +205,13 @@ func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "Invalid bookmark ID")
 		return
 	}
-	affected, err := c.store.DeleteReadingBookmark(r.Context(), database.DeleteReadingBookmarkParams{
-		ID:     bookmarkID,
-		UserID: c.currentUserID(r),
-		BookID: bookID,
-	})
+	err = reading.NewBookmarks(c.store).Delete(r.Context(), c.currentUserID(r), bookID, bookmarkID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to delete reading bookmark")
-		return
-	}
-	if affected == 0 {
-		jsonError(w, http.StatusNotFound, "Bookmark not found")
+		if errors.Is(err, reading.ErrBookmarkNotFound) {
+			jsonError(w, http.StatusNotFound, "Bookmark not found")
+		} else {
+			jsonError(w, http.StatusInternalServerError, "Failed to delete reading bookmark")
+		}
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Bookmark deleted"})
