@@ -24,7 +24,7 @@ Standards 共 0 项，无最高严重项；Spec 原有 1 项，最高 P2，已�
 
 ## 最终验证与交付范围
 
-修复版本前端 913 项测试、构建、lint，以及 Go 格式和 lint 通过；文档检查器最终退出零。完整 Go 运行中 27 包实际通过，API 完整包和新增导航断言通过；`application/diskjobs`、`images`、`task` 三包测试程序被 Windows Application Control 拒绝执行，完整命令退出非零。未反复尝试或绕过策略，不宣称最新全量门禁全绿。清理前完整通过及原始日志覆盖限制另见联合验收。
+修复版本前端 913 项测试、构建、lint，以及 Go 格式和 lint 通过；文档检查器最终退出零。首轮完整 Go 运行中 27 包实际通过，API 完整包和新增导航断言通过；`application/diskjobs`、`images`、`task` 三包测试程序被 Windows Application Control 拒绝执行，完整命令退出非零。用户说明拦截可能有间歇性后，按原工具链和路径正常重试这三包，全部实际通过、命令退出零；未修改安全策略或绕过限制。最终代码的 30 包已分批验证通过，不将分批补验描述成一次完整命令退出零。补验原始日志为库外 `application-control-retry.jsonl`。清理前完整通过及原始日志覆盖限制另见联合验收。
 
 主工作区已重建当前前端产物并完成 Go 构建。Ubuntu-only race、govulncheck 和远端多平台 CI 未在本机执行。所有 25 张工单为 done，112 条故事的实现与执行映射保留于联合验收；本次未推送或创建 PR。
 

@@ -73,4 +73,4 @@
 
 固定基线双线审查与交付结果见 [review.md](review.md)：Standards 0 项；Spec 1 项 P2 已修复并经原审查者复核，未解决问题 0。25 张工单均已完成，当前验证限制和安全清理结果分别记录，不以 done 代替门禁通过。
 
-票 06/13 的全读回退契约由 `organize.ReadingLists` 的单一目标选择落实，保留清单来源的 sort_number/name 顺序与共享主体读态；没有改动父规格或全局 NextUnread 语义。真实 SQLite 红绿、HTTP/协议、页面及适用门禁证据集中见 [联合验收](acceptance.md#清单首书回退审查修复证据)。受影响包首次运行时 API 被 Application Control 拒执行；随后正常全仓门禁中 API 完整包（含最后增补的目标书详情断言）实际通过。全仓另三包被策略拦截，结果和日志保留于联合验收。
+票 06/13 的全读回退契约由 `organize.ReadingLists` 的单一目标选择落实，保留清单来源的 sort_number/name 顺序与共享主体读态；没有改动父规格或全局 NextUnread 语义。真实 SQLite 红绿、HTTP/协议、页面及适用门禁证据集中见 [联合验收](acceptance.md#清单首书回退审查修复证据)。受影响包首次运行时 API 被 Application Control 拒执行；随后正常全仓门禁中 API 完整包（含最后增补的目标书详情断言）实际通过。全仓另三包首次被策略拦截，用户说明间歇性后正常重试全部通过；最终 30 包均有分批实际通过证据。首次受阻与补验日志分别保留于联合验收。

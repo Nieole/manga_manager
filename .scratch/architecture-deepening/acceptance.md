@@ -215,4 +215,8 @@ US 编号指向 spec 的原文，避免再复制一份需求。下表测试路�
 - `reading-list-regressions.log`：清单及 OPDS/Mihon API 定向回归实际通过；该命令中 reading 显示无匹配测试，不计作执行证据。协议 DTO 不公开继续阅读目标，身份、顺序、分页由协议回归守护，Page 目标由公开完整用例核验。
 - `page.log`：页面定向 3 项通过；完整 `frontend-tests.json` 为 913 项通过；`frontend-build.log`、`frontend-lint.log` 成功。完成系列的按钮可点击并导航首书，普通未完成系列导航目标书，空系列保持禁用。
 - `affected-packages.log`：最终源码上 organize、reading 完整包实际通过；API 测试程序被 Windows Application Control 拒绝执行。随后正常执行一次完整全仓门禁，`all-go-tests.jsonl` 记录包括该 HTTP 目标书详情读取断言在内的 API 完整包实际通过（104.042s）。没有改名、换路径或重复尝试绕过策略。
-- `lint-final.log` 为 `0 issues.`；gofmt 与 diff-check 空。没有 SQL、生成响应结构修改，无须重生成。完整全仓 Go 退出 1：27 包实际通过，diskjobs、images、task 三包仅因 Application Control 拒执行；未重试。未在本机执行 Ubuntu CI 专属 race/govuln，不宣称远端门禁通过。
+- `lint-final.log` 为 `0 issues.`；gofmt 与 diff-check 空。没有 SQL、生成响应结构修改，无须重生成。该次完整全仓 Go 退出 1：27 包实际通过，diskjobs、images、task 三包仅因 Application Control 拒执行；随后正常重试结果见下。未在本机执行 Ubuntu CI 专属 race/govuln，不宣称远端门禁通过。
+
+## Application Control 间歇拦截补验
+
+用户说明系统拦截可能有间歇性后，在最终代码上按原工具链、路径及缓存正常执行 `go test ./internal/application/diskjobs ./internal/images ./internal/task -count=1 -json`。命令退出 0，三包分别实际通过；原始日志保存在 `C:/Users/saber/.codex/tmp/architecture-deepening/application-control-retry.jsonl`。没有更名、改变安全策略或绕过限制。与此前同一生产代码的 27 包通过结果合并，30 包均已有实际通过证据；首次完整命令退出非零的历史结果仍保留，不改写成单次全量通过。
