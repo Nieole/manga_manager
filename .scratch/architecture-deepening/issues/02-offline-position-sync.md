@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 在线阅读位置的完整用例
 
-**Status:** ready-for-agent
+**Status:** done
 
 **验收基准：** [父规格](../spec.md)。本票遵守其中的跨功能约束和范围，不将历史实现偏差重新定义成业务规则。
 
@@ -17,7 +17,7 @@
 - [x] 有效补传活动按可证明的原阅读日期归属；重复传输不改为联网日期，被拒旧的位置不更新最近阅读，也不据此补造额外历史活动。
 - [x] 本地日历和时间归一化一致；没有完整轨迹的队列不能凭最后位置补出多日活动，已有历史统计不猜测重算。
 - [x] 用同一真实 SQLite 行为矩阵对比批量和回退的页码、最近阅读时间、活动日期与重复结果；前端覆盖批量不可用、回退失败、晚响应及账户切换。
-- [ ] 移除两条输入中被替代的规则副本，保留协议和队列兼容；完成对应后端、前端及生成物门禁。
+- [x] 移除两条输入中被替代的规则副本，保留协议和队列兼容；完成对应后端、前端及生成物门禁。
 ## Comments
 
 ### 实施与验证（2026-10-25）
@@ -45,3 +45,7 @@
 红绿证据：新增 `TestReceivedFactsAtSameTickRetainRetryIdentity`，修复前两入口均报告 `first=true second=false next-day retry=true`，活动日期出现两天；修复后两入口均为首条与第二条接受、次日重试拒重，最近阅读仍为原接收时刻，活动仅原一天。`go test ./internal/reading ./internal/koreader -count=1` 通过；仅变更公共位置规则和此回归，没有重跑无关全量或改变既有环境门禁结论。
 
 本轮变更门禁：HTTP 离线/在线/匹配 KOReader 与 bulk 定向回归通过；独立缓存的 `golangci-lint run` 为 `0 issues.`，`gofmt -l ./cmd ./internal` 为空，`git diff --check` 通过。提交前已同步最新集成分支。
+
+## 集成补验
+
+无时间新身份幂等修复 9f62352 已合入 ad86c67，reading/koreader 与相关 HTTP 回归通过。随后该集成上的完整 go test ./... 退出 0（API 133.670s、reading 7.855s、koreader 9.370s、scanner 19.635s；post-untimed-id-go-test.log），先前受策略阻碍的全仓包均已实际通过。07完整门禁也覆盖此修复，相关前端及生成门禁已有成功证据，本票全部验收项满足并关闭。
