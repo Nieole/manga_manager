@@ -275,7 +275,15 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 	if err = c.scanner.CleanupLibrary(ctx, lib.ID); !errors.Is(err, database.ErrLibraryProtected) {
 		t.Fatalf("direct cleanup: %v", err)
 	}
-	c.triggerGlobalScan(ctx)
+	{
+		launched, err := c.maintenance.RebuildIndex(task.TriggerManual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = c.taskEngine.engine.Await(ctx, launched.Run.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if p, e := store.LibraryRelocationProtection(ctx, lib.ID); e != nil || p == nil {
 		t.Fatalf("global scan cleared protection: %+v %v", p, e)
 	}

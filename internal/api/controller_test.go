@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"manga-manager/internal/application/maintenance"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -936,8 +937,9 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 	// 写重建任务的资格来自任务体交给聚合器的**运行句柄**：聚合器据此为每个库造一个
 	// **扫描观察者**，交不出句柄时造不出观察者，报文就无处可落。
 	progress := seedTask(t, controller.taskEngine, taskSeed{Key: "rebuild_thumbnails", Identity: systemTask("rebuild_thumbnails", variantSole), Total: 1})
-	controller.initRebuildThumbAggregator(progress, 0)
-	t.Cleanup(controller.releaseRebuildThumbAggregator)
+	aggregator := maintenance.NewThumbnailProgress()
+	aggregator.Begin(progress, 0)
+	t.Cleanup(aggregator.End)
 
 	// 重建逐库扫描，每个库一个观察者：跨库总量只能这样加出来，因为每次扫描只报自己那一个库。
 	libA := database.Library{ID: 42, Name: "A", Path: filepath.Join(t.TempDir(), "a")}
@@ -950,8 +952,8 @@ func TestScannerMetricsAggregateIntoRebuildThumbnailsTask(t *testing.T) {
 		PausedMillis:   80,
 		DurationMillis: 60000,
 	}
-	controller.beginRebuildThumbLibrary(libA, 2).Metrics(reportA)
-	controller.beginRebuildThumbLibrary(libB, 2).Metrics(scanner.ScanMetricsReport{
+	aggregator.BeginLibrary(libA, 2).Metrics(reportA)
+	aggregator.BeginLibrary(libB, 2).Metrics(scanner.ScanMetricsReport{
 		StorageProfile: config.StorageProfileHDDExternal,
 		VolumeKey:      "e:",
 		OpenedArchives: 2,

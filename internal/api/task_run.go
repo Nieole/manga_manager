@@ -134,18 +134,6 @@ type RunResult struct {
 	Params map[string]string
 }
 
-// taskFailure 给一个失败原因配上它专属的文案码，取消除外。
-//
-// 一个任务体的各道工序常各有各的失败文案，而取消同样以 ctx.Err() 的形式从这些调用里返回；
-// RunResult 的文案覆盖对引擎裁决出的每条分支一视同仁，无条件带上码的话，
-// 用户按下取消看到的会是「清空封面索引失败」而不是「已取消」。
-func taskFailure(code string, err error) RunResult {
-	if errors.Is(err, context.Canceled) {
-		return RunResult{}
-	}
-	return RunResult{Code: code}
-}
-
 // taskBody 是任务体：干活，以及经交给它的**运行句柄**上报。
 type taskBody func(ctx context.Context, handle *runhandle.Handle) (RunResult, error)
 

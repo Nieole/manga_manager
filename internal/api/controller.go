@@ -20,6 +20,7 @@ import (
 
 	"manga-manager/internal/application/diskjobs"
 	"manga-manager/internal/application/intelligence"
+	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/application/relocating"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/config"
@@ -67,6 +68,7 @@ type Controller struct {
 	relocation     *relocation.Service
 	configPath     string
 	scans          *scanning.Service
+	maintenance    *maintenance.Service
 	watcher        *scanner.FileWatcher
 	watcherInitErr error
 	moves          *relocating.Service
@@ -82,11 +84,8 @@ type Controller struct {
 
 	// taskEngine 是任务子域的适配层：把启动入口、控制端点与**重启函数**注册表接到
 	// internal/task 的领域引擎与 internal/taskstore 的落盘上（它自己不留任务表，理由见它的符号 doc）。
-	// 任务方法仍是 Controller 方法，统一经 c.taskEngine 走（端点定义见 controller_tasks.go）。
+	// HTTP 控制与快照经适配层访问同一任务引擎；实际任务体归应用用例。
 	taskEngine *taskEngine
-
-	// 缩略图重建的跨库进度聚合已抽成独立组件（rebuild_thumb_aggregator.go），自带互斥锁。
-	rebuildThumbAgg *rebuildThumbAggregator
 
 	openPath        func(string) error
 	providerFactory func(string) metadata.Provider
@@ -318,16 +317,7 @@ type SearchHit struct {
 	Fields map[string]interface{} `json:"fields,omitempty"`
 }
 
-const (
-	// rebuildBookHashesTaskKey 与 lowPriorityBookHashTaskKey 是 rebuild_book_hashes 这个任务类型
-	// 下两个**变体**的**任务键**：前者是用户在维护页发起的前台重建，后者是**资料库扫描**收尾串联的
-	// 低优先级回填。键只管寻址，分回哪一条跑法由变体决定，见 buildTaskRelaunchers。
-	rebuildBookHashesTaskKey     = "rebuild_book_hashes"
-	lowPriorityBookHashTaskKey   = "background_book_hash_backfill"
-	lowPriorityBookHashBatchSize = 32
-	lowPriorityBookHashBatchGap  = 100 * time.Millisecond
-	dashboardStatsCacheTTL       = 30 * time.Second
-)
+const dashboardStatsCacheTTL = 30 * time.Second
 
 // controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
 // 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
@@ -362,7 +352,6 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		configPath:      cfgPath,
 		sse:             newSSEBroker(),
 		recommendations: newRecommendationCache(24 * time.Hour),
-		rebuildThumbAgg: newRebuildThumbAggregator(),
 		openPath:        openPathInDefaultFileManager,
 		auth:            newAuthState(),
 	}
@@ -393,6 +382,7 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	c.taskEngine.libraryIDs = c.taskLibraries
 	c.taskEngine.dispatch = c.buildTaskDispatch()
 	c.assembleScanUseCases()
+	c.assembleMaintenanceUseCases()
 	c.assembleDiskUseCases()
 	c.assembleIntelligenceUseCases()
 	c.watcher, c.watcherInitErr = scanner.NewFileWatcher(scanner.WatcherHooks{

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/database"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/scanner"
@@ -18,16 +19,16 @@ import (
 // newRebuildThumbTestController 手工拼装出这条链路需要的两个组件：任务引擎与聚合器。
 // 引擎仍经它唯一的 seam（newTaskEngine）构造，扫描事件转译处不碰其余任何 Controller 字段，
 // 因此这里不需要数据库、配置管理器或扫描器。
-func newRebuildThumbTestController(t testing.TB, clock *fakeClock) (*Controller, func() []RunSnapshot) {
+func newRebuildThumbTestController(t testing.TB, clock *fakeClock) (*thumbTestController, func() []RunSnapshot) {
 	t.Helper()
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	e.now = clock.Now
-	return &Controller{taskEngine: e, rebuildThumbAgg: newRebuildThumbAggregator()}, snapshots
+	return &thumbTestController{Controller: &Controller{taskEngine: e}, rebuildThumbAgg: maintenance.NewThumbnailProgress()}, snapshots
 }
 
 // startedRebuildThumbRig 造一条「任务已启动、句柄已交给聚合器」的现场，
 // 即多数用例的起点：句柄交接本身只有 TestRebuildThumbWritersAreInertWithoutHandle 不做。
-func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*Controller, func() []RunSnapshot, *fakeClock) {
+func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*thumbTestController, func() []RunSnapshot, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	c, snapshots := newRebuildThumbTestController(t, clock)
@@ -38,7 +39,7 @@ func startedRebuildThumbRig(t *testing.T, totalLibraries int) (*Controller, func
 
 const rebuildThumbTestKey = "rebuild_thumbnails"
 
-func seedRebuildThumbTask(t *testing.T, c *Controller) *runhandle.Handle {
+func seedRebuildThumbTask(t *testing.T, c *thumbTestController) *runhandle.Handle {
 	t.Helper()
 	return seedTask(t, c.taskEngine, taskSeed{
 		Key: rebuildThumbTestKey, Identity: systemTask("rebuild_thumbnails", variantSole),
@@ -53,7 +54,7 @@ func rebuildThumbTestLibrary() database.Library {
 
 // beginTestLibrary 开一个资料库并取回交给这次扫描的观察者；取不到即断言失败，
 // 因为后续每一条断言都建立在「确实拿到了写入资格」之上。
-func beginTestLibrary(t *testing.T, c *Controller, lib database.Library, total int) scanner.ScanObserver {
+func beginTestLibrary(t *testing.T, c *thumbTestController, lib database.Library, total int) scanner.ScanObserver {
 	t.Helper()
 	observer := c.beginRebuildThumbLibrary(lib, total)
 	if observer == nil {
@@ -302,4 +303,21 @@ func TestRebuildThumbReportDropsTheStorageProfile(t *testing.T) {
 	if task.Params["execution_mode"] != "low_impact" {
 		t.Fatalf("执行模式为 %q, want low_impact —— 撤的只有存储画像那三项：%v", task.Params["execution_mode"], task.Params)
 	}
+}
+
+// thumbTestController adapts the retained observer contract tests to application-owned aggregation.
+type thumbTestController struct {
+	*Controller
+	rebuildThumbAgg *maintenance.ThumbnailProgress
+}
+
+func (c *thumbTestController) initRebuildThumbAggregator(h *runhandle.Handle, total int) {
+	c.rebuildThumbAgg.Begin(h, total)
+}
+func (c *thumbTestController) releaseRebuildThumbAggregator() { c.rebuildThumbAgg.End() }
+func (c *thumbTestController) beginRebuildThumbLibrary(lib database.Library, total int) scanner.ScanObserver {
+	return c.rebuildThumbAgg.BeginLibrary(lib, total)
+}
+func (c *thumbTestController) refreshRebuildThumbTaskFromAggregator(lib database.Library) {
+	c.rebuildThumbAgg.Refresh(lib)
 }

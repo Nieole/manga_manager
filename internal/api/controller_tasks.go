@@ -1,6 +1,6 @@
 // 本文件是任务子域的 HTTP 层与装配层：八个端点（六个按**任务键**寻址，全部暂停 / 全部恢复作用在
 // 全体运行上）、「再发起一次」的注册表（（类型，**变体**）-> 重启函数与**可续跑**），
-// 以及任务面板上报的 IO 实况（帧指标与任务参数两条通道）与有效并发数推导。
+// 以及扫描任务有效并发数的适配。
 //
 // 引擎的适配层在 task_engine.go（状态机与落盘在 internal/task 与 internal/taskstore），
 // 纯转换函数在 task_model.go；本文件只经 c.taskEngine 的方法操作运行，不碰它的字段。
@@ -18,8 +18,8 @@ import (
 	"strings"
 
 	"manga-manager/internal/application/intelligence"
+	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/application/scanning"
-	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
 )
 
@@ -148,67 +148,17 @@ func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 			}
 			return c.launchCleanupLibraryTask(id, trigger)
 		}},
-		// 不可续跑：它重灌完索引还要**同步等一次全量扫描**，白名单里没有这一条。
-		{Type: "rebuild_index", Variant: variantSole}: {Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildIndexTask(trigger)
-		}},
-		{Type: "rebuild_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildThumbnailsTask(trigger)
-		}},
-		{Type: "cleanup_thumbnails", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchCleanupThumbnailsTask(trigger)
-		}},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildForeground}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildBookHashesTask(trigger)
-		}},
-		{Type: "rebuild_book_hashes", Variant: variantHashRebuildBackfill}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			// 发起理由是这个变体的原始入参，再发起一次要沿用而不是另编一个。
-			return c.launchLowPriorityBookHashBackfillTask(firstNonEmptyTaskValue(taskParam(run, "reason"), "manual_retry"), trigger)
-		}},
-		{Type: "rebuild_file_identities", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRebuildFileIdentitiesTask(trigger)
-		}},
-		{Type: "reconcile_koreader_progress", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchReconcileKOReaderProgressTask(trigger)
-		}},
-		{Type: "refresh_koreader_matching", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, _ RunSnapshot, trigger task.Trigger) error {
-			return c.launchRefreshKOReaderMatchingTask(trigger)
-		}},
 	}
 	for _, definition := range intelligence.Restarts() {
 		dispatch[taskDispatchKey{Type: string(definition.Type), Variant: TaskVariant(definition.Variant)}] = taskDispatch{Resumable: definition.Resumable, Relaunch: c.restartIntelligenceRun}
+	}
+	for _, definition := range maintenance.Restarts() {
+		dispatch[taskDispatchKey{Type: string(definition.Type), Variant: TaskVariant(definition.Variant)}] = taskDispatch{Resumable: definition.Resumable, Relaunch: c.restartMaintenanceRun}
 	}
 	return dispatch
 }
 
 // ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----
-
-// taskIOFrameMetrics 是**运行句柄**的 IO 实况在**一帧**里的那几个键。
-// reportHashProgress 与 koreaderFingerprintFrame 共用一份，键名不会各自漂移。
-func taskIOFrameMetrics(handleIO runhandle.IOMetrics) map[string]int64 {
-	return map[string]int64{
-		"hashed_files": handleIO.HashedFiles,
-		"io_wait_ms":   handleIO.IOWaitMillis,
-		"paused_ms":    handleIO.PausedMillis,
-	}
-}
-
-// taskIOMetricsParams 是同一份实况在**任务参数**那条通道里的形状：存储 IO 面板按参数名读它。
-// 空的档位与卷键滤掉不写，理由见 koreaderFingerprintFrame。
-func taskIOMetricsParams(handleIO runhandle.IOMetrics) map[string]string {
-	params := map[string]string{
-		"io_wait_ms":   strconv.FormatInt(handleIO.IOWaitMillis, 10),
-		"paused_ms":    strconv.FormatInt(handleIO.PausedMillis, 10),
-		"hashed_files": strconv.FormatInt(handleIO.HashedFiles, 10),
-	}
-	if handleIO.StorageProfile != "" {
-		params["storage_profile"] = handleIO.StorageProfile
-	}
-	if handleIO.VolumeKey != "" {
-		params["volume_key"] = handleIO.VolumeKey
-	}
-	return params
-}
 
 // runLimitsForPath 拼出任务面板上那块并发徽章：这条路径上的存储画像，加上 scanner.WorkerCount
 // 在它上面给出的 worker 数。
