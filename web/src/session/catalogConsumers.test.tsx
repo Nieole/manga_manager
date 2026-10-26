@@ -12,7 +12,7 @@ import MetadataReviews from '../pages/MetadataReviews';
 import { useLibraryRefresh } from './ApplicationSessionProvider';
 import Collections from '../pages/collections';
 import { useSeriesContext } from '../pages/series-detail/hooks/useSeriesContext';
-import { useSeriesEdit } from '../pages/series-detail/hooks/useSeriesEdit';
+import { useSeriesEdit } from '../features/series-metadata/useSeriesEdit';
 import type { PropsWithChildren } from 'react';
 class Source {
   static current: Source;
@@ -72,7 +72,7 @@ it('session refresh preserves the series draft and its original save version', a
   summary = 'Server after'; version = 'v2';
   refresh();
   await waitFor(() => expect(view.result.current.ctx.metadataVersion).toBe('v2'));
-  expect(view.result.current.edit.editForm.summary.String).toBe('My draft');
+  expect(view.result.current.edit.editForm.summary).toBe('My draft');
   await act(async () => view.result.current.edit.save());
   expect(saved?.expected_version).toBe('v1');
 });
@@ -130,5 +130,5 @@ it('does not let an old save reload or close the new series editor', async () =>
   await act(async () => { finish?.(); await saving; });
   expect(view.result.current.ctx.series?.id).toBe(9);
   expect(view.result.current.edit.isEditing).toBe(true);
-  expect(view.result.current.edit.editForm.summary.String).toBe('Draft for nine');
+  expect(view.result.current.edit.editForm.summary).toBe('Draft for nine');
 });
