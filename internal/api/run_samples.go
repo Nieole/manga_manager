@@ -1,8 +1,4 @@
-// **采样**在 api 这一侧的两端：每隔一个间隔催领域引擎取一次点的节拍，与运行详情那条按需拉的
-// 吞吐曲线读取面。采样**不进推送通道**（那里只有全量运行快照与**实况汇总**）。
-//
-// **这一层一个判断都不读采样**：进度、终态与速率的事实来源始终是运行行本身，
-// 采样丢一个点只该让曲线少一段。
+// HTTP throughput history adapts the application-owned sampling policy and durable task samples.
 
 package api
 
@@ -12,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"manga-manager/internal/application/runtime"
 	"manga-manager/internal/config"
 	"manga-manager/internal/task"
 )
@@ -60,49 +57,8 @@ type RunSamplesResponse struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-// startRunSampler 按取点间隔催领域引擎取一次**采样**，随 Controller 生命周期退出
-// （经 runBackground 登记 backgroundWG，关闭时会退出）。
-//
-// 它只是**节拍**，不是判据：一条运行在一个间隔里最多落一个点，那道水位在领域引擎里
-// （见 task.Engine.SampleActiveRuns）。因此这个节拍即使被拖慢或催快，写入量都不会失控。
-//
-// 每一拍之后重设周期，好让设置里改过的间隔对**下一拍**生效，不必重启进程（同 taskSlots 的口径）。
-func (c *Controller) startRunSampler() {
-	ticker := time.NewTicker(c.runSampleInterval())
-	defer ticker.Stop()
-	for {
-		select {
-		case <-c.lifecycleDone():
-			return
-		case <-ticker.C:
-			c.taskEngine.sampleActiveRuns(context.Background())
-			ticker.Reset(c.runSampleInterval())
-		}
-	}
-}
-
-// runSampleInterval 读此刻生效的取点间隔。
-func (c *Controller) runSampleInterval() time.Duration {
-	return sampleIntervalOf(c.currentConfig())
-}
-
-// sampleIntervalOf 把设置里的秒数翻成间隔：非正数交给领域引擎的默认值，大到会溢出的按上限收。
-//
-// 它只服务两处，且两处交出的是**同一个数**：装配期交给领域引擎的那个读间隔闭包，与取点的节拍。
-// 读取面不走它——那一处问引擎要（见 runSamples），因此「此刻的间隔是多久」只有一个答案。
-//
-// 归一化本该已经把非正数补成默认值，这里再收一道是因为节拍容不下零：一个零间隔的
-// time.Ticker 会当场 panic，而配置一路来自手写的文件。
-func sampleIntervalOf(cfg config.Config) time.Duration {
-	seconds := cfg.Tasks.SampleIntervalSeconds
-	if seconds < 1 {
-		return task.DefaultSampleInterval
-	}
-	if seconds > maxSampleIntervalSeconds {
-		seconds = maxSampleIntervalSeconds
-	}
-	return time.Duration(seconds) * time.Second
-}
+func (c *Controller) runSampleInterval() time.Duration { return sampleIntervalOf(c.currentConfig()) }
+func sampleIntervalOf(cfg config.Config) time.Duration { return runtime.SampleInterval(cfg) }
 
 // getRunSamples 取一条运行的吞吐曲线。
 func (c *Controller) getRunSamples(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ package api
 import (
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -20,7 +21,8 @@ type sseBroker struct {
 	// shutdown 在服务开始停机时关闭，让在途的 serveHTTP 立刻返回。
 	// 没有它，任何开着页面的浏览器标签都会让 srv.Shutdown 一直等到 20 秒超时——
 	// SSE 是长连接，Shutdown 的「排空在途请求」对它永远不会自然完成。
-	shutdown chan struct{}
+	shutdown     chan struct{}
+	shutdownOnce sync.Once
 }
 
 // sseSubscriber 是一次订阅登记：投递通道加上该订阅者的角色。
@@ -53,12 +55,7 @@ func (b *sseBroker) closeClients() {
 	if b == nil {
 		return
 	}
-	select {
-	case <-b.shutdown:
-		// 已经关过
-	default:
-		close(b.shutdown)
-	}
+	b.shutdownOnce.Do(func() { close(b.shutdown) })
 }
 
 // run 驱动 broker 事件循环直至 done 关闭。经 Controller.runBackground 登记，随 Close 一同退出。
@@ -151,9 +148,14 @@ func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request, admin bool
 	// 监听从客户端意外断开链接。注销同样要能被停机打断：defunctClients 也是无缓冲的，
 	// broker 退出后这个 goroutine 会永久挂住（每个断开过的连接泄漏一个）。
 	notify := r.Context().Done()
+	handlerDone := make(chan struct{})
+	unregistered := make(chan struct{})
+	defer func() { close(handlerDone); <-unregistered }()
 	go func() {
+		defer close(unregistered)
 		select {
 		case <-notify:
+		case <-handlerDone:
 		case <-b.shutdown:
 			return
 		}

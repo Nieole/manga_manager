@@ -1,7 +1,6 @@
 // 守 api 层的对外契约：请求打进 handler、结果从真库读回，断言状态码与错误语义、响应字段的
 // 形状、写路径落库后的可见结果。这些契约破了，前端拿到的是形状对而含义错的 200。
-// 任务的进度与终态先进内存再异步刷盘，相关用例必须分「内存立即可见」与「刷盘后 DB 追上」两段断言，
-// 只查 DB 会把一次异步延迟误判成丢数据。
+// 任务事实由 SQLite 持有，SSE 的投递与消费者观测另有回归覆盖。
 // 全包共用的测试装配 newTestController 也在这里。
 
 package api
@@ -79,6 +78,8 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 	controller := newControllerCore(store, scan, cfgManager, configPath, controllerCacheSizes{
 		imageBytes: 8 << 10, page: 8, bookPageSource: 8,
 	})
+
+	controller.taskEngine.dispatch = controller.buildTaskDispatch()
 
 	t.Cleanup(parser.ResetArchivePool)
 	t.Cleanup(controller.Close)

@@ -24,8 +24,10 @@ import (
 
 // FileWatcher 监听库目录的文件变动，自动触发增量扫描
 type FileWatcher struct {
-	watcher *fsnotify.Watcher
-	mu      sync.Mutex
+	startOnce sync.Once
+	eventLoop sync.WaitGroup
+	watcher   *fsnotify.Watcher
+	mu        sync.Mutex
 	// pending: 文件变动后按库排期，去抖（watcherTimings.scanDebounce）后触发一次增量扫描
 	pending map[int64]time.Time
 	libs    map[string]int64 // path -> libraryID
@@ -492,80 +494,89 @@ func (fw *FileWatcher) cleanupLibraryNow(libraryID int64) {
 
 // Start 启动文件监控事件循环
 func (fw *FileWatcher) Start(publishEvent func(string)) {
-	go func() {
-		debounceTimer := time.NewTicker(fw.timings.tick)
-		defer debounceTimer.Stop()
+	fw.startOnce.Do(func() {
+		fw.mu.Lock()
+		if fw.stopping {
+			fw.mu.Unlock()
+			return
+		}
+		fw.eventLoop.Add(1)
+		fw.mu.Unlock()
+		go func() {
+			defer fw.eventLoop.Done()
+			debounceTimer := time.NewTicker(fw.timings.tick)
+			defer debounceTimer.Stop()
 
-		for {
-			select {
-			case <-fw.stopCh:
-				return
-
-			case event, ok := <-fw.watcher.Events:
-				if !ok {
+			for {
+				select {
+				case <-fw.stopCh:
 					return
-				}
-				if event.Op&fsnotify.Create != 0 {
-					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-						if r := fw.watchRecursive(event.Name); r.FirstErr != nil {
-							slog.Warn("Failed to watch part of the new subdirectory",
-								"path", event.Name, "watched", r.Watched, "failed", r.Failed, "error", r.FirstErr)
+
+				case event, ok := <-fw.watcher.Events:
+					if !ok {
+						return
+					}
+					if event.Op&fsnotify.Create != 0 {
+						if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+							if r := fw.watchRecursive(event.Name); r.FirstErr != nil {
+								slog.Warn("Failed to watch part of the new subdirectory",
+									"path", event.Name, "watched", r.Watched, "failed", r.Failed, "error", r.FirstErr)
+							}
 						}
 					}
-				}
-				// 删除/重命名（旧名）：清理监听集合并排期库清理，去除幽灵记录、修复重建目录失监。
-				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-					fw.handleRemoval(event.Name)
-				}
-				// 只关注 Create 和 Write（用于触发增量扫描发现新增/变动文件）
-				if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
-					continue
-				}
-				// 检查是否是支持的漫画文件
-				ext := strings.ToLower(filepath.Ext(event.Name))
-				// 锁外的廉价预筛：先用全局白名单挡掉 .nfo/.jpg/编辑器临时文件这类绝大多数事件。
-				// 库级格式过滤放到下面定位库之后再做——若把它也挪到这里，每个无关事件都要抢一次
-				// fw.mu 并遍历全部库，而这是事件循环里唯一的全局锁，大库批量写入时会明显变热。
-				if !config.IsSupportedArchiveExtension(ext) {
-					continue
-				}
-
-				// 找到所属的库，并按**该库**的 scan_formats 判定是否值得重扫。
-				// 同 handleRemoval：所有包含该文件的库都要排期（嵌套库共享子树）。
-				fw.mu.Lock()
-				for libPath, libID := range fw.libs {
-					if !pathUnderRoot(event.Name, libPath) {
+					// 删除/重命名（旧名）：清理监听集合并排期库清理，去除幽灵记录、修复重建目录失监。
+					if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+						fw.handleRemoval(event.Name)
+					}
+					// 只关注 Create 和 Write（用于触发增量扫描发现新增/变动文件）
+					if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
 						continue
 					}
-					// formats 里查不到（库刚被 Unwatch 的竞态）时取零值 -> fail-open，与扫描器同口径。
-					if !fw.formats[libID].Matches(event.Name) {
+					// 检查是否是支持的漫画文件
+					ext := strings.ToLower(filepath.Ext(event.Name))
+					// 锁外的廉价预筛：先用全局白名单挡掉 .nfo/.jpg/编辑器临时文件这类绝大多数事件。
+					// 库级格式过滤放到下面定位库之后再做——若把它也挪到这里，每个无关事件都要抢一次
+					// fw.mu 并遍历全部库，而这是事件循环里唯一的全局锁，大库批量写入时会明显变热。
+					if !config.IsSupportedArchiveExtension(ext) {
 						continue
 					}
-					fw.pending[libID] = time.Now()
-					slog.Debug("File change detected", "file", event.Name, "library_id", libID)
-				}
-				fw.mu.Unlock()
 
-			case err, ok := <-fw.watcher.Errors:
-				if !ok {
-					return
-				}
-				slog.Warn("File watcher error", "error", err)
+					// 找到所属的库，并按**该库**的 scan_formats 判定是否值得重扫。
+					// 同 handleRemoval：所有包含该文件的库都要排期（嵌套库共享子树）。
+					fw.mu.Lock()
+					for libPath, libID := range fw.libs {
+						if !pathUnderRoot(event.Name, libPath) {
+							continue
+						}
+						// formats 里查不到（库刚被 Unwatch 的竞态）时取零值 -> fail-open，与扫描器同口径。
+						if !fw.formats[libID].Matches(event.Name) {
+							continue
+						}
+						fw.pending[libID] = time.Now()
+						slog.Debug("File change detected", "file", event.Name, "library_id", libID)
+					}
+					fw.mu.Unlock()
 
-			case <-debounceTimer.C:
-				fw.mu.Lock()
-				fw.dispatchDueLocked(time.Now(), publishEvent)
-				fw.mu.Unlock()
+				case err, ok := <-fw.watcher.Errors:
+					if !ok {
+						return
+					}
+					slog.Warn("File watcher error", "error", err)
+
+				case <-debounceTimer.C:
+					fw.mu.Lock()
+					fw.dispatchDueLocked(time.Now(), publishEvent)
+					fw.mu.Unlock()
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 // Stop 停止监听，取消并等待 watcher 派生的扫描/清理退出。
 //
 // Stop 返回代表「事件循环与本 watcher 派生的 ScanLibrary/CleanupLibrary 调用栈都已退出」。
-// **不包括** Scanner 的全局封面 worker 池——那是进程级共享的，取消后队列里的任务会
-// 迅速空转排干（runCoverJob 入口先等暂停闸），残留窗口最多是几个在飞的封面任务。
+// 共享封面 worker 池由 Scanner.Close 在应用运行全部退出之后释放。
 func (fw *FileWatcher) Stop() {
 	fw.stopOnce.Do(func() {
 		close(fw.stopCh)
@@ -577,6 +588,7 @@ func (fw *FileWatcher) Stop() {
 	fw.mu.Lock()
 	fw.stopping = true
 	fw.mu.Unlock()
+	fw.eventLoop.Wait()
 	fw.inFlight.Wait()
 }
 

@@ -484,3 +484,14 @@ func (e *Engine) StopAll() {
 		rt.gate.Resume()
 	}
 }
+
+// Shutdown seals task admission and queued release, cancels active contexts, and waits
+// until every admitted launch has reached the configured background owner.
+// The caller must then wait for that background owner before closing resources.
+func (e *Engine) Shutdown() {
+	e.mu.Lock()
+	e.stopping = true
+	e.mu.Unlock()
+	e.StopAll()
+	e.pendingLaunches.Wait()
+}

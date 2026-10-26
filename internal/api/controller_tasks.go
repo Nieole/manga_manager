@@ -1,24 +1,16 @@
-// 本文件是任务子域的 HTTP 层与装配层：八个端点（六个按**任务键**寻址，全部暂停 / 全部恢复作用在
-// 全体运行上）、「再发起一次」的注册表（（类型，**变体**）-> 重启函数与**可续跑**），
-// 以及扫描任务有效并发数的适配。
-//
-// 引擎的适配层在 task_engine.go（状态机与落盘在 internal/task 与 internal/taskstore），
-// 纯转换函数在 task_model.go；本文件只经 c.taskEngine 的方法操作运行，不碰它的字段。
+// HTTP task controls and filtering adapt to the application-owned task engine and restart registry.
 
 package api
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"manga-manager/internal/database"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"manga-manager/internal/application/intelligence"
-	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/task"
 )
@@ -82,80 +74,12 @@ func writeTaskLaunchError(w http.ResponseWriter, err error, conflict, failure st
 	jsonError(w, http.StatusInternalServerError, failure)
 }
 
-// taskParam 读一个**任务参数**，缺了给空串。**重启函数**靠它读回原始入参：一个任务重试时
-// 除了作用域就只剩这些参数，读丢了不会有编译错误，后果是重试静默换了跑法（换成默认刮削源、
-// 换个语种、丢掉发起理由）。
-func taskParam(run RunSnapshot, key string) string {
-	if run.Params == nil {
-		return ""
+func runDomainIdentity(run RunSnapshot) task.Identity {
+	id := task.Identity{Type: task.Type(run.Type), Scope: task.Scope(run.Scope), Variant: task.Variant(run.Variant)}
+	if run.ScopeID != nil {
+		id.ScopeID = *run.ScopeID
 	}
-	return run.Params[key]
-}
-
-// buildTaskDispatch 注册（类型，**变体**）-> 这个类型怎么再发起一次、以及重启之后能不能自己发起。
-// 它是**可重试**与**可续跑**两条判据的唯一事实来源，两份清单一旦分家，界面上说不可续跑的类型
-// 会在重启后自己跑起来。
-//
-// **可续跑白名单**（规格关键决定 7）：资料库扫描、系列扫描、封面生成、重建缩略图、清理缩略图、
-// 书哈希重建与低优先级回填、文件身份重建、KOReader 进度对账与匹配刷新。
-//
-// 清理资料库、刮削与 AI 分组支持手动重试，不支持自动续跑，原因随注册项声明。
-// 外部库扫描、传输与 ComicInfo 回写没有重启函数；不从历史运行重建内存会话或传输计划。
-func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
-	libraryID := func(run RunSnapshot) (int64, error) {
-		if run.ScopeID == nil {
-			return 0, fmt.Errorf("task %d missing library id", run.TaskID)
-		}
-		return *run.ScopeID, nil
-	}
-	forceParam := func(run RunSnapshot) bool {
-		return taskParam(run, "force") == "true"
-	}
-	dispatch := map[taskDispatchKey]taskDispatch{
-		{Type: "scan_library", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			lib, err := c.store.GetLibrary(ctx, id)
-			if err != nil {
-				return err
-			}
-			// 启动入口本就返回「同类任务已在运行」哨兵错误，重启函数原样透传即可，
-			// 不必再把一个布尔值转换回哨兵错误。
-			return c.launchLibraryScanTask(lib, forceParam(run), trigger)
-		}},
-		// 封面生成的重启函数不认领任何批（进程里那一批随重启一起没了），
-		// 而是把这个库里还缺封面的书重新排一遍，见 launchCoverRun。
-		{Type: "generate_covers", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			return c.launchCoverRun(id, trigger, true)
-		}},
-		{Type: "scan_series", Variant: variantSole}: {Resumable: true, Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			if run.ScopeID == nil {
-				return fmt.Errorf("task %d missing series id", run.TaskID)
-			}
-			return c.launchSeriesScanTask(*run.ScopeID, forceParam(run), trigger)
-		}},
-		// 不可续跑：它删的是记录，而「这些记录该不该删」在无人看着时没人裁决。
-		{Type: "cleanup_library", Variant: variantSole}: {Relaunch: func(ctx context.Context, run RunSnapshot, trigger task.Trigger) error {
-			id, err := libraryID(run)
-			if err != nil {
-				return err
-			}
-			return c.launchCleanupLibraryTask(id, trigger)
-		}},
-	}
-	for _, definition := range intelligence.Restarts() {
-		dispatch[taskDispatchKey{Type: string(definition.Type), Variant: TaskVariant(definition.Variant)}] = taskDispatch{Resumable: definition.Resumable, Relaunch: c.restartIntelligenceRun}
-	}
-	for _, definition := range maintenance.Restarts() {
-		dispatch[taskDispatchKey{Type: string(definition.Type), Variant: TaskVariant(definition.Variant)}] = taskDispatch{Resumable: definition.Resumable, Relaunch: c.restartMaintenanceRun}
-	}
-	return dispatch
+	return id
 }
 
 // ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----

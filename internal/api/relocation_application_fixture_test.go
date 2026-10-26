@@ -20,4 +20,7 @@ func (c *Controller) assembleRelocationUseCases() {
 	})
 	c.relocation.ConfigPath = c.configPath
 	c.relocation.ApplyConfig = runtimecfg.Apply
+	if c.runtime != nil {
+		c.runtime.Moves = c.moves
+	}
 }
