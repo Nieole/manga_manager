@@ -14,7 +14,7 @@ func TestReadingTimeAccumulatesOnlyForItsReaderAndReceiptDay(t *testing.T) {
 	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.Local)
 	service := reading.New(store, nil, reading.WithClock(func() time.Time { return now }))
 	for _, seconds := range []int64{30, 45} {
-		if err := service.RecordTime(ctx, reading.TimeReport{UserID: uid, BookID: bid, Seconds: seconds}); err != nil {
+		if err := service.RecordTime(ctx, reading.TimeReport{Subject: commandSubject(uid), BookID: bid, Seconds: seconds}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -37,9 +37,9 @@ func TestReadingTimeCompatibilityAndCap(t *testing.T) {
 	service := reading.New(store, nil)
 	ctx := context.Background()
 	for _, report := range []reading.TimeReport{
-		{BookID: bid, Seconds: 30}, {UserID: uid, BookID: bid, Seconds: 0},
-		{UserID: uid, BookID: bid, Seconds: -5}, {UserID: uid, BookID: 999999, Seconds: 30},
-		{UserID: uid, BookID: bid, Seconds: 99999},
+		{Subject: reading.AnonymousSubject(), BookID: bid, Seconds: 30}, {Subject: commandSubject(uid), BookID: bid, Seconds: 0},
+		{Subject: commandSubject(uid), BookID: bid, Seconds: -5}, {Subject: commandSubject(uid), BookID: 999999, Seconds: 30},
+		{Subject: commandSubject(uid), BookID: bid, Seconds: 99999},
 	} {
 		if err := service.RecordTime(ctx, report); err != nil {
 			t.Fatal(err)
@@ -61,7 +61,7 @@ func TestReadingTimeActivityFailureRollsBackTimeButKeepsSavedPosition(t *testing
 	if _, err := store.DB().Exec(`CREATE TRIGGER fail_time_activity BEFORE INSERT ON user_reading_activity BEGIN SELECT RAISE(ABORT,'activity unavailable'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RecordTime(ctx, reading.TimeReport{UserID: uid, BookID: bid, Seconds: 30}); err == nil {
+	if err := service.RecordTime(ctx, reading.TimeReport{Subject: commandSubject(uid), BookID: bid, Seconds: 30}); err == nil {
 		t.Fatal("expected observable failure")
 	}
 	total, err := store.GetUserTotalReadingTime(ctx, uid)

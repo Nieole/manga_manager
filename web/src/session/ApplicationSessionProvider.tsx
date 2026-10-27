@@ -1,4 +1,4 @@
-import { useCallback, createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { RunPush } from '../api/generated';
 import { parseRunPush, trackRunPush } from '../utils/runPush';
 import { useEventStream } from './useEventStream';
@@ -12,6 +12,7 @@ export interface LibraryChange {
 }
 interface Session {
   queryScope: object;
+  isActive: () => boolean;
   refresh: Record<string, number>;
   invalidateLibrary: (change?: LibraryChange) => void;
   runs: Set<(frame: RunPush) => void>;
@@ -30,6 +31,9 @@ export function ApplicationSessionProvider({ identity, isAdmin, children }: { id
 }
 
 function SessionInstance({ isAdmin, children }: { isAdmin: boolean; children: ReactNode }) {
+  const active = useRef(true);
+  useLayoutEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const isActive = useCallback(() => active.current, []);
   const [queryScope] = useState(() => ({}));
   const [refresh, setRefresh] = useState<Record<string, number>>({});
   const [runs] = useState(() => new Set<(frame: RunPush) => void>());
@@ -52,7 +56,7 @@ function SessionInstance({ isAdmin, children }: { isAdmin: boolean; children: Re
     keys.forEach(key => { next[key] = (next[key] ?? 0) + 1; });
     return next;
   }), []);
-  const session = useMemo(() => ({ queryScope, refresh, runs, recoveries, invalidateLibrary }), [queryScope, refresh, runs, recoveries, invalidateLibrary]);
+  const session = useMemo(() => ({ queryScope, isActive, refresh, runs, recoveries, invalidateLibrary }), [queryScope, isActive, refresh, runs, recoveries, invalidateLibrary]);
   useEventStream('/api/events', {
     onReconnect() {
       lastSequence.current = null;
@@ -128,3 +132,8 @@ export function useSessionRecovery(onRecovery: () => void) {
     return () => { recoveries.delete(listener); };
   }, [recoveries]);
 }
+
+const alwaysActive = () => true;
+
+/** Checks whether callbacks still belong to a mounted application identity. */
+export function useSessionActive() { return useContext(SessionContext)?.isActive ?? alwaysActive; }

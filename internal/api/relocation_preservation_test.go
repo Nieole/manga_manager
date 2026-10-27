@@ -84,7 +84,7 @@ func assertRelocationPreservesAssociations(t *testing.T, repair bool) {
 		if err = testfixture.UserBookProgress(ctx, store, userID, book.ID, int64(3+i*4), time.Date(2026, 1, 2+i, 3, 4, 5, 0, time.UTC)); err != nil {
 			t.Fatal(err)
 		}
-		if err = store.AddUserBookReadingTime(ctx, userID, book.ID, int64(41+i*42)); err != nil {
+		if err = store.AccumulateReadingTimeForBook(ctx, userID, book.ID, int64(41+i*42), database.TodayDayKey()); err != nil {
 			t.Fatal(err)
 		}
 		execSeed(`INSERT INTO user_reading_activity(user_id,book_id,date,pages_read,read_seconds) VALUES (?,?,'2026-01-02',?,?)`, userID, book.ID, 3+i*4, 11+i*12)
