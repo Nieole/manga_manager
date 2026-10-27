@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 单书读者视图与导航。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 25、26、31、32、39、41、42、43、44。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -26,4 +26,10 @@
 - TDD 先以真实 SQLite 的受限写能力端口确认旧 `reading.New` 要求 `ExecTx` 而编译失败，再收窄至通过。该用例经公开服务验证前进、回退、清除、已识别重放、缓存失效与时长。既有真实 SQLite 故障、竞争、跨重启、HTTP/离线矩阵继续验证保存/统计及部分提交边界。
 - Go 1.26.10：两轮 `go test ./...` 分次覆盖所有包的实际通过；第一轮仅 proposal 被 Windows Application Control 阻止执行，intelligence 实际通过；第二轮 proposal 实际通过，仅 intelligence 被拦，其定向重试仍被拦。未把拦截记为通过，也未宣称单次全仓零退出。原始记录分别为 `.tmp/ticket05-go-tests.log`、`ticket05-go-tests-final.log`、`ticket05-intelligence-retry.log`。
 - `go test -race ./internal/reading` 实际通过；独立缓存 `golangci-lint run --allow-parallel-runners` 最终 `0 issues.`；`gofmt -l ./cmd ./internal` 与 `git diff --check` 无输出。前端在线进度、离线队列、切书迟到报告及阅读时长消费者 4 文件、42 测试通过。其余原始记录在本工作树 `.tmp/ticket05-*.log`。
-- 未改变前端生产源码、SQL 查询/DDL 或生成响应契约；不重复无关构建及生成。已在本分支合入最新集成 c2ca015。验收条件已满足，Status 保持就绪，待集成分支复核后由协调者关闭。
+- 未改变前端生产源码、SQL 查询/DDL 或生成响应契约；不重复无关构建及生成。已在本分支合入最新集成 c2ca015。验收条件已满足并通过集成分支复核。
+### 集成验收
+
+- 05 由 `488e6ec`、16 由 `6b5e8f7` 合入 `codex/architecture-refinement`，两次合并均无冲突。
+- Go 1.26.10：完整 `bookcontent`/`parser` 的 `-race` 测试实际通过（5.132s/5.687s）；reading/database 的原子写入、位置、时长、标记及同步回归通过；API 页图、来源缓存、封面、进度/离线与迁移兼容回归通过（48.889s），scanner 封面消费者通过（4.641s）。
+- 迁移/旧阅读态 fixture 的真实消费另行执行：database、KOReader、scanner、application/relocating、application/scanning 五包的对应回归实际通过；未将初轮筛选中无匹配测试的包计作行为通过。
+- 前端阅读器、进度/离线、时长、页缓存及图像选项消费者 7 文件、73 测试通过；gofmt 无输出，独立缓存 lint 为 `0 issues.`。未更改 SQL/TS 生成源，未重复无关生成或全仓门禁。原始输出保存在主工作树 `.tmp/merge-wave5-*.log`。
