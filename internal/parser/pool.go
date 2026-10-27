@@ -75,6 +75,7 @@ type ArchivePool struct {
 	done     chan struct{}
 	stopOnce sync.Once
 	stopCh   chan struct{} // 停止 GC 协程的信号
+	closed   bool
 }
 
 var (
@@ -129,6 +130,7 @@ func CloseArchivePool() {
 	<-p.done
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.closed = true
 	for key, item := range p.items {
 		p.evictLocked(key, item)
 	}
@@ -207,10 +209,21 @@ func PoolMaxSize() int {
 // 引用计数归零之前不会真正关闭，这样淘汰/GC 就不会在别人读到一半时抽走文件描述符。
 // release 幂等，且在返回 error 时也非 nil，调用方可以无条件 defer。
 func GetArchiveFromPool(path string) (Archive, func(), error) {
+	releaseBorrow := retainArchiveBorrow(path)
+	arc, release, err := getArchiveFromPool(path)
+	if err != nil {
+		releaseBorrow()
+		return arc, release, err
+	}
+	var once sync.Once
+	return arc, func() { once.Do(func() { release(); releaseBorrow() }) }, nil
+}
+
+func getArchiveFromPool(path string) (Archive, func(), error) {
 	pool := currentPool()
 	if pool == nil || pool.max() <= 0 {
 		// 不经池：句柄归调用方独占，release 负责关闭。
-		arc, err := OpenArchive(path)
+		arc, err := openArchive(path)
 		if err != nil {
 			return nil, noopRelease, err
 		}
@@ -218,6 +231,14 @@ func GetArchiveFromPool(path string) (Archive, func(), error) {
 	}
 
 	pool.mu.Lock()
+	if pool.closed {
+		pool.mu.Unlock()
+		arc, err := openArchive(path)
+		if err != nil {
+			return nil, noopRelease, err
+		}
+		return arc, func() { _ = arc.Close() }, nil
+	}
 	if item, ok := pool.items[path]; ok {
 		// 校验文件是否在缓存后被更新：mtime/size 变化则移出池并走下方重建路径，
 		// 避免文件更新后最长 10 分钟仍返回旧内容。
@@ -233,13 +254,16 @@ func GetArchiveFromPool(path string) (Archive, func(), error) {
 	pool.mu.Unlock()
 
 	// 池中没有，创建一个新的
-	arc, err := OpenArchive(path)
+	arc, err := openArchive(path)
 	if err != nil {
 		return nil, noopRelease, err
 	}
 
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
+	if pool.closed {
+		return arc, func() { _ = arc.Close() }, nil
+	}
 
 	// 再次检查确认（双检锁变体，防止并发创建）
 	if item, ok := pool.items[path]; ok {

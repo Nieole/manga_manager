@@ -153,7 +153,7 @@ func TestDiskPageCacheDisabledForSameDiskExternalHDDPolicy(t *testing.T) {
 		Path:      filepath.Join(rootDir, "library", "Series", "Book.cbz"),
 	}
 
-	if controller.diskPageCacheEnabled(source) {
+	if controller.content.DiskCacheEnabled(source) {
 		t.Fatal("expected same-disk page cache to be disabled for external HDD policy")
 	}
 }
@@ -497,12 +497,12 @@ func TestBookArchivePageManifestCache(t *testing.T) {
 		t.Fatalf("get updated book failed: %v", err)
 	}
 
-	pages, err := controller.listBookArchivePages(context.Background(), book)
+	manifest, err := controller.content.ListSource(context.Background(), bookPageSourceFromBook(book))
 	if err != nil {
 		t.Fatalf("first page manifest load failed: %v", err)
 	}
-	if len(pages) != 2 {
-		t.Fatalf("expected 2 pages, got %d", len(pages))
+	if len(manifest.Pages) != 2 {
+		t.Fatalf("expected 2 pages, got %d", len(manifest.Pages))
 	}
 
 	parser.EvictArchiveFromPool(archivePath)
@@ -514,16 +514,16 @@ func TestBookArchivePageManifestCache(t *testing.T) {
 		_ = os.Rename(missingPath, archivePath)
 	})
 
-	cachedPages, err := controller.listBookArchivePages(context.Background(), book)
+	cachedManifest, err := controller.content.ListSource(context.Background(), bookPageSourceFromBook(book))
 	if err != nil {
 		t.Fatalf("expected cached page manifest after archive rename, got %v", err)
 	}
-	if len(cachedPages) != 2 {
-		t.Fatalf("expected cached 2 pages, got %d", len(cachedPages))
+	if len(cachedManifest.Pages) != 2 {
+		t.Fatalf("expected cached 2 pages, got %d", len(cachedManifest.Pages))
 	}
 
 	book.Size++
-	if _, err := controller.listBookArchivePages(context.Background(), book); err == nil {
+	if _, err := controller.content.ListSource(context.Background(), bookPageSourceFromBook(book)); err == nil {
 		t.Fatal("expected changed book source key to bypass manifest cache")
 	}
 }
