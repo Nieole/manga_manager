@@ -28,3 +28,11 @@ func readerBookResponse(view reading.BookView) database.Book {
 		LastReadPage: state.LastReadPage, LastReadAt: state.LastReadAt, IsRead: state.IsRead,
 	}
 }
+
+func readerBookResponses(views []reading.BookView) []database.Book {
+	books := make([]database.Book, len(views))
+	for i, view := range views {
+		books[i] = readerBookResponse(view)
+	}
+	return books
+}

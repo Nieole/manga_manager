@@ -41,8 +41,6 @@ it('actual navigation routes share the session, refresh the library and release 
   render(<MemoryRouter initialEntries={['/library/1']}><LocaleProvider><ToastProvider><AuthProvider><Navigation /><App /></AuthProvider></ToastProvider></LocaleProvider></MemoryRouter>);
   await waitFor(() => expect(Source.instances).toHaveLength(1));
   await waitFor(() => expect(requests.some(url => url.includes('/api/series'))).toBe(true));
-  // 列表查询会在完成后保留 100ms 去重窗口。
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 120)); });
   const sidebarFilter = screen.getByPlaceholderText('搜索资料库...');
   fireEvent.change(sidebarFilter, { target: { value: 'My library 1' } });
   const before = requests.filter(url => url.includes('/api/series')).length;

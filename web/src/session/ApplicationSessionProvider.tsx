@@ -11,6 +11,7 @@ export interface LibraryChange {
   areas?: LibraryArea[];
 }
 interface Session {
+  queryScope: object;
   refresh: Record<string, number>;
   invalidateLibrary: (change?: LibraryChange) => void;
   runs: Set<(frame: RunPush) => void>;
@@ -29,6 +30,7 @@ export function ApplicationSessionProvider({ identity, isAdmin, children }: { id
 }
 
 function SessionInstance({ isAdmin, children }: { isAdmin: boolean; children: ReactNode }) {
+  const [queryScope] = useState(() => ({}));
   const [refresh, setRefresh] = useState<Record<string, number>>({});
   const [runs] = useState(() => new Set<(frame: RunPush) => void>());
   const [recoveries] = useState(() => new Set<() => void>());
@@ -50,7 +52,7 @@ function SessionInstance({ isAdmin, children }: { isAdmin: boolean; children: Re
     keys.forEach(key => { next[key] = (next[key] ?? 0) + 1; });
     return next;
   }), []);
-  const session = useMemo(() => ({ refresh, runs, recoveries, invalidateLibrary }), [refresh, runs, recoveries, invalidateLibrary]);
+  const session = useMemo(() => ({ queryScope, refresh, runs, recoveries, invalidateLibrary }), [queryScope, refresh, runs, recoveries, invalidateLibrary]);
   useEventStream('/api/events', {
     onReconnect() {
       lastSequence.current = null;
@@ -78,6 +80,11 @@ function useSession() {
   if (!session) throw new Error('Application session scope is required');
   return session;
 }
+
+const anonymousQueryScope = {};
+
+/** 同一应用会话内共享查询去重，身份或角色切换后使用独立作用域。 */
+export function useSessionQueryScope() { return useContext(SessionContext)?.queryScope ?? anonymousQueryScope; }
 
 const ignoreInvalidation = () => {};
 export function useLibraryInvalidation() { return useContext(SessionContext)?.invalidateLibrary ?? ignoreInvalidation; }
