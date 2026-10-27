@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 单书读者视图与导航。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 21、22、23、28、29、40、174。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -27,4 +27,9 @@
 - Go 1.26.10：`go test ./internal/reading ./internal/api` 全量通过；主体/分页/游标/协议/未知完成专项回归通过；`gofmt -l ./cmd ./internal` 无输出；独立缓存 `golangci-lint run --allow-parallel-runners` 为 `0 issues.`。
 - 前端 `npm run test -- --maxWorkers=4`：96 文件、921 测试通过；`npm run lint` 与 `npm run build` 通过。首次默认并发全量运行遇到既有路由加载超时，降低并发后完整通过。
 - 匿名 HTTP 回归使用没有用户上下文的真实匿名入口；不再通过注入非法站点用户零值模拟匿名，原有未知页数及后来补齐页数的完成态断言保持。
-- 所有验收已满足；Status 保持就绪，待集成分支复核后由协调者关闭。
+- 所有验收已满足并通过集成分支复核。
+### 集成验收
+
+- 合并提交 `45c31f0` 已将本票实现纳入 `codex/architecture-refinement`，无冲突。
+- Go 1.26.10 的目录主体、分页、查询上下文和未知完成定向回归在 reading/API 两包通过；目录缓存、路由及会话消费者 3 文件、7 项通过。
+- `gofmt -l ./cmd ./internal` 无输出；独立缓存下 `golangci-lint run --allow-parallel-runners` 返回 `0 issues.`。输出保存在主工作树 `.tmp/merge-wave2-02-*.log`。
