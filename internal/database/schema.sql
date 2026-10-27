@@ -367,6 +367,8 @@ CREATE TABLE IF NOT EXISTS collection_series (
     FOREIGN KEY(series_id) REFERENCES series(id) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS idx_collection_series_series_id ON collection_series(series_id);
+
 CREATE TABLE IF NOT EXISTS smart_filters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     library_id INTEGER NOT NULL,
