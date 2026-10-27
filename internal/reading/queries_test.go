@@ -129,13 +129,19 @@ func TestCatalogueQueriesFilterAndPageUsingRequestedSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	queries := reading.NewCatalogueQueries(store)
-	filters := database.SeriesListFilters{UserID: uid, ReadState: "completed"}
+	filters := reading.CatalogueFilters{ReadState: "completed"}
 	for _, subject := range []int64{uid, other.ID} {
-		rows, total, err := queries.SearchPaged(ctx, subject, book.LibraryID, filters, 1, 0, "name_asc")
+		reader, err := reading.UserSubject(subject)
 		if err != nil {
 			t.Fatal(err)
 		}
-		recent, err := queries.RecentSeries(ctx, subject, book.LibraryID, 1)
+		page, err := queries.Search(ctx, reader, reading.CatalogueSearch{LibraryID: book.LibraryID, Filters: filters, Limit: 1, SortBy: "name_asc"})
+		rows, total := page.Items, page.Total
+		if err != nil {
+			t.Fatal(err)
+		}
+		recentView, err := queries.Recent(ctx, reader, book.LibraryID, 1)
+		recent := recentView.Items
 		if err != nil {
 			t.Fatal(err)
 		}

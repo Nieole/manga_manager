@@ -21,20 +21,3 @@ type CatalogueQueries struct{ store SeriesCatalogueStore }
 func NewCatalogueQueries(store SeriesCatalogueStore) *CatalogueQueries {
 	return &CatalogueQueries{store: store}
 }
-
-func (q *CatalogueQueries) SearchPaged(ctx context.Context, uid, libraryID int64, filters database.SeriesListFilters, limit, offset int32, sortBy string) ([]database.SearchSeriesPagedRow, int, error) {
-	filters.UserID = uid
-	return q.store.SearchSeriesPaged(ctx, libraryID, filters, limit, offset, sortBy)
-}
-
-func (q *CatalogueQueries) SearchCursor(ctx context.Context, uid, libraryID int64, filters database.SeriesListFilters, limit int32, sortBy, cursor string) ([]database.SearchSeriesPagedRow, string, bool, error) {
-	filters.UserID = uid
-	return q.store.SearchSeriesCursor(ctx, libraryID, filters, limit, sortBy, cursor)
-}
-
-func (q *CatalogueQueries) RecentSeries(ctx context.Context, uid, libraryID, limit int64) ([]database.GetRecentReadSeriesRow, error) {
-	if uid > 0 {
-		return q.store.GetUserRecentReadSeries(ctx, uid, libraryID, limit)
-	}
-	return q.store.GetRecentReadSeries(ctx, database.GetRecentReadSeriesParams{LibraryID: libraryID, LibraryID_2: libraryID, Limit: limit})
-}
