@@ -22,14 +22,14 @@ func TestSmartShelfSavedConditionsDriveMembersAndCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := service.Members(ctx, filter.ID, 0, 30, 0)
+	page, err := service.Members(ctx, filter.ID, readerSubject(t, 0), 30, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != 1 || page.Filter.Name != "Picks" {
 		t.Fatalf("page=%+v", page)
 	}
-	views, err := service.Views(ctx, 0)
+	views, err := service.Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 1 || views[0].SeriesCount != 1 {
 		t.Fatalf("views=%+v err=%v", views, err)
 	}
@@ -89,20 +89,20 @@ func TestSmartShelfAdvancedConditionsAreUserScopedAndPageable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for offset, want := range []int64{1, 2} {
-		page, err := service.Members(ctx, filter.ID, 1, 1, offset)
+		page, err := service.Members(ctx, filter.ID, readerSubject(t, 1), 1, offset)
 		if err != nil || page.Total != 2 || len(page.Items) != 1 || page.Items[0].ID != want {
 			t.Fatalf("offset=%d page=%+v err=%v", offset, page, err)
 		}
 	}
-	views, err := service.Views(ctx, 1)
+	views, err := service.Views(ctx, readerSubject(t, 1))
 	if err != nil || views[0].SeriesCount != 2 {
 		t.Fatalf("alice views=%+v err=%v", views, err)
 	}
-	page, err := service.Members(ctx, filter.ID, 2, 1, 0)
+	page, err := service.Members(ctx, filter.ID, readerSubject(t, 2), 1, 0)
 	if err != nil || page.Total != 0 || len(page.Items) != 0 {
 		t.Fatalf("bob page=%+v err=%v", page, err)
 	}
-	views, err = service.Views(ctx, 2)
+	views, err = service.Views(ctx, readerSubject(t, 2))
 	if err != nil || views[0].SeriesCount != 0 {
 		t.Fatalf("bob views=%+v err=%v", views, err)
 	}

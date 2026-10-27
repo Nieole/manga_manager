@@ -39,21 +39,21 @@ func TestOrderedReadingListsOwnMembershipAndAtomicReorder(t *testing.T) {
 	if err := lists.Reorder(ctx, list.ID, []int64{b.ID, 999}); !errors.Is(err, organize.ErrReadingListItemMissing) {
 		t.Fatalf("bad reorder=%v", err)
 	}
-	items, err := lists.Items(ctx, 0, list.ID)
+	items, err := lists.Items(ctx, readerSubject(t, 0), list.ID)
 	if err != nil || len(items) != 2 || items[0].ID != a.ID {
 		t.Fatalf("rollback=%+v %v", items, err)
 	}
 	if err := lists.Reorder(ctx, list.ID, []int64{b.ID, a.ID}); err != nil {
 		t.Fatal(err)
 	}
-	items, err = lists.Items(ctx, 0, list.ID)
+	items, err = lists.Items(ctx, readerSubject(t, 0), list.ID)
 	if err != nil || items[0].ID != b.ID || items[1].Note != "edited" {
 		t.Fatalf("order=%+v %v", items, err)
 	}
 	if err := lists.Remove(ctx, list.ID, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	page, err := lists.Page(ctx, 0, list.ID, 1, 0)
+	page, err := lists.Page(ctx, readerSubject(t, 0), list.ID, 1, 0)
 	if err != nil || page.Total != 1 || page.Rows[0].ItemID != a.ID {
 		t.Fatalf("page=%+v %v", page, err)
 	}
@@ -94,11 +94,11 @@ func TestReadingListProgressFollowsReaderFactsAndNeverCreatesActivity(t *testing
 	}
 	assertProgress := func(uid, started, completed, next int64) {
 		t.Helper()
-		items, err := lists.Items(ctx, uid, list.ID)
+		items, err := lists.Items(ctx, readerSubject(t, uid), list.ID)
 		if err != nil || len(items) != 1 || items[0].ReadBooks != started || items[0].CompletedBooks != completed || items[0].TotalBooks != 2 || items[0].NextBookID != next {
 			t.Fatalf("user=%d items=%+v err=%v", uid, items, err)
 		}
-		page, err := lists.Page(ctx, uid, list.ID, 1, 0)
+		page, err := lists.Page(ctx, readerSubject(t, uid), list.ID, 1, 0)
 		if err != nil || page.Total != 1 || len(page.Rows) != 1 || page.Rows[0].NextBookID != next {
 			t.Fatalf("user=%d page=%+v err=%v", uid, page, err)
 		}
@@ -136,7 +136,7 @@ func TestReadingListProgressFollowsReaderFactsAndNeverCreatesActivity(t *testing
 	if err := store.DeleteSeries(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
-	page, err := lists.Page(ctx, 1, list.ID, 10, 0)
+	page, err := lists.Page(ctx, readerSubject(t, 1), list.ID, 10, 0)
 	if err != nil || page.List.ID != list.ID || page.Total != 0 || len(page.Rows) != 0 {
 		t.Fatalf("deleted member=%+v err=%v", page, err)
 	}
@@ -167,11 +167,11 @@ INSERT INTO books(id,library_id,series_id,name,path,volume,sort_number,page_coun
 	}
 	assertTarget := func(want int64) {
 		t.Helper()
-		items, err := lists.Items(ctx, 0, list.ID)
+		items, err := lists.Items(ctx, readerSubject(t, 0), list.ID)
 		if err != nil || len(items) != 2 || items[0].NextBookID != want || items[1].NextBookID != 0 {
 			t.Fatalf("items=%+v err=%v want target=%d and empty=0", items, err, want)
 		}
-		page, err := lists.Page(ctx, 0, list.ID, 10, 0)
+		page, err := lists.Page(ctx, readerSubject(t, 0), list.ID, 10, 0)
 		if err != nil || len(page.Rows) != 2 || page.Rows[0].NextBookID != want || page.Rows[1].NextBookID != 0 {
 			t.Fatalf("page=%+v err=%v want target=%d and empty=0", page, err, want)
 		}
