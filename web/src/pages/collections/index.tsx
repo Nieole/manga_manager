@@ -25,6 +25,7 @@ import { CollectionDetailPanel } from './CollectionDetailPanel';
 import { CreateCollectionModal, EditCollectionModal } from './CollectionFormModals';
 import { SmartEditModal } from './SmartEditModal';
 import { SnapshotModal } from './SnapshotModal';
+import { FranchiseRepairStatus } from '../../features/organize/FranchiseRepairStatus';
 
 export default function Collections() {
   const catalogRefresh = useLibraryRefresh({ area: 'collections' });
@@ -281,6 +282,11 @@ export default function Collections() {
           </button>
         )}
       </div>
+
+      <FranchiseRepairStatus isAdmin={isAdmin} refreshKey={catalogRefresh} onRepaired={() => {
+        fetchCollections();
+        if (selectedRef.current) refreshMembers(selectedRef.current);
+      }} />
 
       <CreateCollectionModal
         open={showCreate}

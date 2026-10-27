@@ -752,6 +752,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/{collectionId}/series", c.addSeriesToCollection)
 			r.Delete("/{collectionId}/series/{seriesId}", c.removeSeriesFromCollection)
 		})
+		r.Get("/franchise-state", c.getFranchiseState)
 		r.Get("/collection-views", c.listCollectionViews)
 		r.Get("/collection-views/smart/{filterId}/series", c.getSmartCollectionSeries)
 		r.Get("/collection-views/smart/{filterId}/snapshot-preview", c.previewSmartCollectionSnapshot)

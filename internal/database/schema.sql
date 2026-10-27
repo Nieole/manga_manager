@@ -521,3 +521,17 @@ CREATE TABLE IF NOT EXISTS koreader_sync_events (
 CREATE INDEX IF NOT EXISTS idx_koreader_sync_events_created_at ON koreader_sync_events(created_at);
 
 -- Multi-user / per-user progress / deep-stats tables live in schema_multiuser.sql (run by Migrate, kept out of sqlc's view to avoid generated-model name clashes with hand-written structs).
+
+
+-- One global relation graph, including edges between libraries.
+CREATE TABLE IF NOT EXISTS franchise_rebuild_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    desired_version INTEGER NOT NULL DEFAULT 1,
+    applied_version INTEGER NOT NULL DEFAULT 0,
+    has_success INTEGER NOT NULL DEFAULT 0,
+    last_attempt_version INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at_ms INTEGER NOT NULL DEFAULT 0,
+    failures INTEGER NOT NULL DEFAULT 0,
+    next_retry_at_ms INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT ''
+);

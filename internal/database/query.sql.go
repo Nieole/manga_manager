@@ -122,6 +122,27 @@ func (q *Queries) CollectionNameExists(ctx context.Context, name string) (int64,
 	return column_1, err
 }
 
+const completeFranchiseRebuild = `-- name: CompleteFranchiseRebuild :execrows
+UPDATE franchise_rebuild_state
+SET applied_version = ?1, has_success = 1,
+    last_attempt_version = ?1, last_attempt_at_ms = ?2,
+    failures = 0, next_retry_at_ms = 0, last_error = ''
+WHERE id = 1 AND desired_version = ?1
+`
+
+type CompleteFranchiseRebuildParams struct {
+	Version int64 `json:"version"`
+	AtMs    int64 `json:"at_ms"`
+}
+
+func (q *Queries) CompleteFranchiseRebuild(ctx context.Context, arg CompleteFranchiseRebuildParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, completeFranchiseRebuild, arg.Version, arg.AtMs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countAIGroupingReviews = `-- name: CountAIGroupingReviews :one
 SELECT COUNT(*)
 FROM ai_grouping_reviews agr
@@ -1569,6 +1590,27 @@ func (q *Queries) GetDashboardCoreStats(ctx context.Context, sinceDate string) (
 		&i.ReadBooks,
 		&i.TotalPages,
 		&i.ActiveDays7,
+	)
+	return i, err
+}
+
+const getFranchiseRebuildState = `-- name: GetFranchiseRebuildState :one
+SELECT id, desired_version, applied_version, has_success, last_attempt_version, last_attempt_at_ms, failures, next_retry_at_ms, last_error FROM franchise_rebuild_state WHERE id = 1
+`
+
+func (q *Queries) GetFranchiseRebuildState(ctx context.Context) (FranchiseRebuildState, error) {
+	row := q.db.QueryRowContext(ctx, getFranchiseRebuildState)
+	var i FranchiseRebuildState
+	err := row.Scan(
+		&i.ID,
+		&i.DesiredVersion,
+		&i.AppliedVersion,
+		&i.HasSuccess,
+		&i.LastAttemptVersion,
+		&i.LastAttemptAtMs,
+		&i.Failures,
+		&i.NextRetryAtMs,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -5425,6 +5467,44 @@ WHERE review_id = ?1
 func (q *Queries) MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error {
 	_, err := q.db.ExecContext(ctx, markAIGroupingReviewCollectionsRejected, reviewID)
 	return err
+}
+
+const markFranchiseRebuildPending = `-- name: MarkFranchiseRebuildPending :exec
+UPDATE franchise_rebuild_state
+SET desired_version = desired_version + 1, next_retry_at_ms = 0, last_error = ''
+WHERE id = 1
+`
+
+func (q *Queries) MarkFranchiseRebuildPending(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, markFranchiseRebuildPending)
+	return err
+}
+
+const recordFranchiseRebuildFailure = `-- name: RecordFranchiseRebuildFailure :execrows
+UPDATE franchise_rebuild_state
+SET last_attempt_version = ?1, last_attempt_at_ms = ?2,
+    failures = failures + 1, next_retry_at_ms = ?3, last_error = ?4
+WHERE id = 1 AND applied_version < ?1 AND last_attempt_version <= ?1
+`
+
+type RecordFranchiseRebuildFailureParams struct {
+	Version   int64  `json:"version"`
+	AtMs      int64  `json:"at_ms"`
+	RetryAtMs int64  `json:"retry_at_ms"`
+	Error     string `json:"error"`
+}
+
+func (q *Queries) RecordFranchiseRebuildFailure(ctx context.Context, arg RecordFranchiseRebuildFailureParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordFranchiseRebuildFailure,
+		arg.Version,
+		arg.AtMs,
+		arg.RetryAtMs,
+		arg.Error,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const refreshSeriesCover = `-- name: RefreshSeriesCover :exec
