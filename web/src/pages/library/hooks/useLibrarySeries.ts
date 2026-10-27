@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLibraryInvalidation } from '../../../session/ApplicationSessionProvider';
+import { useLibraryInvalidation, useSessionQueryScope } from '../../../session/ApplicationSessionProvider';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
 import { type AxiosResponse } from 'axios';
 import {
@@ -42,22 +42,24 @@ interface UseLibrarySeriesResult {
   patchSeries: (id: number, partial: Partial<Series>) => void;
 }
 
-const inflightSeriesSearchRequests = new Map<string, Promise<AxiosResponse<SeriesSearchResponse>>>();
+const inflightSeriesSearchRequests = new WeakMap<object, Map<string, Promise<AxiosResponse<SeriesSearchResponse>>>>();
 
-// 作用域对不上时统一返回同一个空表，避免每次渲染换引用。
 const NO_CURSORS: Record<number, string> = {};
 
-function requestSeriesSearch(query: string) {
-  const existing = inflightSeriesSearchRequests.get(query);
-  if (existing) return existing;
-  const request = apiClient
-    .get<SeriesSearchResponse>(`/api/series/search?${query}`)
-    .finally(() => {
-      window.setTimeout(() => {
-        inflightSeriesSearchRequests.delete(query);
-      }, 100);
-    });
-  inflightSeriesSearchRequests.set(query, request);
+function requestSeriesSearch(scope: object, revision: number, query: string, fresh = false) {
+  let requests = inflightSeriesSearchRequests.get(scope);
+  if (!requests) {
+    requests = new Map();
+    inflightSeriesSearchRequests.set(scope, requests);
+  }
+  const cache = requests;
+  const key = `${revision}:${query}`;
+  const existing = cache.get(key);
+  if (existing && !fresh) return existing;
+  const request = apiClient.get<SeriesSearchResponse>(`/api/series/search?${query}`).finally(() => {
+    if (cache.get(key) === request) cache.delete(key);
+  });
+  cache.set(key, request);
   return request;
 }
 
@@ -82,6 +84,7 @@ export function useLibrarySeries({
   appendMode = false,
 }: UseLibrarySeriesParams): UseLibrarySeriesResult {
   const invalidateLibrary = useLibraryInvalidation();
+  const queryScope = useSessionQueryScope();
   const [allSeries, setAllSeries] = useState<Series[]>([]);
   const [totalSeries, setTotalSeries] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -144,7 +147,7 @@ export function useLibrarySeries({
 
       const requestID = latestRequestIDRef.current + 1;
       latestRequestIDRef.current = requestID;
-      requestSeriesSearch(buildSearchQuery(pageNumber, cursor || ''))
+      requestSeriesSearch(queryScope, refreshTrigger, buildSearchQuery(pageNumber, cursor || ''), silent)
         .then((res) => {
           if (requestID !== latestRequestIDRef.current) return;
           const items = res.data.items || [];
@@ -197,7 +200,7 @@ export function useLibrarySeries({
           if (requestID === latestRequestIDRef.current) setLoading(false);
         });
     },
-    [libId, sortByField, pageCursorMap, cursorScope, appendMode, buildSearchQuery],
+    [libId, sortByField, pageCursorMap, cursorScope, appendMode, buildSearchQuery, queryScope, refreshTrigger],
   );
 
   /**
@@ -212,7 +215,7 @@ export function useLibrarySeries({
       const requestID = latestRequestIDRef.current + 1;
       latestRequestIDRef.current = requestID;
       const pages = Array.from({ length: lastPage }, (_, index) => index + 1);
-      Promise.all(pages.map((pageNumber) => requestSeriesSearch(buildSearchQuery(pageNumber, ''))))
+      Promise.all(pages.map((pageNumber) => requestSeriesSearch(queryScope, refreshTrigger, buildSearchQuery(pageNumber, ''), true)))
         .then((responses) => {
           if (requestID !== latestRequestIDRef.current) return;
           const incoming = new Map<number, Series>();
@@ -229,7 +232,7 @@ export function useLibrarySeries({
           setError(getApiErrorMessage(err, ''));
         });
     },
-    [libId, buildSearchQuery],
+    [libId, buildSearchQuery, queryScope, refreshTrigger],
   );
 
   const lastQuery = useRef({ query: '', refresh: refreshTrigger });

@@ -23,14 +23,22 @@ func TestUnknownReadMarksRemainCompletedWithoutPagesInSeriesResponses(t *testing
 			}
 			body := []byte(`{"book_ids":[` + strconv.FormatInt(book.ID, 10) + `],"is_read":true,"occurred_at":"2026-10-20T10:00:00Z","operation_id":"unknown"}`)
 			marked := httptest.NewRecorder()
-			controller.bulkUpdateBookProgress(marked, withUserContext(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), user))
+			markRequest := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+			if perUser {
+				markRequest = withUserContext(markRequest, user)
+			}
+			controller.bulkUpdateBookProgress(marked, markRequest)
 			if marked.Code != 200 {
 				t.Fatalf("%d %s", marked.Code, marked.Body.String())
 			}
 			readContext := func() SeriesContextResponse {
 				t.Helper()
 				rec := httptest.NewRecorder()
-				controller.getSeriesContext(rec, withUserContext(requestWithRouteParam(http.MethodGet, "/", nil, "seriesId", strconv.FormatInt(series.ID, 10)), user))
+				request := requestWithRouteParam(http.MethodGet, "/", nil, "seriesId", strconv.FormatInt(series.ID, 10))
+				if perUser {
+					request = withUserContext(request, user)
+				}
+				controller.getSeriesContext(rec, request)
 				if rec.Code != 200 {
 					t.Fatalf("%d %s", rec.Code, rec.Body.String())
 				}
