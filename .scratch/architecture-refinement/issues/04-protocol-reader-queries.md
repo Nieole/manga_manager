@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: 系列列表的主体筛选与分页。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 18、19、23、28、30、133。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -26,4 +26,9 @@
 - 阅读查询测试直接验证最近阅读视图归属、用户隔离、匿名原进度和非法主体；原 OPDS/Mihon 名称、字段、协议开关、Basic Auth、强制改密、资源作用域及已知页数/未知页数主体矩阵回归通过。
 - Go 1.26.10：`go test ./internal/reading` 全量通过；`go test ./internal/reading ./internal/api -run 'TestRecentBooks|TestOPDS|TestMihon|TestProtocol|TestReadingProjection|TestNavigation' -count=1` 通过；`golangci-lint run --allow-parallel-runners` 为 `0 issues.`；`gofmt -l ./cmd ./internal` 与 `git diff --check` 无输出。
 - 原始记录在本工作树 `.tmp/ticket04-*.log`。本票没有前端生产、SQL、生成响应结构或账号/匹配算法变更，因此不重跑无关前端构建与 SQL/TS 生成；未使用真实设备客户端作实机验证。
-- 验收条件已满足；Status 保持就绪，待集成分支复核后由协调者关闭。
+- 验收条件已满足并通过集成分支复核。
+### 集成验收
+
+- 已由合并提交 `b1b82cc` 纳入 `codex/architecture-refinement`，无冲突。
+- Go 1.26.10 的最近阅读、OPDS/Mihon、协议鉴权、主体投影、导航及编排兼容回归在 reading/API 两包实际通过（11.216s、8.438s）。
+- `gofmt -l ./cmd ./internal` 无输出，独立缓存 `golangci-lint run --allow-parallel-runners` 为 `0 issues.`。原始输出保留在主工作树 `.tmp/merge-wave4-04-*.log`；未运行真实设备客户端。
