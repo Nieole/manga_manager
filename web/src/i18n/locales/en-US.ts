@@ -659,6 +659,8 @@ export const messages: MessageCatalog = {
     'bulkEdit.applying': 'Applying…',
     'bulkEdit.success': 'Updated {{count}} series',
     'bulkEdit.failed': 'Bulk edit failed',
+    'bulkEdit.savedRefreshFailed': 'Metadata saved, but some statistics or views could not refresh. Reload to see the latest results.',
+    'bulkEdit.savedLaterFailed': 'Some metadata changes committed, but later processing failed',
     'home.selection.addToCollectionSuccess': 'Added {{count}} series to a collection',
     'home.selection.markRead': 'Mark read',
     'home.selection.markUnread': 'Mark unread',

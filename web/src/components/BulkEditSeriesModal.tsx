@@ -6,6 +6,7 @@
 
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { apiClient, getApiErrorMessage } from '../api/client';
+import { useBulkSeriesEdit, type SelectionOutcome } from '../features/series-metadata/useBulkSeriesEdit';
 import { Tags, Loader2, X } from 'lucide-react';
 import { ModalShell } from './ui/ModalShell';
 import { modalPrimaryButtonClass, modalSectionClass } from './ui/modalStyles';
@@ -22,6 +23,7 @@ const STATUS_OPTIONS = ['completed', 'ongoing', 'cancelled', 'hiatus'] as const;
 
 export default function BulkEditSeriesModal({ seriesIds, onClose, onSuccess, onError }: Props) {
   const { t } = useI18n();
+  const editSelection = useBulkSeriesEdit();
   const [allTags, setAllTags] = useState<string[]>([]);
   const [addTags, setAddTags] = useState<string[]>([]);
   const [removeTags, setRemoveTags] = useState<string[]>([]);
@@ -62,21 +64,31 @@ export default function BulkEditSeriesModal({ seriesIds, onClose, onSuccess, onE
   const handleApply = async () => {
     if (!hasChanges) return;
     setSubmitting(true);
+    let outcome: SelectionOutcome;
     try {
-      const res = await apiClient.post<{ updated: number }>('/api/series/bulk-edit', {
-        series_ids: seriesIds,
-        add_tags: addTags,
-        remove_tags: removeTags,
+      outcome = await editSelection({
+        seriesIds,
+        addTags,
+        removeTags,
         status: status !== '' ? status : undefined,
         publisher: publisher.trim() !== '' ? publisher.trim() : undefined,
       });
-      onSuccess(res.data?.updated ?? seriesIds.length);
-      onClose();
     } catch (err) {
       onError(getApiErrorMessage(err, t('bulkEdit.failed')));
+      return;
     } finally {
       setSubmitting(false);
     }
+    onClose();
+    if (!outcome.committed) return;
+    try {
+      onSuccess(outcome.updated);
+    } catch {
+      onError(t('bulkEdit.savedRefreshFailed'));
+      return;
+    }
+    if (outcome.laterError) onError(`${t('bulkEdit.savedLaterFailed')}: ${outcome.laterError}`);
+    else if (outcome.refreshFailed) onError(t('bulkEdit.savedRefreshFailed'));
   };
 
   const renderChips = (list: string[], setList: (v: string[]) => void) => (

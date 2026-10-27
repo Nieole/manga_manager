@@ -76,8 +76,27 @@ func TestBulkMetadataTransactionAndRefreshFailure(t *testing.T) {
 			if refreshed != wantRefreshed {
 				t.Fatalf("refreshed caches = %d, want %d", refreshed, wantRefreshed)
 			}
-			if fail != "series_tags" && rec.Body.String() != "{\"updated\":4}\n" {
-				t.Fatalf("response: %s", rec.Body.String())
+			var result struct {
+				Updated          int     `json:"updated"`
+				Committed        bool    `json:"committed"`
+				SeriesIDs        []int64 `json:"committed_series_ids"`
+				RefreshFailedIDs []int64 `json:"refresh_failed_series_ids"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if fail == "series_tags" {
+				if result.Committed || result.Updated != 0 || len(result.SeriesIDs) != 0 {
+					t.Fatalf("uncommitted result: %+v", result)
+				}
+			} else if !result.Committed || result.Updated != 4 || len(result.SeriesIDs) != 2 {
+				t.Fatalf("committed result: %+v", result)
+			}
+			if fail == "series_stats" && len(result.RefreshFailedIDs) != 2 {
+				t.Fatalf("missing postcommit warning: %+v", result)
+			}
+			if fail != "series_stats" && len(result.RefreshFailedIDs) != 0 {
+				t.Fatalf("unexpected postcommit warning: %+v", result)
 			}
 		})
 	}
@@ -90,12 +109,21 @@ func TestBulkMetadataRequestResults(t *testing.T) {
 		status   int
 		response string
 	}{
-		{"{", 400, ""}, {`{"series_ids":[]}`, 200, "{\"updated\":0}\n"},
+		{"{", 400, ""}, {`{"series_ids":[]}`, 200, ""},
 	} {
 		rec := httptest.NewRecorder()
 		c.bulkEditSeries(rec, httptest.NewRequest(http.MethodPost, "/api/series/bulk-edit", bytes.NewBufferString(tc.body)))
 		if rec.Code != tc.status || (tc.response != "" && rec.Body.String() != tc.response) {
 			t.Fatalf("response %d: %s", rec.Code, rec.Body.String())
+		}
+		if tc.status == http.StatusOK {
+			var result bulkEditSeriesResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Committed || result.Updated != 0 || len(result.SeriesIDs) != 0 || len(result.RefreshFailedIDs) != 0 {
+				t.Fatalf("empty selection: %+v", result)
+			}
 		}
 	}
 }
