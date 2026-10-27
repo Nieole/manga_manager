@@ -28,3 +28,4 @@
 - Go 1.26.10 本轮实际通过：`go test ./internal/api ./internal/scanner ./internal/images -count=1`（106.810s、20.762s、6.492s）；完整 `bookcontent` 与 `parser` 包；最终 `go test -race ./internal/parser ./internal/bookcontent -count=1`（4.535s、6.214s）；最终 HTTP/封面消费者定向回归（6.787s、5.578s）。
 - 本轮实际通过：阅读器数据、页图缓存、图像尺寸及选项切换消费者 4 文件/32 测试；`gofmt -l ./cmd ./internal` 无输出，`golangci-lint run --allow-parallel-runners` 返回 `0 issues.`。前端源码未改变。本轮未运行真实外部 AI 引擎端到端，验证范围为现有软件加工与回退语义。
 - 原始输出保存在本工作树 `.tmp/ticket16-*.log`；集成负责人清理工作树前应保留所需输出。状态保留 `ready-for-agent`，待集成分支实际联合验证后关闭。
+- 合并最新集成 `c2ca015` 后实际通过：`-race` 完整 `bookcontent`/`parser`（2.319s/1.652s）；HTTP、阅读器图像、Mihon/OPDS 与封面消费者定向回归（API 11.024s、scanner 4.837s）。两条原始日志与退出码均为成功；本轮未重跑无变化的全仓测试。
