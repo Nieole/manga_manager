@@ -187,8 +187,14 @@ func (s *Relations) Rebuild(ctx context.Context) error {
 			return err
 		}
 		count = len(components)
-		_, err = q.CompleteFranchiseRebuild(ctx, database.CompleteFranchiseRebuildParams{Version: state.DesiredVersion, AtMs: time.Now().UnixMilli()})
-		return err
+		completed, err := q.CompleteFranchiseRebuild(ctx, database.CompleteFranchiseRebuildParams{Version: state.DesiredVersion, AtMs: time.Now().UnixMilli()})
+		if err != nil {
+			return err
+		}
+		if completed != 1 {
+			return fmt.Errorf("franchise repair completion lost version %d", state.DesiredVersion)
+		}
+		return nil
 	})
 	if err != nil {
 		s.recordFranchiseFailure(ctx, attempted, err)

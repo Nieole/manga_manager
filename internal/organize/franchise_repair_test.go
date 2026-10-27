@@ -288,3 +288,21 @@ func TestFranchiseUpgradePreservesExistingResultAsStale(t *testing.T) {
 		t.Fatalf("upgrade destroyed result: %+v %v", collection, err)
 	}
 }
+
+func TestFranchiseCompletionMustCommitWithProjection(t *testing.T) {
+	store, _ := newCollections(t)
+	if _, err := store.DB().Exec(`INSERT INTO libraries(id,name,path) VALUES(1,'Library','lib'); INSERT INTO series(id,library_id,name,path) VALUES(1,1,'Alpha','a'),(2,1,'Beta','b'); CREATE TRIGGER ignore_completion BEFORE UPDATE ON franchise_rebuild_state WHEN NEW.applied_version > OLD.applied_version BEGIN SELECT RAISE(IGNORE); END`); err != nil {
+		t.Fatal(err)
+	}
+	service := organize.NewRelations(store, func(func()) {})
+	if _, err := service.Create(context.Background(), 1, 2, "sequel"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Rebuild(context.Background()); err == nil {
+		t.Fatal("projection reported success without recording completion")
+	}
+	views, err := organize.NewSmartCollections(store).Views(context.Background(), 0)
+	if err != nil || len(views) != 0 {
+		t.Fatalf("projection committed without completion: %+v %v", views, err)
+	}
+}

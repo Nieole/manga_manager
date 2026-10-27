@@ -28,3 +28,10 @@
 - `gofmt -l ./cmd ./internal` 输出为空，`golangci-lint run --allow-parallel-runners` 为 `0 issues.`。前端 `npm run test -- --maxWorkers=2`：95 文件、915 测试通过；`npm run lint` 与 `npm run build` 通过。
 - `sqlc generate` 在 PowerShell 退出 0，SQL 查询源保持 ASCII；新状态未改动既有生成前端传输结构。当前证据来自本票独立工作树，合并最新集成分支后的复验另行记录。
 - 本票不提前承诺 14 的级联删除/系列事实标记覆盖；状态暂留 ready-for-agent，待集成验证后关闭。
+
+
+### 合并集成基线后的复验
+
+- 已将集成分支 `ecf6014` 合入本票；保留并行票据的读者入口、人工元数据功能及提案修复，仅 CHANGELOG 同位置新增条目需人工保留两侧。
+- 合并后 api、runtime、organize、database 四包整包测试全部通过；前端 96 文件、921 测试通过，lint 与 build 通过。PowerShell 再次生成 sqlc，无产物漂移，gofmt 输出为空，Go lint 为 `0 issues.`。
+- 复核补充完成 CAS 行数检查：未恰好记录一个完成版本时整个投影事务回滚。真实 SQLite 的忽略更新触发器回归通过；organize/runtime 整包及相关 race 再次通过。新增回归在修复前执行时遇本机 Application Control 拦截，不将系统拒绝误记为行为 red；其余既有本票测试未受影响。
