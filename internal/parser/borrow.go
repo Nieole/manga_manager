@@ -41,7 +41,8 @@ func retainArchiveBorrow(path string) func() {
 	}
 }
 
-// ActiveArchiveBorrows counts direct readers and live pool borrows across pool eviction or replacement.
+// ActiveArchiveBorrows counts direct readers, original-content streams and live pool borrows
+// across pool eviction or replacement.
 // Idle cached handles are not borrows. This observation alone does not reserve publication access.
 func ActiveArchiveBorrows(path string) int {
 	key := archiveBorrowKey(path)

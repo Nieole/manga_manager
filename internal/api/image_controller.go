@@ -431,47 +431,38 @@ func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	release, ok := c.guardBookRead(w, r, bookID)
-	if !ok {
-		return
-	}
-	defer release()
-	ctx := r.Context()
-	book, err := c.store.GetBook(ctx, bookID)
+	handle, err := c.content.Open(r.Context(), bookID, c.taskEngine.engine)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "Book entity not found")
-		return
-	}
-
-	file, err := os.Open(book.Path)
-	if err != nil {
-		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromBook(book), err), "download_book")
-		return
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil || info.IsDir() {
-		if err == nil {
-			err = fmt.Errorf("book path is a directory: %s", book.Path)
+		switch {
+		case errors.Is(err, bookcontent.ErrSourceMissing):
+			jsonError(w, http.StatusNotFound, "Book entity not found")
+		case errors.Is(err, bookcontent.ErrBusy):
+			writeLibraryUnavailable(w)
+		default:
+			var fileErr *bookcontent.FileError
+			if errors.As(err, &fileErr) {
+				writeStorageFailure(w, c.diagnoseStorageFailure(r.Context(), storageTargetFromSource(fileErr.Source), err), "download_book")
+			} else {
+				jsonError(w, http.StatusInternalServerError, "Failed to open book")
+			}
 		}
-		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromBook(book), err), "download_book")
 		return
 	}
-
-	displayName := filepath.Base(book.Path)
+	defer handle.Close()
+	source := handle.Source
+	displayName := filepath.Base(source.Path)
 	if strings.TrimSpace(displayName) == "" || displayName == "." || displayName == string(filepath.Separator) {
-		displayName = book.Name
+		displayName = strconv.FormatInt(bookID, 10)
 	}
 	// filename= 提供纯 ASCII 兜底（book ID + 扩展名，永远可解析），filename*= 用 UTF-8 百分号编码
 	// 携带真实（可能含中文）卷名，兼容不识别 RFC 5987 的老客户端。
-	asciiName := strconv.FormatInt(bookID, 10) + strings.ToLower(filepath.Ext(book.Path))
-	w.Header().Set("Content-Type", bookDownloadContentType(book.Path))
+	asciiName := strconv.FormatInt(bookID, 10) + strings.ToLower(filepath.Ext(source.Path))
+	w.Header().Set("Content-Type", bookDownloadContentType(source.Path))
 	w.Header().Set("Content-Disposition", contentDispositionAttachment(asciiName, displayName))
 	// 原始归档不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，便于客户端缓存与断点续传。
 	w.Header().Del("Vary")
 
 	// http.ServeContent 处理 Range、If-Modified-Since、Content-Length 并设置 Accept-Ranges，
 	// 且在 Content-Type 已预设时保留我们给出的归档 MIME（不做字节嗅探）。
-	http.ServeContent(w, r, displayName, info.ModTime(), file)
+	http.ServeContent(w, r, displayName, handle.Info.ModTime(), handle)
 }
