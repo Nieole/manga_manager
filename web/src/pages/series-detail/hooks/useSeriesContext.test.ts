@@ -12,7 +12,7 @@ import { act, renderHook } from '@testing-library/react';
 import { apiClient } from '../../../api/client';
 import type { MetadataReview, SeriesContextResponse } from '../types';
 import { useSeriesContext } from './useSeriesContext';
-import { useSeriesEdit } from './useSeriesEdit';
+import { useSeriesEdit } from '../../../features/series-metadata/useSeriesEdit';
 
 function makeReview(seriesId: number): MetadataReview {
   return {

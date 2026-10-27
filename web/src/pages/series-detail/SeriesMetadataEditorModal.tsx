@@ -1,6 +1,7 @@
 import { AlertTriangle, Lock, Sparkles, Unlock, X } from 'lucide-react';
 import { useState } from 'react';
-import type { Author, MetaTag, Series } from './types';
+import type { Author, MetaTag } from '../../features/series-metadata/types';
+import type { SeriesEditForm, SeriesFormField, SeriesFormValue } from '../../features/series-metadata/draft';
 import { SeriesCustomFieldsEditor } from './SeriesCustomFieldsEditor';
 import { ModalShell } from '../../components/ui/ModalShell';
 import { useI18n } from '../../i18n/LocaleProvider';
@@ -16,18 +17,11 @@ import {
   modalTextareaClass,
 } from '../../components/ui/modalStyles';
 
-type SeriesMetadataField = 'title' | 'summary' | 'publisher' | 'status' | 'rating' | 'language' | 'tagsInput' | 'authorsInput' | 'linksInput';
-type SeriesMetadataValue = string | number | string[] | { name: string; role: string }[] | { name: string; url: string }[];
-
 interface SeriesMetadataEditorModalProps {
   open: boolean;
   allTags: MetaTag[];
   allAuthors: Author[];
-  editForm: Partial<Series> & {
-    tagsInput?: string[];
-    authorsInput?: { name: string; role: string }[];
-    linksInput?: { name: string; url: string }[];
-  };
+  editForm: SeriesEditForm;
   lockedFields: Set<string>;
   // conflict：上一次保存被服务端以「编辑期间有人改过」为由拒绝。为真时弹窗给出提示，
   // 保存按钮改成「仍要保存」——用户的输入还原样在框里，再点一次即以这一份为准。
@@ -35,7 +29,7 @@ interface SeriesMetadataEditorModalProps {
   onClose: () => void;
   onSave: () => void;
   onToggleLock: (field: string) => void;
-  onFormChange: (field: SeriesMetadataField, value: SeriesMetadataValue) => void;
+  onFormChange: (field: SeriesFormField, value: SeriesFormValue) => void;
 }
 
 export function SeriesMetadataEditorModal({
@@ -108,14 +102,14 @@ export function SeriesMetadataEditorModal({
 
   const statusOptions = ['completed', 'ongoing', 'cancelled', 'hiatus'] as const;
   const metadataFields = [
-    { id: 'title', label: t('series.editor.field.title'), type: 'text', val: editForm.title?.String || '' },
-    { id: 'summary', label: t('series.editor.field.summary'), type: 'textarea', val: editForm.summary?.String || '' },
-    { id: 'publisher', label: t('series.editor.field.publisher'), type: 'text', val: editForm.publisher?.String || '' },
-    { id: 'status', label: t('series.editor.field.status'), type: 'select', val: normalizeSeriesStatus(editForm.status?.String), options: statusOptions },
-    { id: 'language', label: t('series.editor.field.language'), type: 'text', val: editForm.language?.String || '' },
-    { id: 'rating', label: t('series.editor.field.rating'), type: 'number', val: editForm.rating?.Float64 || 0, step: '0.1', max: 10 },
+    { id: 'title', label: t('series.editor.field.title'), type: 'text', val: editForm.title || '' },
+    { id: 'summary', label: t('series.editor.field.summary'), type: 'textarea', val: editForm.summary || '' },
+    { id: 'publisher', label: t('series.editor.field.publisher'), type: 'text', val: editForm.publisher || '' },
+    { id: 'status', label: t('series.editor.field.status'), type: 'select', val: normalizeSeriesStatus(editForm.status), options: statusOptions },
+    { id: 'language', label: t('series.editor.field.language'), type: 'text', val: editForm.language || '' },
+    { id: 'rating', label: t('series.editor.field.rating'), type: 'number', val: editForm.rating || 0, step: '0.1', max: 10 },
   ] satisfies Array<{
-    id: Exclude<SeriesMetadataField, 'tagsInput' | 'authorsInput' | 'linksInput'>;
+    id: Exclude<SeriesFormField, 'tagsInput' | 'authorsInput' | 'linksInput'>;
     label: string;
     type: 'text' | 'textarea' | 'select' | 'number';
     val: string | number;
