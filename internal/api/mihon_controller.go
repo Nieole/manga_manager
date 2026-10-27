@@ -176,7 +176,13 @@ func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) 
 
 func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request) {
 	limit := int64(positiveQueryInt(r, "limit", 30, 100))
-	rows, err := reading.RecentReads(r.Context(), c.store, c.currentUserID(r), limit)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.RecentBooks(r.Context(), c.store, subject, limit)
+	rows := view.Items
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch continue reading")
 		return
@@ -380,6 +386,11 @@ func (c *Controller) mihonAuthors(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", 30, 100)
 	libraryID := int64(positiveQueryInt(r, "libraryId", 0, 0))
@@ -436,20 +447,11 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 		searchSortBy = "name_ASC"
 	}
 
-	rows, total, err := c.store.SearchSeriesPaged(
-		r.Context(),
-		libraryID,
-		database.SeriesListFilters{
-			Keyword: query,
-			Status:  status,
-			Tags:    tags,
-			Authors: authors,
-		},
-		int32(limit),
-		int32(offset),
-		searchSortBy,
-	)
-
+	view, err := reading.NewCatalogueQueries(c.store).Search(r.Context(), subject, reading.CatalogueSearch{
+		LibraryID: libraryID, Filters: reading.CatalogueFilters{Keyword: query, Status: status, Tags: tags, Authors: authors},
+		Limit: int32(limit), Offset: int32(offset), SortBy: searchSortBy,
+	})
+	rows, total := view.Items, view.Total
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
 		return
@@ -509,7 +511,12 @@ func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
 		return
 	}
-	view, err := reading.NewQueries(c.store).Series(r.Context(), c.currentUserID(r), seriesID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.NewQueries(c.store).SeriesBooks(r.Context(), subject, seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch books")
 		return
@@ -517,7 +524,7 @@ func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	books := view.Books
 	items := make([]MihonBookResponse, 0, len(books))
 	for _, book := range books {
-		items = append(items, mihonBookFromModel(book))
+		items = append(items, mihonBookFromView(book))
 	}
 	jsonResponse(w, http.StatusOK, items)
 }
@@ -731,26 +738,27 @@ func mihonSeriesFromSearchRow(row database.SearchSeriesPagedRow) MihonSeriesResp
 	}
 }
 
-func mihonBookFromModel(book database.Book) MihonBookResponse {
+func mihonBookFromView(book reading.BookView) MihonBookResponse {
+	facts, state := book.Facts, book.State
 	lastReadPage := int64(0)
-	if book.LastReadPage.Valid {
-		lastReadPage = book.LastReadPage.Int64
+	if state.LastReadPage.Valid {
+		lastReadPage = state.LastReadPage.Int64
 	}
 	sortNumber := float64(0)
-	if book.SortNumber.Valid {
-		sortNumber = book.SortNumber.Float64
+	if facts.SortNumber.Valid {
+		sortNumber = facts.SortNumber.Float64
 	}
 	return MihonBookResponse{
-		ID:           book.ID,
-		SeriesID:     book.SeriesID,
-		Name:         book.Name,
-		Title:        firstNonEmpty(nullString(book.Title), book.Name),
-		Volume:       book.Volume,
-		Number:       nullString(book.Number),
+		ID:           facts.ID,
+		SeriesID:     facts.SeriesID,
+		Name:         facts.Name,
+		Title:        firstNonEmpty(nullString(facts.Title), facts.Name),
+		Volume:       facts.Volume,
+		Number:       nullString(facts.Number),
 		SortNumber:   sortNumber,
-		PageCount:    book.PageCount,
+		PageCount:    facts.PageCount,
 		LastReadPage: lastReadPage,
-		UpdatedAt:    book.UpdatedAt,
+		UpdatedAt:    facts.UpdatedAt,
 	}
 }
 

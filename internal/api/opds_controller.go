@@ -954,7 +954,12 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view, err := reading.NewQueries(c.store).Series(r.Context(), c.currentUserID(r), seriesID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.NewQueries(c.store).SeriesBooks(r.Context(), subject, seriesID)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -987,24 +992,24 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 
 	entries := make([]OPDSEntry, 0, len(books))
 	for _, b := range books {
-		title := b.Name
-		if b.Title.Valid && b.Title.String != "" {
-			title = b.Title.String
+		title := b.Facts.Name
+		if b.Facts.Title.Valid && b.Facts.Title.String != "" {
+			title = b.Facts.Title.String
 		}
 
-		links := opdsBookAcquisitionLinks(b.ID, b.PageCount, b.LastReadPage, b.Path)
-		if b.CoverPath.Valid && b.CoverPath.String != "" {
+		links := opdsBookAcquisitionLinks(b.Facts.ID, b.Facts.PageCount, b.State.LastReadPage, b.Facts.Path)
+		if b.Facts.CoverPath.Valid && b.Facts.CoverPath.String != "" {
 			links = append(links, OPDSLink{
 				Rel:  "http://opds-spec.org/image/thumbnail",
-				Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", b.CoverPath.String),
-				Type: opdsThumbnailMIME(b.CoverPath.String),
+				Href: fmt.Sprintf(opdsResourceBase+"/thumbnails/%s", b.Facts.CoverPath.String),
+				Type: opdsThumbnailMIME(b.Facts.CoverPath.String),
 			})
 		}
 
 		entries = append(entries, OPDSEntry{
 			Title:   title,
-			ID:      fmt.Sprintf("urn:manga-manager:opds:book:%d", b.ID),
-			Updated: b.UpdatedAt.Format(time.RFC3339),
+			ID:      fmt.Sprintf("urn:manga-manager:opds:book:%d", b.Facts.ID),
+			Updated: b.Facts.UpdatedAt.Format(time.RFC3339),
 			Links:   links,
 		})
 	}
@@ -1038,7 +1043,13 @@ func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request)
 func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	limit := int64(opdsPositiveQueryInt(r, "limit", 30, 100))
-	items, err := reading.RecentReads(r.Context(), c.store, c.currentUserID(r), limit)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.RecentBooks(r.Context(), c.store, subject, limit)
+	items := view.Items
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return

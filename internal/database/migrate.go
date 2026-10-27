@@ -262,6 +262,31 @@ func Migrate(dbPath string) error {
 	if err := execMigrationStatements(db, []string{
 		`INSERT OR IGNORE INTO franchise_rebuild_state (id, has_success)
 		 SELECT 1, EXISTS(SELECT 1 FROM collections WHERE source_type = 'system_franchise')`,
+		// First installation must also reconcile facts missed by the previous write coverage.
+		`UPDATE franchise_rebuild_state
+         SET desired_version = desired_version + 1, next_retry_at_ms = 0, last_error = ''
+         WHERE id = 1 AND (
+             NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_series_au_franchise_pending')
+             OR NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_series_bd_franchise_pending'))`,
+		// These stored names are shared by every metadata writer and ingestion upsert.
+		`CREATE TRIGGER IF NOT EXISTS trg_series_au_franchise_pending AFTER UPDATE OF name, title ON series
+        WHEN (NEW.name IS NOT OLD.name OR NEW.title IS NOT OLD.title)
+          AND (EXISTS(SELECT 1 FROM series_relations WHERE source_series_id = NEW.id OR target_series_id = NEW.id)
+            OR EXISTS(SELECT 1 FROM collection_series cs JOIN collections c ON c.id = cs.collection_id
+                      WHERE cs.series_id = NEW.id AND c.source_type = 'system_franchise'))
+        BEGIN
+            UPDATE franchise_rebuild_state
+            SET desired_version = desired_version + 1, next_retry_at_ms = 0, last_error = '' WHERE id = 1;
+        END`,
+		// Qualification must precede FK cascades, which remove both edges and memberships.
+		`CREATE TRIGGER IF NOT EXISTS trg_series_bd_franchise_pending BEFORE DELETE ON series
+        WHEN EXISTS(SELECT 1 FROM series_relations WHERE source_series_id = OLD.id OR target_series_id = OLD.id)
+          OR EXISTS(SELECT 1 FROM collection_series cs JOIN collections c ON c.id = cs.collection_id
+                    WHERE cs.series_id = OLD.id AND c.source_type = 'system_franchise')
+        BEGIN
+            UPDATE franchise_rebuild_state
+            SET desired_version = desired_version + 1, next_retry_at_ms = 0, last_error = '' WHERE id = 1;
+        END`,
 	}); err != nil {
 		return err
 	}

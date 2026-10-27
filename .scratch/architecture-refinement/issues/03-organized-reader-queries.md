@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: 系列列表的主体筛选与分页。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 18、21、22、27、28、56、59。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -27,4 +27,10 @@
 - Go 1.26.10：`go test ./internal/reading ./internal/organize ./internal/api` 全部通过；持久作品群运行时恢复专项回归通过；`gofmt -l ./cmd ./internal` 无输出；独立缓存 `golangci-lint run --allow-parallel-runners` 为 `0 issues.` 且无类型检查错误。
 - 前端合集及阅读清单消费者回归：9 文件、44 测试通过。本票未更改前端生产源码、SQL 或生成响应契约；不为形式重跑无关生成与全量前端构建。
 - 首次多包定向测试被 Windows Application Control 阻止执行，不计为通过；同命令重跑实际通过。原始运行记录保留在本工作树 `.tmp/ticket03-*.log`。合入 13 后相应领域及运行时测试已迁移为显式匿名主体并重新验证。
-- 验收条件已满足；Status 保持就绪，待集成分支复核后由协调者关闭。
+- 验收条件已满足并通过集成分支复核。
+### 集成验收
+
+- 本票已合入 `codex/architecture-refinement`；03 与 09 的联合集成基线为 `83258a6`，合并无冲突。
+- Go 1.26.10：最终 standalone `internal/application/seriesediting` 整包测试实际通过（5.348s），覆盖 502 项输入的跨批次去重、回滚及统计后续失败；reading 整包实际通过（7.198s），organize 与 API 的编排、清单、批量元数据及兼容回归实际通过。首次 reading 程序被 Application Control 拦截，重跑全包后通过，不将拦截或无匹配测试计为通过。
+- 前端批量编辑、合集及会话消费者 10 文件、49 项通过，阅读清单切换消费者另 3 项通过。gofmt 无输出，独立缓存 lint 为 `0 issues.`；SQL 生成源与受管 TS 契约没有修改，未重跑无关生成。
+- 原始输出保存在主工作树 `.tmp/merge-wave3-*.log`，最终 owner 完整输出为 `.tmp/merge-wave3-09-owner.log`。
