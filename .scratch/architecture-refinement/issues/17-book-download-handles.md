@@ -27,3 +27,4 @@
 - 实际通过：Go 1.26.10 完整 `bookcontent`/`parser` 的 `-race` 测试（5.319s/3.818s）；完整 API 包（88.602s）；下载、OPDS/Mihon Basic 鉴权与 Range、存储诊断、资料库访问冲突定向回归（5.211s）。真实 HTTP 客户端关闭响应体后等待 handler 退出，确认共享借用归零且独占准入恢复。
 - 实际通过：`go build ./...`、`gofmt -l ./cmd ./internal` 无输出，独立缓存 `golangci-lint run --allow-parallel-runners` 为 `0 issues.`。前端源码和生成源未变，不涉及前端构建或生成契约漂移。
 - 一次普通 parser 包启动被 Windows Application Control 拦截，未计通过；随后上述完整 `-race` 二包实际执行通过。原始输出位于本工作树 `.tmp/ticket17-*.log`，清理前应保留。本票状态保留 `ready-for-agent` 等待集成负责人联合验证关闭。
+- 已将最新集成 `096b8cc` 合入自身分支；合并后内容句柄/页读取定向 `-race` 实际通过（5.518s），完整 parser `-race` 实际通过（2.649s），lint 为 `0 issues.`。合并后 API 的 `-race` 与普通定向两次启动均被 Windows Application Control 阻止，未实际执行；最终下载/协议/资料库冲突回归需集成负责人在主工作树复验，不能用此前 API 通过记录代替该最终门禁。

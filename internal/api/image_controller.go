@@ -420,10 +420,8 @@ func bookDownloadContentType(path string) string {
 	}
 }
 
-// serveBookFile 下发整卷归档原始文件，供非 PSE 的 OPDS 阅读器整卷下载。
-// PSE 页面流只逐页取 JPEG；桌面/传统 OPDS 客户端需要带正确 MIME 的整包 CBZ/CBR/PDF。
-// 通过 http.ServeContent 下发以支持 Range 断点续传；鉴权与既有 /api 图片链接一致（server.auth
-// 开启时同样需要令牌）。文件路径取自可信的 books 行，而非用户输入。
+// serveBookFile 将内容句柄映射为支持 Range 的原始归档附件。
+// 各路由分别执行会话或协议鉴权，路径由内容能力按书身份解析。
 func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
