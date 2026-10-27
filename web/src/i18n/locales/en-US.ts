@@ -1,6 +1,15 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'franchise.unavailableFailed': 'Franchise update failed and no successful results are available yet. Automatic retries will continue.',
+    'franchise.unavailable': 'Franchises are unavailable until the first successful rebuild. Automatic retries will continue.',
+    'franchise.failedStale': 'Franchise update failed. Showing the last successful results while automatic retries continue.',
+    'franchise.updatingStale': 'Franchises are updating. Showing the last successful results.',
+    'franchise.retry': 'Retry franchise update now',
+    'franchise.stateFailed': 'Unable to read franchise update status. Please retry.',
+    'franchise.retryFailed': 'The update did not finish. Automatic retries will continue.',
+    'franchise.refresh': 'Retry loading status',
+
     'app.name': 'Manga Manager',
     'app.koreader': 'KOReader',
 

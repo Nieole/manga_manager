@@ -17,6 +17,8 @@ var (
 )
 
 type RelationStore interface {
+	GetFranchiseRebuildState(context.Context) (database.FranchiseRebuildState, error)
+	RecordFranchiseRebuildFailure(context.Context, database.RecordFranchiseRebuildFailureParams) (int64, error)
 	ExecTx(context.Context, func(*database.Queries) error) error
 	ListForwardSeriesRelations(context.Context, int64) ([]database.ListForwardSeriesRelationsRow, error)
 	ListReverseSeriesRelations(context.Context, int64) ([]database.ListReverseSeriesRelationsRow, error)
@@ -66,7 +68,10 @@ func (s *Relations) Create(ctx context.Context, source, target int64, kind strin
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		return q.CreateSeriesRelation(ctx, database.CreateSeriesRelationParams{SourceSeriesID: source, TargetSeriesID: target, RelationType: kind})
+		if err := q.CreateSeriesRelation(ctx, database.CreateSeriesRelationParams{SourceSeriesID: source, TargetSeriesID: target, RelationType: kind}); err != nil {
+			return err
+		}
+		return q.MarkFranchiseRebuildPending(ctx)
 	})
 	if err != nil {
 		return CreatedRelation{}, err
@@ -82,7 +87,10 @@ func (s *Relations) Update(ctx context.Context, id int64, kind string) error {
 		return ErrRelationTypeRequired
 	}
 	err := s.store.ExecTx(ctx, func(q *database.Queries) error {
-		return q.UpdateSeriesRelation(ctx, database.UpdateSeriesRelationParams{ID: id, RelationType: kind})
+		if err := q.UpdateSeriesRelation(ctx, database.UpdateSeriesRelationParams{ID: id, RelationType: kind}); err != nil {
+			return err
+		}
+		return q.MarkFranchiseRebuildPending(ctx)
 	})
 	if err != nil {
 		return err
@@ -99,7 +107,7 @@ func (s *Relations) Delete(ctx context.Context, id int64) error {
 		if n == 0 {
 			return ErrRelationMissing
 		}
-		return nil
+		return q.MarkFranchiseRebuildPending(ctx)
 	})
 	if err != nil {
 		return err

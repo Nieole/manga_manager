@@ -143,7 +143,9 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	r.Relocation.ConfigPath = options.ConfigPath
 	r.Relocation.ApplyConfig = runtimecfg.Apply
 	r.KOReader = koreader.NewService(store, cfg, koreader.WithReadingPositions(reading.New(store, e.InvalidateReading)))
-	r.Relations = organize.NewRelations(store, r.Go)
+	r.Relations = organize.NewRelations(store, func(work func()) {
+		r.Go(func() { work(); e.Publish("refresh") })
+	})
 	r.Scans = scanning.New(r.Runs, store, r.Scanner, cfg.Snapshot, scanning.Effects{PurgeReadingPaths: e.PurgeReadingPaths, InvalidateStats: e.InvalidateStats, WarmStats: e.WarmStats, Publish: e.Publish, Backfill: func(ctx context.Context, reason string) { r.Maintenance.ChainBookHashBackfill(ctx, reason) }})
 	r.Maintenance = maintenance.New(r.Runs, store, r.Scans, r.KOReader, cfg.Snapshot, maintenance.Effects{Publish: e.Publish, WarmStats: e.WarmStats})
 	r.Scanner.SetBatchCallback(func(action string) { r.Scans.BatchEvent(action) })

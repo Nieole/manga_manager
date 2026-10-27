@@ -258,6 +258,14 @@ func Migrate(dbPath string) error {
 		return err
 	}
 
+	// Preserve an existing projection as stale until its first successful verification.
+	if err := execMigrationStatements(db, []string{
+		`INSERT OR IGNORE INTO franchise_rebuild_state (id, has_success)
+		 SELECT 1, EXISTS(SELECT 1 FROM collections WHERE source_type = 'system_franchise')`,
+	}); err != nil {
+		return err
+	}
+
 	if err = execSchemaStatements(db, true); err != nil {
 		return err
 	}

@@ -72,6 +72,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 	if e.RunEvents != nil {
 		r.Go(func() { e.RunEvents(r.Done()) })
 	}
+	r.Go(r.repairFranchises)
 	r.Go(r.scheduledScans)
 	r.Go(func() { r.Runs.RunHistoryJanitor(r.Done(), r.cfg.Snapshot) })
 	r.Go(r.sampleRuns)
@@ -200,5 +201,39 @@ func (r *Runtime) watchLibraries() {
 		}
 		_ = r.Watcher.WatchLibrary(lib.ID, lib.Path, lib.ScanFormats)
 		release()
+	}
+}
+
+// repairFranchises resumes durable responsibility on startup and polls its persisted backoff.
+func (r *Runtime) repairFranchises() {
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-r.Done():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	defer func() { cancel(); <-stopped }()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		attempted, err := r.Relations.RepairDue(ctx, time.Now())
+		if attempted {
+			r.options.Effects.Publish("refresh")
+		}
+		if err != nil && ctx.Err() == nil {
+			slog.WarnContext(ctx, "Franchise repair remains pending", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
 	}
 }
