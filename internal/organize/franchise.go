@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 	"strconv"
+	"time"
 
 	"manga-manager/internal/database"
 )
@@ -14,7 +15,13 @@ import (
 // Rebuild synchronizes derived collections from a single transactionally consistent relation graph.
 func (s *Relations) Rebuild(ctx context.Context) error {
 	count := 0
+	var attempted database.FranchiseRebuildState
 	err := s.store.ExecTx(ctx, func(q *database.Queries) error {
+		state, err := q.GetFranchiseRebuildState(ctx)
+		if err != nil {
+			return err
+		}
+		attempted = state
 		relations, err := q.GetAllSeriesRelations(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to get all series relations: %w", err)
@@ -180,9 +187,17 @@ func (s *Relations) Rebuild(ctx context.Context) error {
 			return err
 		}
 		count = len(components)
+		completed, err := q.CompleteFranchiseRebuild(ctx, database.CompleteFranchiseRebuildParams{Version: state.DesiredVersion, AtMs: time.Now().UnixMilli()})
+		if err != nil {
+			return err
+		}
+		if completed != 1 {
+			return fmt.Errorf("franchise repair completion lost version %d", state.DesiredVersion)
+		}
 		return nil
 	})
 	if err != nil {
+		s.recordFranchiseFailure(ctx, attempted, err)
 		slog.ErrorContext(ctx, "Failed to rebuild franchise collections", "error", err)
 		return err
 	}

@@ -1718,3 +1718,25 @@ SELECT id, series_id, library_id, path, volume
 FROM books
 WHERE series_id IN (sqlc.slice('series_ids'))
 ORDER BY series_id, volume, sort_number, name;
+
+
+-- name: GetFranchiseRebuildState :one
+SELECT * FROM franchise_rebuild_state WHERE id = 1;
+
+-- name: MarkFranchiseRebuildPending :exec
+UPDATE franchise_rebuild_state
+SET desired_version = desired_version + 1, next_retry_at_ms = 0, last_error = ''
+WHERE id = 1;
+
+-- name: CompleteFranchiseRebuild :execrows
+UPDATE franchise_rebuild_state
+SET applied_version = sqlc.arg(version), has_success = 1,
+    last_attempt_version = sqlc.arg(version), last_attempt_at_ms = sqlc.arg(at_ms),
+    failures = 0, next_retry_at_ms = 0, last_error = ''
+WHERE id = 1 AND desired_version = sqlc.arg(version);
+
+-- name: RecordFranchiseRebuildFailure :execrows
+UPDATE franchise_rebuild_state
+SET last_attempt_version = sqlc.arg(version), last_attempt_at_ms = sqlc.arg(at_ms),
+    failures = failures + 1, next_retry_at_ms = sqlc.arg(retry_at_ms), last_error = sqlc.arg(error)
+WHERE id = 1 AND applied_version < sqlc.arg(version) AND last_attempt_version <= sqlc.arg(version);

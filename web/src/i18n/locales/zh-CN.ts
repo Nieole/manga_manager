@@ -1,6 +1,15 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'franchise.unavailableFailed': '作品群更新失败，尚无成功结果可显示；系统将继续重试。',
+    'franchise.unavailable': '作品群暂不可用：尚未成功完成关系核对，系统将继续重试。',
+    'franchise.failedStale': '作品群更新失败，当前显示上次成功的结果；系统将继续重试。',
+    'franchise.updatingStale': '作品群正在更新，当前显示上次成功的结果。',
+    'franchise.retry': '立即重试作品群更新',
+    'franchise.stateFailed': '无法读取作品群更新状态，请重试。',
+    'franchise.retryFailed': '本次更新未完成，后台仍会继续重试。',
+    'franchise.refresh': '重试读取状态',
+
     'app.name': 'Manga Manager',
     'app.koreader': 'KOReader',
 

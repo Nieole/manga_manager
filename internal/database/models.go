@@ -106,6 +106,18 @@ type CollectionSeries struct {
 	AddedAt      sql.NullTime `json:"added_at"`
 }
 
+type FranchiseRebuildState struct {
+	ID                 int64  `json:"id"`
+	DesiredVersion     int64  `json:"desired_version"`
+	AppliedVersion     int64  `json:"applied_version"`
+	HasSuccess         int64  `json:"has_success"`
+	LastAttemptVersion int64  `json:"last_attempt_version"`
+	LastAttemptAtMs    int64  `json:"last_attempt_at_ms"`
+	Failures           int64  `json:"failures"`
+	NextRetryAtMs      int64  `json:"next_retry_at_ms"`
+	LastError          string `json:"last_error"`
+}
+
 type KoreaderAccount struct {
 	ID        int64     `json:"id"`
 	Username  string    `json:"username"`

@@ -18,6 +18,7 @@ type Querier interface {
 	ClearSeriesLinks(ctx context.Context, seriesID int64) error
 	ClearSeriesTags(ctx context.Context, seriesID int64) error
 	CollectionNameExists(ctx context.Context, name string) (int64, error)
+	CompleteFranchiseRebuild(ctx context.Context, arg CompleteFranchiseRebuildParams) (int64, error)
 	CountAIGroupingReviews(ctx context.Context, arg CountAIGroupingReviewsParams) (int64, error)
 	CountAppliedAIGroupingReviewCollections(ctx context.Context, reviewID int64) (int64, error)
 	CountHealthDuplicateFileHash(ctx context.Context, libraryID interface{}) (interface{}, error)
@@ -80,6 +81,7 @@ type Querier interface {
 	GetConnectedSeriesRelations(ctx context.Context, startSeriesID int64) ([]GetConnectedSeriesRelationsRow, error)
 	GetContinueReadingSequels(ctx context.Context) ([]GetContinueReadingSequelsRow, error)
 	GetDashboardCoreStats(ctx context.Context, sinceDate string) (GetDashboardCoreStatsRow, error)
+	GetFranchiseRebuildState(ctx context.Context) (FranchiseRebuildState, error)
 	GetLibrary(ctx context.Context, id int64) (Library, error)
 	GetLinksForSeries(ctx context.Context, seriesID int64) ([]SeriesLink, error)
 	GetMetadataReview(ctx context.Context, id int64) (MetadataReview, error)
@@ -174,6 +176,8 @@ type Querier interface {
 	MarkAIGroupingReviewCollectionApplied(ctx context.Context, arg MarkAIGroupingReviewCollectionAppliedParams) (int64, error)
 	MarkAIGroupingReviewCollectionRejected(ctx context.Context, id int64) error
 	MarkAIGroupingReviewCollectionsRejected(ctx context.Context, reviewID int64) error
+	MarkFranchiseRebuildPending(ctx context.Context) error
+	RecordFranchiseRebuildFailure(ctx context.Context, arg RecordFranchiseRebuildFailureParams) (int64, error)
 	RefreshSeriesCover(ctx context.Context, id int64) error
 	RefreshSeriesStats(ctx context.Context, id int64) error
 	RehomeBookPath(ctx context.Context, arg RehomeBookPathParams) (int64, error)
