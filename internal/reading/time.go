@@ -2,8 +2,6 @@ package reading
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"log/slog"
 
 	"manga-manager/internal/database"
@@ -23,15 +21,7 @@ func (s *Service) RecordTime(ctx context.Context, report TimeReport) error {
 		report.Seconds = 3600
 	}
 	day := database.ActivityDayKey(database.LocalWallClock(s.now()))
-	err := s.store.ExecTx(ctx, func(q *database.Queries) error {
-		if _, err := q.GetBook(ctx, report.BookID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			return err
-		}
-		return q.AccumulateReadingTime(ctx, report.UserID, report.BookID, report.Seconds, day)
-	})
+	err := s.store.AccumulateReadingTimeForBook(ctx, report.UserID, report.BookID, report.Seconds, day)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to record reading time", "user_id", report.UserID, "book_id", report.BookID, "error", err)
 	}

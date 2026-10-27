@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -34,7 +35,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateSeriesMetadata failed: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 3, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           book.ID,

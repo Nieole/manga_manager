@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 )
 
 // UserBookProgress 是某用户对某本书的进度快照，用于叠加到书目响应。
@@ -83,30 +82,6 @@ func refreshUserSeriesProgressTx(ctx context.Context, q *Queries, userID, series
 		userID, seriesID,
 		userID, seriesID)
 	return err
-}
-
-// SetUserBookProgress 记录某用户对某本书的进度（page/at），并刷新其所在系列的派生聚合。
-// at 可能来自客户端（离线补传的 updated_at 是 UTC），落库前必须归一到本地墙钟，见 LocalWallClock。
-func (s *SqlStore) SetUserBookProgress(ctx context.Context, userID, bookID, page int64, at time.Time) error {
-	at = LocalWallClock(at)
-	return s.ExecTx(ctx, func(q *Queries) error {
-		if _, err := q.db.ExecContext(ctx,
-			`INSERT INTO user_book_progress (user_id, book_id, last_read_page, last_read_at, updated_at)
-			 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-			 ON CONFLICT(user_id, book_id) DO UPDATE SET
-			   last_read_page = excluded.last_read_page, last_read_at = excluded.last_read_at, is_read=FALSE, updated_at = CURRENT_TIMESTAMP`,
-			userID, bookID, page, at); err != nil {
-			return err
-		}
-		seriesID, err := q.GetSeriesIDByBookID(ctx, bookID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			return err
-		}
-		return refreshUserSeriesProgressTx(ctx, q, userID, seriesID)
-	})
 }
 
 // GetUserBookProgress 返回某用户对某本书的进度；无记录时 found=false。

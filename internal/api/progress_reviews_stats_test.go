@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -181,7 +182,7 @@ func TestUpdateBookProgressStaleUpdatedAtSkipped(t *testing.T) {
 	ctx := context.Background()
 
 	serverAt := time.Now()
-	if err := store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(ctx, store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 12, Valid: true},
 		LastReadAt:   sql.NullTime{Time: serverAt, Valid: true},
 		ID:           book.ID,

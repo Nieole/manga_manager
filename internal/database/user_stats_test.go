@@ -103,7 +103,7 @@ func TestUserBookReadingTime(t *testing.T) {
 	}
 
 	// 读完一本（page_count=20）后，回顾的「读完本数」应为 1（验证 books_completed 用 substr 而非无法解析的 strftime）。
-	if err := store.SetUserBookProgress(ctx, u, book1, 20, calendarNow()); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u, book1, 20, calendarNow()); err != nil {
 		t.Fatalf("complete book1: %v", err)
 	}
 	monthStats, err := store.GetUserPeriodStats(ctx, u, curYear, curMonth)

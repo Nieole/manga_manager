@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -94,13 +95,13 @@ func TestSmartCollectionSeriesUsesAdvancedRules(t *testing.T) {
 	if _, err := db.ExecContext(context.Background(), `UPDATE series SET library_id = ?, rating = 9.1, created_at = datetime('now', '-60 days') WHERE id = ?`, lib.ID, completedSeries.ID); err != nil {
 		t.Fatalf("update completed series failed: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		ID:           readingBook.ID,
 		LastReadPage: sql.NullInt64{Int64: 40, Valid: true},
 	}); err != nil {
 		t.Fatalf("UpdateBookProgress reading failed: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		ID:           completedBook.ID,
 		LastReadPage: sql.NullInt64{Int64: 100, Valid: true},
 	}); err != nil {

@@ -3,6 +3,7 @@ package reading_test
 import (
 	"context"
 	"errors"
+	"manga-manager/internal/testfixture"
 	"path/filepath"
 	"testing"
 	"time"
@@ -205,7 +206,7 @@ func TestMigrationRetainsLegacyIdentityAndRejectsOlderReading(t *testing.T) {
 	store, uid, bid := positionFixture(t)
 	ctx := context.Background()
 	at := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
-	if err := store.SetUserBookProgress(ctx, uid, bid, 12, at); err != nil {
+	if err := testfixture.UserBookProgress(ctx, store, uid, bid, 12, at); err != nil {
 		t.Fatal(err)
 	}
 	var seq int
@@ -252,7 +253,7 @@ func TestOffsetOccurrencesCompareAsInstantsAcrossLegacyAndNewPositions(t *testin
 	store, uid, bid := positionFixture(t)
 	ctx := context.Background()
 	first := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
-	if err := store.SetUserBookProgress(ctx, uid, bid, 15, first); err != nil {
+	if err := testfixture.UserBookProgress(ctx, store, uid, bid, 15, first); err != nil {
 		t.Fatal(err)
 	}
 	service := reading.New(store, nil)

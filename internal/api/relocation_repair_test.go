@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,7 +25,7 @@ func TestRelocationRepairEditedRootRequiresExplicitSourceAndPreservesReading(t *
 		if _, err := store.DB().Exec(`INSERT INTO users(id,username,role,display_name) VALUES (?,?,'regular','Reader')`, userID, strconv.FormatInt(userID, 10)); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetUserBookProgress(ctx, userID, book.ID, userID, time.Now()); err != nil {
+		if err := testfixture.UserBookProgress(ctx, store, userID, book.ID, userID, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}

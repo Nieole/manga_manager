@@ -9,6 +9,7 @@ package scanner
 import (
 	"context"
 	"database/sql"
+	"manga-manager/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,7 +61,7 @@ func TestRenamedBookKeepsIdentityAndProgress(t *testing.T) {
 	originalID := books[0].ID
 
 	// 记录阅读进度：全局列 + 每用户表，两者都挂在 books.id 上。
-	if err := store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(ctx, store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 7, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           originalID,
@@ -73,7 +74,7 @@ func TestRenamedBookKeepsIdentityAndProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user failed: %v", err)
 	}
-	if err := store.SetUserBookProgress(ctx, user.ID, originalID, 7, time.Now()); err != nil {
+	if err := testfixture.UserBookProgress(ctx, store, user.ID, originalID, 7, time.Now()); err != nil {
 		t.Fatalf("set user book progress failed: %v", err)
 	}
 

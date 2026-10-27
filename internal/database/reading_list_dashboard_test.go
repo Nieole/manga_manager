@@ -60,7 +60,7 @@ func TestGetDashboardStatsAggregates(t *testing.T) {
 
 	// 已读：给 b1、b2 记全局进度 → read_books=2。
 	for _, id := range []int64{b1, b2} {
-		if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+		if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 			LastReadPage: sql.NullInt64{Int64: 5, Valid: true},
 			LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			ID:           id,

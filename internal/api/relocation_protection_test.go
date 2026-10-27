@@ -9,6 +9,7 @@ import (
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/task"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -250,7 +251,7 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 	if _, err = store.DB().Exec(`INSERT INTO users(id,username,role) VALUES(101,'reader','regular')`); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.SetUserBookProgress(ctx, 101, book.ID, 1, time.Now()); err != nil {
+	if err = testfixture.UserBookProgress(ctx, store, 101, book.ID, 1, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = store.DB().Exec(`INSERT INTO collections(id,name) VALUES(100,'keep'); INSERT INTO collection_series(collection_id,series_id) VALUES(100,?)`, missing.ID); err != nil {

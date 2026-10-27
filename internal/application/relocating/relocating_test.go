@@ -14,6 +14,7 @@ import (
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/task"
 	"manga-manager/internal/taskstore"
+	"manga-manager/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -126,7 +127,7 @@ func newMoveRig(t *testing.T) *moveRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{ID: rig.book.ID, LastReadPage: sql.NullInt64{Int64: 7, Valid: true}, LastReadAt: sql.NullTime{Time: time.Now(), Valid: true}}); err != nil {
+	if err = testfixture.BookProgress(ctx, store, database.UpdateBookProgressParams{ID: rig.book.ID, LastReadPage: sql.NullInt64{Int64: 7, Valid: true}, LastReadAt: sql.NullTime{Time: time.Now(), Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Config{}

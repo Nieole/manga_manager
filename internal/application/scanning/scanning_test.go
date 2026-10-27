@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"manga-manager/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sync"
@@ -83,7 +84,7 @@ func TestWatchRenameCompletesBeforeCleanup(t *testing.T) {
 		t.Fatalf("initial books: %v %v", books, err)
 	}
 	id := books[0].ID
-	if err = store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{ID: id, LastReadPage: sql.NullInt64{Int64: 7, Valid: true}, LastReadAt: sql.NullTime{Time: time.Now(), Valid: true}}); err != nil {
+	if err = testfixture.BookProgress(ctx, store, database.UpdateBookProgressParams{ID: id, LastReadPage: sql.NullInt64{Int64: 7, Valid: true}, LastReadAt: sql.NullTime{Time: time.Now(), Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	newPath := filepath.Join(seriesDir, "renamed.cbz")

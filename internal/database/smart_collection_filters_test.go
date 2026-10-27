@@ -72,7 +72,7 @@ func newSmartFixture(t *testing.T, ctx context.Context, store Store) smartFixtur
 
 	// 全局进度：SA 读到 10，SC 读完 20（刷新 series_stats）。
 	upd := func(bookID int64, page int) {
-		if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+		if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 			LastReadPage: sql.NullInt64{Int64: int64(page), Valid: true},
 			LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			ID:           bookID,
@@ -303,7 +303,7 @@ func TestSmartCollectionUserProgressSource(t *testing.T) {
 	u := mkUser(t, ctx, store, "alice", RoleAdmin)
 	empty := mkUser(t, ctx, store, "bob", RoleRegular)
 
-	if err := store.SetUserBookProgress(ctx, u, fx.saBook1, 10, time.Now()); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u, fx.saBook1, 10, time.Now()); err != nil {
 		t.Fatalf("u progress: %v", err)
 	}
 
