@@ -2,6 +2,31 @@ package database
 
 import "context"
 
+// ExistingSeriesIDs returns each selected existing ID once, using batched SQL.
+func (q *Queries) ExistingSeriesIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	result := make([]int64, 0, len(ids))
+	seen := make(map[int64]bool, len(ids))
+	err := sqlInBatches(ids, func(placeholders string, args []interface{}) error {
+		rows, err := q.db.QueryContext(ctx, `SELECT id FROM series WHERE id IN (`+placeholders+`) ORDER BY id`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			if !seen[id] {
+				result = append(result, id)
+				seen[id] = true
+			}
+		}
+		return rows.Err()
+	})
+	return result, err
+}
+
 // SetSeriesStatusBatch updates only status for existing IDs, preserving the supplied value.
 func (q *Queries) SetSeriesStatusBatch(ctx context.Context, ids []int64, status string) error {
 	return sqlInBatches(ids, func(placeholders string, args []interface{}) error {
