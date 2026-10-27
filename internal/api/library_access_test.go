@@ -12,6 +12,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/external"
+	"manga-manager/internal/parser"
 	"manga-manager/internal/runhandle"
 	"manga-manager/internal/task"
 )
@@ -154,11 +155,19 @@ func TestLibraryExclusiveWaitsForDownloadExit(t *testing.T) {
 		c.serveBookFile(w, requestWithRouteParam(http.MethodGet, "/file", nil, "bookId", id))
 	}()
 	<-w.entered
+	if got := parser.ActiveArchiveBorrows(book.Path); got != 1 {
+		close(w.resume)
+		<-done
+		t.Fatalf("in-flight stream invisible to publication: %d", got)
+	}
 	if _, err := c.acquireLibraryExclusive(context.Background(), lib.ID); !errors.Is(err, errLibraryUnavailable) {
 		t.Fatalf("in-flight download ignored: %v", err)
 	}
 	close(w.resume)
 	<-done
+	if got := parser.ActiveArchiveBorrows(book.Path); got != 0 {
+		t.Fatalf("completed download retained borrow: %d", got)
+	}
 	release, err := c.acquireLibraryExclusive(context.Background(), lib.ID)
 	if err != nil {
 		t.Fatal(err)

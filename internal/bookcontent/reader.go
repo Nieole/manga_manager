@@ -1,5 +1,6 @@
-// Package bookcontent owns page sources, archive borrowing, image variants and cache eligibility.
-// It returns materialized bytes and content facts; callers own protocol mapping and task admission.
+// Package bookcontent owns book sources, archive borrowing, image variants and cache eligibility.
+// It returns materialized pages or original-content handles retaining library access until Close.
+// Callers own protocol mapping and task admission.
 package bookcontent
 
 import (
