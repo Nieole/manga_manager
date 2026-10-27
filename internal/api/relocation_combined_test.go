@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,7 +44,7 @@ func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T)
 				if _, err = store.DB().Exec(`INSERT INTO users(id,username,role) VALUES(?,?,'regular')`, id, strconv.FormatInt(id, 10)); err != nil {
 					t.Fatal(err)
 				}
-				if err = store.SetUserBookProgress(ctx, id, missing.ID, id, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
+				if err = testfixture.UserBookProgress(ctx, store, id, missing.ID, id, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)); err != nil {
 					t.Fatal(err)
 				}
 			}

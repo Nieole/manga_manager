@@ -64,13 +64,13 @@ func TestUserBookProgressIsolationAndAggregation(t *testing.T) {
 	now := time.Now()
 
 	// 两个用户对同一本书有不同进度；u1 还读完了 book2。
-	if err := store.SetUserBookProgress(ctx, u1, book1, 10, now); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u1, book1, 10, now); err != nil {
 		t.Fatalf("set u1/book1: %v", err)
 	}
-	if err := store.SetUserBookProgress(ctx, u2, book1, 5, now); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u2, book1, 5, now); err != nil {
 		t.Fatalf("set u2/book1: %v", err)
 	}
-	if err := store.SetUserBookProgress(ctx, u1, book2, 20, now); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u1, book2, 20, now); err != nil {
 		t.Fatalf("set u1/book2: %v", err)
 	}
 
@@ -147,7 +147,7 @@ func TestMigrateGlobalProgressToUser(t *testing.T) {
 	ctx, _, seriesID, book1, _ := seedUserProgressFixture(t, store)
 
 	// 旧的全局进度（迁移前的世界）。
-	if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+	if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 12, Valid: true}, LastReadAt: sql.NullTime{Time: time.Now(), Valid: true}, ID: book1,
 	}); err != nil {
 		t.Fatalf("seed global progress: %v", err)

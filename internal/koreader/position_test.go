@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"manga-manager/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestMatchedSamePageDeviceReportRefreshesTimeWithoutCrossingUsers(t *testing
 	ctx := context.Background()
 	other := createServiceTestUser(t, store, "other", database.RoleRegular)
 	first := time.Date(2026, 10, 20, 10, 0, 0, 111, time.UTC)
-	if err := store.SetUserBookProgress(ctx, other.ID, book.ID, 20, first.Add(-time.Hour)); err != nil {
+	if err := testfixture.UserBookProgress(ctx, store, other.ID, book.ID, 20, first.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	for _, at := range []time.Time{first, first.Add(time.Second)} {

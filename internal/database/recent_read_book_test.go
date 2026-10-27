@@ -63,7 +63,7 @@ func TestRecentReadBookAgreesWhenTimestampsTie(t *testing.T) {
 			markRead: func(t *testing.T, ctx context.Context, store *SqlStore, userID int64, bookIDs []int64) {
 				at := time.Now()
 				for _, id := range bookIDs {
-					if err := store.SetUserBookProgress(ctx, userID, id, 20, at); err != nil {
+					if err := seedLegacyUserBookProgress(ctx, store, userID, id, 20, at); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -94,7 +94,7 @@ func TestRecentReadBookAgreesWhenTimestampsTie(t *testing.T) {
 			markRead: func(t *testing.T, ctx context.Context, store *SqlStore, _ int64, bookIDs []int64) {
 				at := sql.NullTime{Time: time.Now(), Valid: true}
 				for _, bookID := range bookIDs {
-					if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+					if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 						LastReadPage: sql.NullInt64{Int64: 20, Valid: true},
 						LastReadAt:   at,
 						ID:           bookID,

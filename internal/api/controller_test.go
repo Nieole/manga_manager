@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"manga-manager/internal/application/maintenance"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1398,7 +1399,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBook volume failed: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 8, Valid: true},
 		ID:           volumeBook.ID,
 	}); err != nil {
@@ -1872,7 +1873,7 @@ func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 	if _, err := controller.store.(*database.SqlStore).DB().Exec(`UPDATE series SET volume_count = ?, total_pages = ? WHERE id = ?`, 1, 10, seriesA.ID); err != nil {
 		t.Fatalf("update series A stats failed: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 3, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           bookA.ID,
@@ -1905,7 +1906,7 @@ func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateBook B failed: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 20, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           bookB.ID,
@@ -4210,14 +4211,14 @@ func TestGetSeriesContinueAcrossStates(t *testing.T) {
 
 	// 把第一本标完成；第二本读到第 5 页（未读完）；第三本未读
 	now := time.Now()
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 10, Valid: true},
 		LastReadAt:   sql.NullTime{Time: now.Add(-2 * time.Hour), Valid: true},
 		ID:           firstBook.ID,
 	}); err != nil {
 		t.Fatalf("update first progress: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 5, Valid: true},
 		LastReadAt:   sql.NullTime{Time: now.Add(-1 * time.Hour), Valid: true},
 		ID:           secondBook.ID,
@@ -4253,14 +4254,14 @@ func TestGetSeriesContinueAcrossStates(t *testing.T) {
 	}
 
 	// 全部读完
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 10, Valid: true},
 		LastReadAt:   sql.NullTime{Time: now.Add(-30 * time.Minute), Valid: true},
 		ID:           secondBook.ID,
 	}); err != nil {
 		t.Fatalf("update second progress: %v", err)
 	}
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 10, Valid: true},
 		LastReadAt:   sql.NullTime{Time: now, Valid: true},
 		ID:           thirdBook.ID,
@@ -4303,7 +4304,7 @@ func TestGetSeriesContextIncludesContinue(t *testing.T) {
 	lib, series, firstBook := seedBookFixture(t, store, rootDir, "Library A", "Series", "01.cbz", 10)
 	_ = seedBookInSeries(t, store, series, lib.ID, "02.cbz", 10)
 
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 4, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           firstBook.ID,
@@ -4338,7 +4339,7 @@ func TestBulkSyncBookProgressResolvesConflicts(t *testing.T) {
 
 	// 服务器先记录 second 已读到第 7 页（较新）
 	serverNewer := time.Now()
-	if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 7, Valid: true},
 		LastReadAt:   sql.NullTime{Time: serverNewer, Valid: true},
 		ID:           secondBook.ID,

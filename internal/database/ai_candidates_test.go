@@ -112,7 +112,7 @@ func TestSampleCandidateSeriesRespectsUserProgress(t *testing.T) {
 	rows.Close()
 	at := time.Now()
 	for _, id := range bookIDs {
-		if err := store.SetUserBookProgress(ctx, user.ID, id, 99999, at); err != nil {
+		if err := seedLegacyUserBookProgress(ctx, store, user.ID, id, 99999, at); err != nil {
 			t.Fatal(err)
 		}
 	}

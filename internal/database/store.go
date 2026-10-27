@@ -27,6 +27,7 @@ var schemaHandwrittenSQL string
 var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
+	AccumulateReadingTimeForBook(context.Context, int64, int64, int64, string) error
 	ResolveReadingOperationTime(context.Context, int64, string, time.Time) (time.Time, error)
 	MutateReadingPositions(context.Context, int64, []int64, string, func(int64, ReadingPositionState) ReadingPositionMutation) (map[int64]ReadingPositionMutation, error)
 	MutateReadingPosition(context.Context, int64, int64, string, func(ReadingPositionState) ReadingPositionMutation) (ReadingPositionMutation, error)
@@ -116,7 +117,6 @@ type Store interface {
 	DeleteSessionsForUser(ctx context.Context, userID int64) error
 	DeleteExpiredSessions(ctx context.Context, now time.Time) error
 	// 每用户阅读进度（多用户阶段2）——见 user_progress.go。
-	SetUserBookProgress(ctx context.Context, userID, bookID, page int64, at time.Time) error
 	GetUserBookProgress(ctx context.Context, userID, bookID int64) (UserBookProgress, bool, error)
 	GetUserBookProgressMap(ctx context.Context, userID int64, bookIDs []int64) (map[int64]UserBookProgress, error)
 	GetUserRecentReadAll(ctx context.Context, userID, limit int64) ([]GetRecentReadAllRow, error)
@@ -488,17 +488,6 @@ func sqlInClause(ids []int64) (string, []interface{}) {
 	return strings.Join(placeholders, ","), args
 }
 
-func (s *SqlStore) refreshSeriesStatsForBook(ctx context.Context, bookID int64) error {
-	seriesID, err := s.Queries.GetSeriesIDByBookID(ctx, bookID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return err
-	}
-	return s.RefreshSeriesStats(ctx, seriesID)
-}
-
 func (s *SqlStore) CreateBook(ctx context.Context, arg CreateBookParams) (Book, error) {
 	book, err := s.Queries.CreateBook(ctx, arg)
 	if err != nil {
@@ -547,18 +536,6 @@ func (s *SqlStore) DeleteBookByPath(ctx context.Context, path string) error {
 		return s.RefreshSeriesStats(ctx, seriesID)
 	}
 	return nil
-}
-
-// UpdateBookProgress 写全局（未启用多用户 / KOReader 未关联账户）的书进度。
-// LastReadAt 可能来自客户端（离线补传的 updated_at 是 UTC），落库前归一到本地墙钟，见 LocalWallClock。
-func (s *SqlStore) UpdateBookProgress(ctx context.Context, arg UpdateBookProgressParams) error {
-	if arg.LastReadAt.Valid {
-		arg.LastReadAt.Time = LocalWallClock(arg.LastReadAt.Time)
-	}
-	if err := s.Queries.UpdateBookProgress(ctx, arg); err != nil {
-		return err
-	}
-	return s.refreshSeriesStatsForBook(ctx, arg.ID)
 }
 
 func (s *SqlStore) UpdateSeriesStatistics(ctx context.Context, arg UpdateSeriesStatisticsParams) error {

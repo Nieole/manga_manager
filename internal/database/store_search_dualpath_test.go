@@ -25,7 +25,7 @@ func TestSearchSeriesPagedDualProgressSourceIsolation(t *testing.T) {
 	now := time.Now()
 
 	// 全局进度：book1 读到第 10 页（旧全局世界，刷新 series_stats）。
-	if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+	if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 10, Valid: true},
 		LastReadAt:   sql.NullTime{Time: now, Valid: true},
 		ID:           book1,
@@ -33,7 +33,7 @@ func TestSearchSeriesPagedDualProgressSourceIsolation(t *testing.T) {
 		t.Fatalf("global progress: %v", err)
 	}
 	// u1 对同一本书读到第 5 页；u2 完全未读。
-	if err := store.SetUserBookProgress(ctx, u1, book1, 5, now); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u1, book1, 5, now); err != nil {
 		t.Fatalf("u1 progress: %v", err)
 	}
 
@@ -323,7 +323,7 @@ func TestSearchSeriesPagedUserReadStateCountUsesUserSource(t *testing.T) {
 	u1 := mkUser(t, ctx, store, "alice", RoleAdmin)
 	u2 := mkUser(t, ctx, store, "bob", RoleRegular)
 
-	if err := store.SetUserBookProgress(ctx, u1, book1, 5, time.Now()); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u1, book1, 5, time.Now()); err != nil {
 		t.Fatalf("u1 progress: %v", err)
 	}
 

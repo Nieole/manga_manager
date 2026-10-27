@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -80,7 +81,7 @@ func assertRelocationPreservesAssociations(t *testing.T, repair bool) {
 	execSeed(`INSERT INTO reading_activity(book_id,date,pages_read) VALUES (?,'2026-01-02',5)`, book.ID)
 	for i, userID := range []int64{101, 202} {
 		execSeed(`INSERT INTO users(id,username,role,display_name) VALUES (?,?,'regular',?)`, userID, "reader-"+strconv.Itoa(i), "读者"+strconv.Itoa(i))
-		if err = store.SetUserBookProgress(ctx, userID, book.ID, int64(3+i*4), time.Date(2026, 1, 2+i, 3, 4, 5, 0, time.UTC)); err != nil {
+		if err = testfixture.UserBookProgress(ctx, store, userID, book.ID, int64(3+i*4), time.Date(2026, 1, 2+i, 3, 4, 5, 0, time.UTC)); err != nil {
 			t.Fatal(err)
 		}
 		if err = store.AddUserBookReadingTime(ctx, userID, book.ID, int64(41+i*42)); err != nil {
