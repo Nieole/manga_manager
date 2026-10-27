@@ -45,7 +45,7 @@ func TestReadingWritesUseOnlyAtomicStorageCapabilities(t *testing.T) {
 	if err != nil || replay.Applied || invalidated != 3 {
 		t.Fatalf("replay=%+v invalidated=%d err=%v", replay, invalidated, err)
 	}
-	if err := service.RecordTime(ctx, reading.TimeReport{UserID: uid, BookID: bid, Seconds: 30}); err != nil {
+	if err := service.RecordTime(ctx, reading.TimeReport{Subject: commandSubject(uid), BookID: bid, Seconds: 30}); err != nil {
 		t.Fatal(err)
 	}
 	seconds, err := store.GetUserTotalReadingTime(ctx, uid)

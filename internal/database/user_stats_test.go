@@ -66,13 +66,13 @@ func TestUserBookReadingTime(t *testing.T) {
 	ctx, _, _, book1, book2 := seedUserProgressFixture(t, store)
 	u := mkUser(t, ctx, store, "alice", RoleAdmin)
 
-	if err := store.AddUserBookReadingTime(ctx, u, book1, 100); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, u, book1, 100, TodayDayKey()); err != nil {
 		t.Fatalf("add time1: %v", err)
 	}
-	if err := store.AddUserBookReadingTime(ctx, u, book1, 50); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, u, book1, 50, TodayDayKey()); err != nil {
 		t.Fatalf("add time2: %v", err)
 	}
-	if err := store.AddUserBookReadingTime(ctx, u, book2, 200); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, u, book2, 200, TodayDayKey()); err != nil {
 		t.Fatalf("add time3: %v", err)
 	}
 

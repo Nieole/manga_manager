@@ -145,7 +145,6 @@ type Store interface {
 	GetUserActivityHeatmap(ctx context.Context, userID int64, offsetClause string) ([]ActivityDay, error)
 	GetUserActiveDays(ctx context.Context, userID int64, days int) (int, error)
 	GetUserReadingStreak(ctx context.Context, userID int64) (current, longest int, err error)
-	AddUserBookReadingTime(ctx context.Context, userID, bookID, seconds int64) error
 	GetUserTotalReadingTime(ctx context.Context, userID int64) (int64, error)
 	GetUserBookReadingTimeTop(ctx context.Context, userID int64, limit int) ([]BookReadingTimeRow, error)
 	GetUserPeriodStats(ctx context.Context, userID int64, year, month int) (UserPeriodStats, error)

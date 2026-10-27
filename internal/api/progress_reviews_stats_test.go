@@ -637,7 +637,7 @@ func TestReadingStatsDualPathPerUser(t *testing.T) {
 	userA := mkTestUser(t, store, "ua", database.RoleRegular)
 	userB := mkTestUser(t, store, "ub", database.RoleRegular)
 
-	if err := store.AddUserBookReadingTime(ctx, userA.ID, book.ID, 120); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, userA.ID, book.ID, 120, database.TodayDayKey()); err != nil {
 		t.Fatalf("add user reading time: %v", err)
 	}
 	// 全局与每用户活动分别写入，验证热力图按 uid 分流。

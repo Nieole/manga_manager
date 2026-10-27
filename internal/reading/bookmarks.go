@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"manga-manager/internal/database"
 )
@@ -24,10 +25,10 @@ func NewBookmarks(store BookmarkStore) *Bookmarks { return &Bookmarks{store: sto
 
 // BookmarkInput saves the note at a reader's page; saving again retains its identity.
 type BookmarkInput struct {
-	UserID int64
-	BookID int64
-	Page   int64
-	Note   string
+	Subject Subject
+	BookID  int64
+	Page    int64
+	Note    string
 }
 
 // ErrBookmarkNotFound includes a bookmark belonging to a different reader or book.
@@ -37,21 +38,33 @@ var ErrBookmarkNotFound = errors.New("bookmark not found")
 // saving a bookmark. The underlying storage error remains available to callers.
 var ErrBookmarkBookUnavailable = errors.New("bookmark book unavailable")
 
-func (b *Bookmarks) List(ctx context.Context, uid, bid int64) ([]database.ReadingBookmark, error) {
+func (b *Bookmarks) List(ctx context.Context, subject Subject, bid int64) ([]Bookmark, error) {
+	uid, err := subject.UserID()
+	if err != nil {
+		return nil, err
+	}
 	if _, err := b.store.GetBook(ctx, bid); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBookmarkBookUnavailable, err)
 	}
 	items, err := b.store.ListReadingBookmarks(ctx, database.ListReadingBookmarksParams{UserID: uid, BookID: bid})
-	if err == nil && items == nil {
-		items = []database.ReadingBookmark{}
+	if err != nil {
+		return nil, err
 	}
-	return items, err
+	result := make([]Bookmark, 0, len(items))
+	for _, item := range items {
+		result = append(result, bookmarkView(item))
+	}
+	return result, nil
 }
 
-func (b *Bookmarks) Save(ctx context.Context, input BookmarkInput) (database.ReadingBookmark, error) {
+func (b *Bookmarks) Save(ctx context.Context, input BookmarkInput) (Bookmark, error) {
+	uid, err := input.Subject.UserID()
+	if err != nil {
+		return Bookmark{}, err
+	}
 	book, err := b.store.GetBook(ctx, input.BookID)
 	if err != nil {
-		return database.ReadingBookmark{}, fmt.Errorf("%w: %w", ErrBookmarkBookUnavailable, err)
+		return Bookmark{}, fmt.Errorf("%w: %w", ErrBookmarkBookUnavailable, err)
 	}
 	if input.Page < 1 {
 		input.Page = 1
@@ -59,15 +72,35 @@ func (b *Bookmarks) Save(ctx context.Context, input BookmarkInput) (database.Rea
 	if book.PageCount > 0 && input.Page > book.PageCount {
 		input.Page = book.PageCount
 	}
-	return b.store.UpsertReadingBookmark(ctx, database.UpsertReadingBookmarkParams{
-		UserID: input.UserID, BookID: input.BookID, Page: input.Page, Note: strings.TrimSpace(input.Note),
+	item, err := b.store.UpsertReadingBookmark(ctx, database.UpsertReadingBookmarkParams{
+		UserID: uid, BookID: input.BookID, Page: input.Page, Note: strings.TrimSpace(input.Note),
 	})
+	return bookmarkView(item), err
 }
 
-func (b *Bookmarks) Delete(ctx context.Context, uid, bid, id int64) error {
+func (b *Bookmarks) Delete(ctx context.Context, subject Subject, bid, id int64) error {
+	uid, err := subject.UserID()
+	if err != nil {
+		return err
+	}
 	affected, err := b.store.DeleteReadingBookmark(ctx, database.DeleteReadingBookmarkParams{ID: id, UserID: uid, BookID: bid})
 	if err == nil && affected == 0 {
 		return ErrBookmarkNotFound
 	}
 	return err
+}
+
+// Bookmark is a reader's saved note, independent of reading position and activity.
+type Bookmark struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	BookID    int64     `json:"book_id"`
+	Page      int64     `json:"page"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func bookmarkView(item database.ReadingBookmark) Bookmark {
+	return Bookmark{ID: item.ID, UserID: item.UserID, BookID: item.BookID, Page: item.Page, Note: item.Note, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
