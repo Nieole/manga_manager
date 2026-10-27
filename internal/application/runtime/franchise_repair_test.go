@@ -7,6 +7,7 @@ import (
 
 	"manga-manager/internal/application/runtime"
 	"manga-manager/internal/organize"
+	"manga-manager/internal/reading"
 )
 
 func TestRuntimeResumesDurableFranchiseRepairAndRetriesFailure(t *testing.T) {
@@ -59,7 +60,7 @@ func TestRuntimeResumesDurableFranchiseRepairAndRetriesFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	await("current")
-	views, err := organize.NewSmartCollections(store).Views(context.Background(), 0)
+	views, err := organize.NewSmartCollections(store).Views(context.Background(), reading.AnonymousSubject())
 	if err != nil || len(views) != 1 || views[0].SeriesCount != 3 {
 		t.Fatalf("runtime projection=%+v %v", views, err)
 	}

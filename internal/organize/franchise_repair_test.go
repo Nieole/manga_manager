@@ -46,7 +46,7 @@ func TestFranchiseRepairResponsibilitySurvivesWithoutBackgroundNotification(t *t
 	if !after.Available || after.Stale || after.AppliedVersion != before.DesiredVersion {
 		t.Fatalf("not repaired: %+v", after)
 	}
-	views, err := organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err := organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 1 || views[0].SeriesCount != 2 {
 		t.Fatalf("cross-library projection=%+v, %v", views, err)
 	}
@@ -79,7 +79,7 @@ func TestFranchiseFailureKeepsOldProjectionAndHonorsBackoffAcrossReopen(t *testi
 	if err := service.Rebuild(ctx); err != nil {
 		t.Fatal(err)
 	}
-	views, err := organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err := organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 1 {
 		t.Fatalf("views=%+v, %v", views, err)
 	}
@@ -301,7 +301,7 @@ func TestFranchiseCompletionMustCommitWithProjection(t *testing.T) {
 	if err := service.Rebuild(context.Background()); err == nil {
 		t.Fatal("projection reported success without recording completion")
 	}
-	views, err := organize.NewSmartCollections(store).Views(context.Background(), 0)
+	views, err := organize.NewSmartCollections(store).Views(context.Background(), readerSubject(t, 0))
 	if err != nil || len(views) != 0 {
 		t.Fatalf("projection committed without completion: %+v %v", views, err)
 	}

@@ -592,7 +592,12 @@ func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
-	views, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	views, err := c.loadCollectionViews(r.Context(), subject)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -682,7 +687,12 @@ func (c *Controller) opdsReadingListSeries(w http.ResponseWriter, r *http.Reques
 	}
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", 50, 200)
-	result, err := c.readingLists().Page(r.Context(), c.currentUserID(r), listID, int64(limit), pageOffset(page, limit))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	result, err := c.readingLists().Page(r.Context(), subject, listID, int64(limit), pageOffset(page, limit))
 	if err != nil {
 		if errors.Is(err, organize.ErrReadingListMissing) {
 			http.Error(w, "Reading list not found", http.StatusNotFound)
@@ -759,7 +769,12 @@ func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Re
 	}
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", filter.PageSize, 200)
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), c.currentUserID(r))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), subject)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return

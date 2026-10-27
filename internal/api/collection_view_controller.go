@@ -11,6 +11,7 @@ import (
 
 	"manga-manager/internal/database"
 	"manga-manager/internal/organize"
+	"manga-manager/internal/reading"
 )
 
 // CollectionView 是合集页左栏的一个列表项，手工合集与智能书架共用。
@@ -65,7 +66,12 @@ const defaultSmartCollectionPageLimit = organize.DefaultSmartCollectionPageLimit
 const maxSmartCollectionPageLimit = organize.MaxSmartCollectionPageLimit
 
 func (c *Controller) listCollectionViews(w http.ResponseWriter, r *http.Request) {
-	items, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	items, err := c.loadCollectionViews(r.Context(), subject)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list collection views")
 		return
@@ -73,8 +79,8 @@ func (c *Controller) listCollectionViews(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) loadCollectionViews(ctx context.Context, userID int64) ([]CollectionView, error) {
-	return organize.NewSmartCollections(c.store).Views(ctx, userID)
+func (c *Controller) loadCollectionViews(ctx context.Context, subject reading.Subject) ([]CollectionView, error) {
+	return organize.NewSmartCollections(c.store).Views(ctx, subject)
 }
 
 func (c *Controller) loadStaticCollectionSeries(ctx context.Context, collectionID int64, limit, offset int) (CollectionView, []collectionSeriesListItem, int, error) {
@@ -134,8 +140,8 @@ func (c *Controller) loadStaticCollectionSeries(ctx context.Context, collectionI
 	return view, items, view.SeriesCount, nil
 }
 
-func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter SmartFilter, limit, offset int, userID int64) ([]database.SearchSeriesPagedRow, int, error) {
-	page, err := organize.NewSmartCollections(c.store).Members(ctx, filter.ID, userID, limit, offset)
+func (c *Controller) loadSmartCollectionSeries(ctx context.Context, filter SmartFilter, limit, offset int, subject reading.Subject) ([]database.SearchSeriesPagedRow, int, error) {
+	page, err := organize.NewSmartCollections(c.store).Members(ctx, filter.ID, subject, limit, offset)
 	return page.Items, page.Total, err
 }
 func (c *Controller) getSmartFilterByID(r *http.Request, id int64) (SmartFilter, error) {
@@ -166,7 +172,12 @@ func (c *Controller) getSmartCollectionSeries(w http.ResponseWriter, r *http.Req
 	if limit > 0 {
 		limit = organize.SmartCollectionPageLimit(limit)
 	}
-	page, err := organize.NewSmartCollections(c.store).Members(r.Context(), id, c.currentUserID(r), limit, queryInt(r, "offset"))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	page, err := organize.NewSmartCollections(c.store).Members(r.Context(), id, subject, limit, queryInt(r, "offset"))
 	if err != nil {
 		smartCollectionError(w, err, "Failed to load smart collection series")
 		return

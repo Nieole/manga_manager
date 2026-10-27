@@ -137,3 +137,16 @@ func (q *Queries) AdjacentView(ctx context.Context, subject Subject, bid int64, 
 	}
 	return bookView(subject, book), nil
 }
+
+// UserID returns the SQL binding for this subject. Zero is valid only for explicit anonymous compatibility.
+func (s Subject) UserID() (int64, error) {
+	if err := s.validate(); err != nil {
+		return 0, err
+	}
+	return s.userID, nil
+}
+
+// Inspect interprets this reader's progress without treating completion as page evidence.
+func (b BookView) Inspect() BookState {
+	return inspectState(b.Facts.PageCount, b.State.LastReadPage, b.State.IsRead)
+}

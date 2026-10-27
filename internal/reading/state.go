@@ -1,6 +1,10 @@
 package reading
 
-import "manga-manager/internal/database"
+import (
+	"database/sql"
+
+	"manga-manager/internal/database"
+)
 
 // BookState separates an explicit completion mark from a proven absolute page position.
 type BookState struct {
@@ -11,13 +15,17 @@ type BookState struct {
 
 // InspectBook interprets projected reader state without turning a completion mark into page evidence.
 func InspectBook(book database.Book) BookState {
-	page := book.LastReadPage.Int64
-	if !book.LastReadPage.Valid || page < 0 {
+	return inspectState(book.PageCount, book.LastReadPage, book.IsRead)
+}
+
+func inspectState(pageCount int64, lastReadPage sql.NullInt64, isRead bool) BookState {
+	page := lastReadPage.Int64
+	if !lastReadPage.Valid || page < 0 {
 		page = 0
 	}
-	if book.PageCount > 0 && page > book.PageCount {
-		page = book.PageCount
+	if pageCount > 0 && page > pageCount {
+		page = pageCount
 	}
-	completed := book.IsRead || (book.PageCount > 0 && page >= book.PageCount)
-	return BookState{Completed: completed, Started: book.IsRead || page > 0, ReadPages: page}
+	completed := isRead || (pageCount > 0 && page >= pageCount)
+	return BookState{Completed: completed, Started: isRead || page > 0, ReadPages: page}
 }
