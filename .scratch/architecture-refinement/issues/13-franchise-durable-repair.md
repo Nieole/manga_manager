@@ -35,3 +35,5 @@
 - 已将集成分支 `ecf6014` 合入本票；保留并行票据的读者入口、人工元数据功能及提案修复，仅 CHANGELOG 同位置新增条目需人工保留两侧。
 - 合并后 api、runtime、organize、database 四包整包测试全部通过；前端 96 文件、921 测试通过，lint 与 build 通过。PowerShell 再次生成 sqlc，无产物漂移，gofmt 输出为空，Go lint 为 `0 issues.`。
 - 复核补充完成 CAS 行数检查：未恰好记录一个完成版本时整个投影事务回滚。真实 SQLite 的忽略更新触发器回归通过；organize/runtime 整包及相关 race 再次通过。新增回归在修复前执行时遇本机 Application Control 拦截，不将系统拒绝误记为行为 red；其余既有本票测试未受影响。
+
+- 集成分支随后前进到 `20bc0b5`（02），已再次合入；本票 organize/runtime 整包与 franchise HTTP/协议回归通过，作品群状态、作品群只读及目录实际消费者 3 文件 9 测试通过，前端 lint/build 通过。工作树无未提交修改，等待集成关闭。
