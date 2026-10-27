@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 59、60、61、62、65、66、67、68、69、70、71。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -27,7 +27,7 @@
 - Go 1.26.10：`go test ./internal/database ./internal/organize ./internal/application/runtime -count=1` 通过；相关 api 工单回归通过；`go test -race ./internal/organize ./internal/application/runtime -run 'TestFranchise|TestRelationWrite|TestOldFranchise|TestNewRelation|TestRuntimeResumes' -count=1` 通过。
 - `gofmt -l ./cmd ./internal` 输出为空，`golangci-lint run --allow-parallel-runners` 为 `0 issues.`。前端 `npm run test -- --maxWorkers=2`：95 文件、915 测试通过；`npm run lint` 与 `npm run build` 通过。
 - `sqlc generate` 在 PowerShell 退出 0，SQL 查询源保持 ASCII；新状态未改动既有生成前端传输结构。当前证据来自本票独立工作树，合并最新集成分支后的复验另行记录。
-- 本票不提前承诺 14 的级联删除/系列事实标记覆盖；状态暂留 ready-for-agent，待集成验证后关闭。
+- 本票已通过集成验证；14 的级联删除/系列事实标记覆盖由后续票承接。
 
 
 ### 合并集成基线后的复验
@@ -36,4 +36,9 @@
 - 合并后 api、runtime、organize、database 四包整包测试全部通过；前端 96 文件、921 测试通过，lint 与 build 通过。PowerShell 再次生成 sqlc，无产物漂移，gofmt 输出为空，Go lint 为 `0 issues.`。
 - 复核补充完成 CAS 行数检查：未恰好记录一个完成版本时整个投影事务回滚。真实 SQLite 的忽略更新触发器回归通过；organize/runtime 整包及相关 race 再次通过。新增回归在修复前执行时遇本机 Application Control 拦截，不将系统拒绝误记为行为 red；其余既有本票测试未受影响。
 
-- 集成分支随后前进到 `20bc0b5`（02），已再次合入；本票 organize/runtime 整包与 franchise HTTP/协议回归通过，作品群状态、作品群只读及目录实际消费者 3 文件 9 测试通过，前端 lint/build 通过。工作树无未提交修改，等待集成关闭。
+- 集成分支随后前进到 `20bc0b5`（02），已再次合入；本票 organize/runtime 整包与 franchise HTTP/协议回归通过，作品群状态、作品群只读及目录实际消费者 3 文件 9 测试通过，前端 lint/build 通过。工作树无未提交修改。
+### 集成验收
+
+- 已通过合并提交 `bdeaf71` 纳入 `codex/architecture-refinement`，无合并冲突。
+- Go 1.26.10 的持久修复、重启恢复与版本竞争定向回归在 organize/runtime 两包通过；普通 API 测试程序三次遭 Application Control 拦截，随后实际执行 `go test -race ./internal/api -run TestFranchise -count=1` 通过（20.110s），拦截不计通过。
+- 作品群状态、只读入口及目录消费者 3 文件、7 测试通过；PowerShell `sqlc generate` 退出 0，生成物无漂移；gofmt 无输出，独立缓存 lint 为 `0 issues.`。原始输出保存在主工作树 `.tmp/merge-wave2-13-*.log`。
