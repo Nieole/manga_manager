@@ -1,6 +1,16 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'libraryDelete.busy': '资料库仍被占用，未执行删除。请结束相关操作后重试。',
+    'libraryDelete.readers': '仍有阅读或内容访问未结束。',
+    'libraryDelete.reserved': '资料库正在迁移或处理其他管理操作，请稍后重试。',
+    'libraryDelete.finishing': '运行 #{{id}} 仍在收尾，请稍后重试。',
+    'libraryDelete.sharedWork': '运行 #{{id}} 同时涉及其他资料库，不能随本库删除而取消。',
+    'libraryDelete.queuedWork': '本库运行 #{{id}} 仍在排队，请先处理该运行。',
+    'libraryDelete.localWork': '本库运行 #{{id}} 尚未结束。',
+    'libraryDelete.restoreFailed': '删除未完成，文件监听也未能恢复；请检查资料库监听设置。',
+    'libraryDelete.deletedWarning': '资料库已删除，但后续交接未全部完成，请刷新页面。',
+
     'franchise.unavailableFailed': '作品群更新失败，尚无成功结果可显示；系统将继续重试。',
     'franchise.unavailable': '作品群暂不可用：尚未成功完成关系核对，系统将继续重试。',
     'franchise.failedStale': '作品群更新失败，当前显示上次成功的结果；系统将继续重试。',

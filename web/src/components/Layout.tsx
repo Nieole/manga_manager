@@ -20,6 +20,7 @@ import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
 import { useTaskBubbles } from '../features/task-observation/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
 import { useLibraryInvalidation } from '../session/ApplicationSessionProvider';
+import { DeleteLibraryDialog } from '../features/libraries/DeleteLibraryDialog';
 
 const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
@@ -53,6 +54,7 @@ export default function Layout() {
     const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
     const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
     const [libraries, setLibraries] = useState<Library[]>([]);
+    const [deleteLibraryTarget, setDeleteLibraryTarget] = useState<Library | null>(null);
     const [relocationTarget, setRelocationTarget] = useState<string | undefined>();
     const [relocationLibraryID, setRelocationLibraryID] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
@@ -377,17 +379,6 @@ export default function Layout() {
         }
     };
 
-    const handleDeleteLibrary = async (library: Library) => {
-        try {
-            await apiClient.delete(`/api/libraries/${library.id}`);
-            showToast(t('layout.toast.libraryDeleted', { name: library.name }), 'success');
-            fetchLibraries();
-            navigate('/');
-        } catch (error) {
-            console.error('Delete library failed', error);
-            showToast(t('layout.toast.deleteFailed'), 'error');
-        }
-    };
 
     return (
         <div className="min-h-screen bg-komgaDark text-gray-200 font-sans flex flex-col relative">
@@ -864,13 +855,7 @@ export default function Layout() {
                                                             e.preventDefault();
                                                             e.stopPropagation();
                                                             setOpenMenuId(null);
-                                                            openConfirmDialog({
-                                                                title: t('layout.libraryActions.confirmDeleteTitle'),
-                                                                description: t('layout.libraryActions.confirmDeleteDescription', { name: lib.name }),
-                                                                confirmLabel: t('layout.libraryActions.confirmDelete'),
-                                                                tone: 'danger',
-                                                                onConfirm: () => handleDeleteLibrary(lib),
-                                                            });
+                                                            setDeleteLibraryTarget(lib);
                                                         }}
                                                         className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-red-500 hover:text-white transition-colors"
                                                     >
@@ -973,6 +958,13 @@ export default function Layout() {
                     />
                 </Suspense>
             ) : null}
+
+            <DeleteLibraryDialog library={deleteLibraryTarget} onClose={() => setDeleteLibraryTarget(null)} onDeleted={(library, warnings) => {
+                setDeleteLibraryTarget(null);
+                showToast(t(warnings.length ? 'libraryDelete.deletedWarning' : 'layout.toast.libraryDeleted', { name: library.name }), warnings.length ? 'error' : 'success');
+                fetchLibraries();
+                navigate('/');
+            }} />
 
             <ConfirmDialog
                 open={confirmDialog.open}

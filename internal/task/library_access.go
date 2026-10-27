@@ -11,16 +11,21 @@ import (
 // AllLibraries declares work whose coverage includes libraries discovered after admission.
 const AllLibraries int64 = -1
 
-// ErrLibraryUnavailable identifies temporary exclusive library access.
+// ErrLibraryUnavailable identifies a library identity whose access is closed.
 var ErrLibraryUnavailable = errors.New("library is temporarily unavailable")
 
 // LibraryConflict identifies work that must finish before exclusive access.
 type LibraryConflict struct {
-	RunID     int64     `json:"run_id,omitempty"`
-	LibraryID int64     `json:"library_id"`
-	Status    RunStatus `json:"status,omitempty"`
-	CanCancel bool      `json:"can_cancel"`
-	Reason    string    `json:"reason"`
+	TaskID              int64     `json:"task_id,omitempty"`
+	Scope               Scope     `json:"scope,omitempty"`
+	ScopeID             int64     `json:"scope_id,omitempty"`
+	LibraryIDs          []int64   `json:"library_ids,omitempty"`
+	CanCancelForLibrary bool      `json:"can_cancel_for_library"`
+	RunID               int64     `json:"run_id,omitempty"`
+	LibraryID           int64     `json:"library_id"`
+	Status              RunStatus `json:"status,omitempty"`
+	CanCancel           bool      `json:"can_cancel"`
+	Reason              string    `json:"reason"`
 }
 
 // LibraryBusyError describes occupiers without addressing tasks by their keys.
@@ -35,7 +40,7 @@ func (e *LibraryBusyError) Unwrap() error { return ErrLibraryUnavailable }
 func (e *Engine) AcquireLibraryRead(libraryID int64) (func(), error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.libraryExclusive[libraryID] {
+	if e.libraryExclusive[libraryID] || e.libraryReservations[libraryID] != nil || e.libraryRetired[libraryID] {
 		return nil, ErrLibraryUnavailable
 	}
 	e.libraryReaders[libraryID]++
@@ -65,7 +70,7 @@ func (e *Engine) AcquireLibraryExclusiveForRun(ctx context.Context, libraryID, o
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if e.libraryExclusive[libraryID] {
+	if e.libraryExclusive[libraryID] || e.libraryReservations[libraryID] != nil || e.libraryRetired[libraryID] {
 		return nil, ErrLibraryUnavailable
 	}
 	conflicts, err := e.libraryConflictsLocked(ctx, libraryID, ownerRunID)
@@ -102,15 +107,42 @@ func (e *Engine) libraryConflictsLocked(ctx context.Context, libraryID, excludeR
 		if err != nil {
 			return nil, err
 		}
-		if run.Status.IsTerminal() {
-			continue
-		}
 		canCancel := e.capabilitiesLocked(run).CanCancel
 		reason := "wait_for_completion"
 		if canCancel {
 			reason = "finish_or_cancel_run"
 		}
-		conflicts = append(conflicts, LibraryConflict{RunID: runID, LibraryID: libraryID, Status: run.Status, CanCancel: canCancel, Reason: reason})
+		if run.Status.IsTerminal() {
+			reason = "wait_for_exit"
+		}
+		conflicts = append(conflicts, LibraryConflict{TaskID: run.TaskID, LibraryIDs: append([]int64(nil), ids...), RunID: runID, LibraryID: libraryID, Status: run.Status, CanCancel: canCancel, Reason: reason})
+	}
+	taskIDs := make([]int64, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		if conflict.TaskID != 0 {
+			taskIDs = append(taskIDs, conflict.TaskID)
+		}
+	}
+	if len(taskIDs) > 0 {
+		owners, err := e.store.LoadTasks(ctx, taskIDs)
+		if err != nil {
+			return nil, err
+		}
+		for i := range conflicts {
+			conflict := &conflicts[i]
+			owner, ok := owners[conflict.TaskID]
+			if !ok {
+				continue
+			}
+			conflict.Scope, conflict.ScopeID = owner.Identity.Scope, owner.Identity.ScopeID
+			local := len(conflict.LibraryIDs) > 0
+			for _, id := range conflict.LibraryIDs {
+				if id != libraryID {
+					local = false
+				}
+			}
+			conflict.CanCancelForLibrary = conflict.CanCancel && local && owner.Identity.Scope == ScopeLibrary && owner.Identity.ScopeID == libraryID
+		}
 	}
 	sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].RunID < conflicts[j].RunID })
 	return conflicts, nil
@@ -126,14 +158,14 @@ func containsLibrary(ids []int64, id int64) bool {
 }
 func (e *Engine) libraryAdmissionLocked(ids []int64) error {
 	for _, id := range ids {
-		if e.libraryExclusive[id] || (id == AllLibraries && len(e.libraryExclusive) > 0) {
+		if e.libraryExclusive[id] || e.libraryReservations[id] != nil || e.libraryRetired[id] || (id == AllLibraries && (len(e.libraryExclusive) > 0 || len(e.libraryReservations) > 0)) {
 			return ErrLibraryUnavailable
 		}
 	}
 	return nil
 }
 
-// LibraryAccessVersion changes whenever exclusive access can invalidate a path
+// LibraryAccessVersion changes whenever closing access can invalidate a path
 // snapshot. A snapshot may be cached only after acquiring a read lease and
 // confirming this version is unchanged since before its lookup.
 func (e *Engine) LibraryAccessVersion() uint64 {

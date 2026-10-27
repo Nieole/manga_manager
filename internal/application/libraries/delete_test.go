@@ -1,0 +1,224 @@
+package libraries_test
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"manga-manager/internal/application/libraries"
+	"manga-manager/internal/database"
+	"manga-manager/internal/runhandle"
+	"manga-manager/internal/task"
+	"manga-manager/internal/taskstore"
+)
+
+type watchedLibrary struct {
+	active bool
+	fail   bool
+}
+
+func (w *watchedLibrary) UnwatchLibrary(string) { w.active = false }
+func (w *watchedLibrary) WatchLibrary(int64, string, string) error {
+	if w.fail {
+		return errors.New("watch unavailable")
+	}
+	w.active = true
+	return nil
+}
+
+func deletionFixture(t *testing.T) (database.Store, *task.Engine, database.Library, *watchedLibrary) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "libraries.db")
+	if err := database.Migrate(path); err != nil {
+		t.Fatal(err)
+	}
+	store, err := database.NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	lib, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "Library", Path: t.TempDir(), ScanMode: "watch", ScanInterval: 60, ScanFormats: "cbz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := task.New(task.Config{Store: taskstore.New(store.DB()), RunBackground: func(fn func()) { fn() }})
+	return store, engine, lib, &watchedLibrary{active: true}
+}
+
+func TestDeleteBusyLibraryPreservesRecordAndWatcherThenDeletesWhenReadExits(t *testing.T) {
+	store, engine, lib, watcher := deletionFixture(t)
+	invalidated := false
+	service := libraries.New(store, engine, libraries.Effects{Watcher: watcher, AfterDelete: func(int64) { invalidated = true }})
+	release, err := engine.AcquireLibraryRead(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Delete(context.Background(), lib.ID)
+	if !errors.Is(err, task.ErrLibraryUnavailable) || result.Deleted || len(result.Conflicts) != 1 || result.Conflicts[0].Reason != "wait_for_reads" {
+		t.Fatalf("busy delete=%+v %v", result, err)
+	}
+	if !watcher.active || invalidated {
+		t.Fatal("busy delete changed effects")
+	}
+	if _, err := store.GetLibrary(context.Background(), lib.ID); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	file := filepath.Join(lib.Path, "keep.cbz")
+	if err := os.WriteFile(file, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err = service.Delete(context.Background(), lib.ID)
+	if err != nil || !result.Deleted || !invalidated || watcher.active {
+		t.Fatalf("idle delete=%+v %v", result, err)
+	}
+	if _, err := store.GetLibrary(context.Background(), lib.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("library still exists: %v", err)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != "original" {
+		t.Fatalf("library files changed: %q %v", data, err)
+	}
+	if _, err := service.Delete(context.Background(), lib.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("removed library reported as busy: %v", err)
+	}
+	if _, err := engine.AcquireLibraryRead(lib.ID); !errors.Is(err, task.ErrLibraryUnavailable) {
+		t.Fatalf("stale removed ID admitted: %v", err)
+	}
+	global := task.RunSpec{Identity: task.Identity{Type: "verify_remaining", Scope: task.ScopeSystem}, LibraryIDs: []int64{task.AllLibraries}, Trigger: task.TriggerManual}
+	if _, err := engine.Start(context.Background(), global, func(context.Context, *runhandle.Handle) (task.Result, error) { return task.Result{}, nil }); err != nil {
+		t.Fatalf("retired identity blocked remaining global work: %v", err)
+	}
+}
+
+func TestDeleteFailureRestoresWatchingAndAdmission(t *testing.T) {
+	for _, restoreFails := range []bool{false, true} {
+		t.Run(map[bool]string{false: "restored", true: "restore-warning"}[restoreFails], func(t *testing.T) {
+			store, engine, lib, watcher := deletionFixture(t)
+			watcher.fail = restoreFails
+			if _, err := store.DB().Exec(`CREATE TRIGGER reject_delete BEFORE DELETE ON libraries BEGIN SELECT RAISE(ABORT,'delete failed'); END`); err != nil {
+				t.Fatal(err)
+			}
+			service := libraries.New(store, engine, libraries.Effects{Watcher: watcher})
+			result, err := service.Delete(context.Background(), lib.ID)
+			if err == nil || result.Deleted {
+				t.Fatalf("fault delete=%+v %v", result, err)
+			}
+			if restoreFails {
+				if len(result.Warnings) != 1 || watcher.active {
+					t.Fatalf("restore failure concealed: %+v", result)
+				}
+			} else if !watcher.active {
+				t.Fatal("existing watch not restored")
+			}
+			release, err := engine.AcquireLibraryRead(lib.ID)
+			if err != nil {
+				t.Fatalf("failed deletion retained reservation: %v", err)
+			}
+			release()
+			if _, err := store.GetLibrary(context.Background(), lib.ID); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type blockedDeletion struct {
+	database.Store
+	reached, proceed chan struct{}
+}
+
+func (s blockedDeletion) DeleteLibrary(ctx context.Context, id int64) error {
+	close(s.reached)
+	select {
+	case <-s.proceed:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return s.Store.DeleteLibrary(ctx, id)
+}
+
+func TestDeleteHoldsEngineExclusivityUntilCommitAndCancellationReleasesIt(t *testing.T) {
+	store, engine, lib, watcher := deletionFixture(t)
+	blocked := blockedDeletion{Store: store, reached: make(chan struct{}), proceed: make(chan struct{})}
+	service := libraries.New(blocked, engine, libraries.Effects{Watcher: watcher})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := service.Delete(ctx, lib.ID); done <- err }()
+	select {
+	case <-blocked.reached:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if _, err := engine.AcquireLibraryRead(lib.ID); !errors.Is(err, task.ErrLibraryUnavailable) {
+		t.Fatalf("read crossed delete commit: %v", err)
+	}
+	if _, err := engine.AcquireLibraryExclusive(context.Background(), lib.ID); !errors.Is(err, task.ErrLibraryUnavailable) {
+		t.Fatalf("migration crossed delete: %v", err)
+	}
+	if release, err := engine.AcquireLibraryRead(lib.ID + 1); err != nil {
+		t.Fatal(err)
+	} else {
+		release()
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled delete=%v", err)
+	}
+	if !watcher.active {
+		t.Fatal("cancelled commit did not restore watching")
+	}
+	release, err := engine.AcquireLibraryRead(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if _, err := store.GetLibrary(context.Background(), lib.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type changedLibrarySettings struct{ database.Store }
+
+func (s changedLibrarySettings) DeleteLibrary(ctx context.Context, id int64) error {
+	current, err := s.GetLibrary(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = s.UpdateLibrary(ctx, database.UpdateLibraryParams{ID: id, Name: current.Name, Path: current.Path, ScanMode: "none", ScanFormats: current.ScanFormats, ScanInterval: current.ScanInterval, KoreaderSyncEnabled: current.KoreaderSyncEnabled})
+	if err != nil {
+		return err
+	}
+	return errors.New("delete rejected after settings changed")
+}
+
+func TestDeleteFailureUsesCurrentWatchSettings(t *testing.T) {
+	store, engine, lib, watcher := deletionFixture(t)
+	service := libraries.New(changedLibrarySettings{store}, engine, libraries.Effects{Watcher: watcher})
+	result, err := service.Delete(context.Background(), lib.ID)
+	if err == nil || result.Deleted {
+		t.Fatalf("failed delete=%+v %v", result, err)
+	}
+	if watcher.active || len(result.Warnings) != 0 {
+		t.Fatalf("restored obsolete watch settings: active=%v result=%+v", watcher.active, result)
+	}
+}
+
+func TestCancelledDeleteDoesNotReserveOrMutateLibrary(t *testing.T) {
+	store, engine, lib, watcher := deletionFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := libraries.New(store, engine, libraries.Effects{Watcher: watcher}).Delete(ctx, lib.ID)
+	if !errors.Is(err, context.Canceled) || result.Deleted || !watcher.active {
+		t.Fatalf("cancelled delete=%+v %v", result, err)
+	}
+	release, err := engine.AcquireLibraryRead(lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+}
