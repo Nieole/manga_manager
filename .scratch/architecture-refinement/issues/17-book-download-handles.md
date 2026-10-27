@@ -4,7 +4,7 @@
 
 **Blocked by:** 16: 页读取的共享内容能力。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 90、93、102、199。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -26,5 +26,10 @@
 - TDD：句柄入口不存在时编译失败；长下载 HTTP 用例先实际失败于共享借用为 0，再切换 handler 后通过。正常流测试覆盖 EOF 后仍冲突、双重关闭后可独占；错误测试覆盖缺失文件、目录、已取消请求的资格归还。
 - 实际通过：Go 1.26.10 完整 `bookcontent`/`parser` 的 `-race` 测试（5.319s/3.818s）；完整 API 包（88.602s）；下载、OPDS/Mihon Basic 鉴权与 Range、存储诊断、资料库访问冲突定向回归（5.211s）。真实 HTTP 客户端关闭响应体后等待 handler 退出，确认共享借用归零且独占准入恢复。
 - 实际通过：`go build ./...`、`gofmt -l ./cmd ./internal` 无输出，独立缓存 `golangci-lint run --allow-parallel-runners` 为 `0 issues.`。前端源码和生成源未变，不涉及前端构建或生成契约漂移。
-- 一次普通 parser 包启动被 Windows Application Control 拦截，未计通过；随后上述完整 `-race` 二包实际执行通过。原始输出位于本工作树 `.tmp/ticket17-*.log`，清理前应保留。本票状态保留 `ready-for-agent` 等待集成负责人联合验证关闭。
-- 已将最新集成 `096b8cc` 合入自身分支；合并后内容句柄/页读取定向 `-race` 实际通过（5.518s），完整 parser `-race` 实际通过（2.649s），lint 为 `0 issues.`。合并后 API 的 `-race` 与普通定向两次启动均被 Windows Application Control 阻止，未实际执行；最终下载/协议/资料库冲突回归需集成负责人在主工作树复验，不能用此前 API 通过记录代替该最终门禁。
+- 一次普通 parser 包启动被 Windows Application Control 拦截，未计通过；随后上述完整 `-race` 二包实际执行通过。原始输出位于本工作树 `.tmp/ticket17-*.log`，清理前应保留。本票已通过集成负责人联合验证并关闭。
+- 已将最新集成 `096b8cc` 合入自身分支；合并后内容句柄/页读取定向 `-race` 实际通过（5.518s），完整 parser `-race` 实际通过（2.649s），lint 为 `0 issues.`。合并后 API 的 `-race` 与普通定向两次启动均被 Windows Application Control 阻止，未实际执行；最终下载/协议/资料库冲突回归已由集成负责人在主工作树实际复验通过，见集成验收；未用此前 API 记录代替最终门禁。
+### 集成验收
+
+- 已由合并提交 `9cb88a7` 纳入 `codex/architecture-refinement`，无冲突。
+- Go 1.26.10 的整书下载、协议鉴权与 Range、客户端断连、资料库独占/退出及来源缓存/存储诊断回归在主树实际通过（4.432s）。首轮程序启动被 Application Control 拦截，未计通过；同类门禁重跑后实际通过。
+- 完整 `bookcontent`/`parser` 的 `-race` 测试实际通过（5.246s/2.747s）；gofmt 无输出，独立缓存 lint 为 `0 issues.`。原始输出保留在主工作树 `.tmp/merge-wave6-17-*.log`。未修改前端及生成源，未重复无关构建/生成或全仓测试。
