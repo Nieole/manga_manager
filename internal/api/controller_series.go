@@ -89,7 +89,7 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 
 	query := r.URL.Query()
-	filters := database.SeriesListFilters{
+	filters := reading.CatalogueFilters{
 		Keyword:         query.Get("q"),
 		Letter:          query.Get("letter"),
 		Status:          query.Get("status"),
@@ -103,57 +103,25 @@ func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
 		AddedWithinDays: parseNonNegativeInt(query.Get("addedWithinDays")),
 	}
 
-	// 游标只是一条快捷路径。客户端手里的游标过期或无效（改排序、分享出去的旧链接、前进后退）
-	// 是可预期的正常输入：忽略它按 page 走下面的 offset 分页，用户照常看到这一页，并顺带拿回
-	// 一个属于当前排序的新游标。只有服务端自己出问题才失败。
-	if cursor != "" {
-		series, nextCursor, hasMore, err := reading.NewCatalogueQueries(c.store).SearchCursor(ctx, c.currentUserID(r), libID, filters, int32(limit), sortBy, cursor)
-		switch {
-		case err == nil:
-			if series == nil {
-				series = []database.SearchSeriesPagedRow{}
-			}
-			jsonResponse(w, http.StatusOK, map[string]interface{}{
-				"items":       series,
-				"total":       0,
-				"page":        page,
-				"limit":       limit,
-				"next_cursor": nextCursor,
-				"has_more":    hasMore,
-			})
-			return
-		case errors.Is(err, database.ErrSeriesCursorUnusable):
-			slog.Debug("Series search cursor unusable, falling back to offset pagination", "error", err)
-		default:
-			slog.Error("SearchSeriesCursor Failed", "error", err)
-			jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
-			return
-		}
-	}
-
-	series, total, err := reading.NewCatalogueQueries(c.store).SearchPaged(ctx, c.currentUserID(r), libID, filters, int32(limit), int32(offset), sortBy)
+	subject, err := c.currentReadingSubject(r)
 	if err != nil {
-		slog.Error("SearchSeriesPaged Failed", "error", err)
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.NewCatalogueQueries(c.store).Search(ctx, subject, reading.CatalogueSearch{
+		LibraryID: libID, Filters: filters, Limit: int32(limit), Offset: int32(offset), SortBy: sortBy, Cursor: cursor,
+	})
+	if err != nil {
+		slog.Error("Series search failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
 		return
 	}
-
-	if series == nil {
-		series = []database.SearchSeriesPagedRow{}
+	items := view.Items
+	if items == nil {
+		items = []database.SearchSeriesPagedRow{}
 	}
-	hasMore := page*limit < total
-	nextCursor := ""
-	if hasMore && len(series) > 0 && database.SeriesSearchSortSupportsCursor(sortBy) {
-		nextCursor = database.NextSeriesSearchCursor(sortBy, series[len(series)-1])
-	}
-
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"items":       series,
-		"total":       total,
-		"page":        page,
-		"limit":       limit,
-		"next_cursor": nextCursor,
-		"has_more":    hasMore,
+		"items": items, "total": view.Total, "page": page, "limit": limit, "next_cursor": view.NextCursor, "has_more": view.HasMore,
 	})
 }
 
@@ -174,7 +142,12 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 	limit := int64(queryLimit(r, "limit", 10, maxSeriesPageLimit))
 
 	ctx := r.Context()
-	items, err := reading.NewCatalogueQueries(c.store).RecentSeries(ctx, c.currentUserID(r), libID, limit)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.NewCatalogueQueries(c.store).Recent(ctx, subject, libID, limit)
 	if err != nil {
 		slog.Error("GetRecentReadSeries Failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent read series")
@@ -182,7 +155,7 @@ func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request)
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"items": items,
+		"items": view.Items,
 	})
 }
 
@@ -428,16 +401,18 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 	// 书籍列表是这个响应的主干，也是「继续阅读」落点的计算依据。
 	// 查询失败时返回 200 + 空系列会让前端把「数据库暂时不可用」显示成「这个系列没有书」，
 	// 并据此算出错误的续读位置；与同文件 getSeriesContinueEndpoint 的口径统一为 500。
-	view, err := reading.NewQueries(c.store).Series(ctx, c.currentUserID(r), seriesID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.NewQueries(c.store).SeriesBooks(ctx, subject, seriesID)
 	if err != nil {
 		slog.Error("Failed to fetch books for context", "series_id", seriesID, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to load series context")
 		return
 	}
-	books := view.Books
-	if books == nil {
-		books = []database.Book{}
-	}
+	books := readerBookResponses(view.Books)
 
 	// 3. 标签
 	tags, err := c.store.GetTagsForSeries(ctx, seriesID)
@@ -522,7 +497,12 @@ func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	view, err := reading.NewQueries(c.store).Series(ctx, c.currentUserID(r), seriesID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	view, err := reading.NewQueries(c.store).SeriesBooks(ctx, subject, seriesID)
 	if err != nil {
 		slog.Error("Failed to fetch books for continue", "series_id", seriesID, "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to compute continue position")

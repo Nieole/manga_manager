@@ -890,10 +890,7 @@ func (c *Controller) getBooksBySeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	books := make([]database.Book, len(view.Books))
-	for i, book := range view.Books {
-		books[i] = readerBookResponse(book)
-	}
+	books := readerBookResponses(view.Books)
 	jsonResponse(w, http.StatusOK, books)
 }
 
