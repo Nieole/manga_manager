@@ -35,7 +35,12 @@ func TestBulkMetadataTransactionAndRefreshFailure(t *testing.T) {
 				}
 			}
 			status := "completed"
-			body, err := json.Marshal(BulkEditSeriesRequest{SeriesIDs: []int64{ids[0], ids[1], ids[0], 99999}, AddTags: []string{"Action"}, Status: &status})
+			selectedIDs := make([]int64, 502)
+			for i := range selectedIDs {
+				selectedIDs[i] = ids[0]
+			}
+			selectedIDs[499], selectedIDs[500], selectedIDs[501] = ids[1], ids[1], 99999
+			body, err := json.Marshal(BulkEditSeriesRequest{SeriesIDs: selectedIDs, AddTags: []string{"Action"}, Status: &status})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +94,7 @@ func TestBulkMetadataTransactionAndRefreshFailure(t *testing.T) {
 				if result.Committed || result.Updated != 0 || len(result.SeriesIDs) != 0 {
 					t.Fatalf("uncommitted result: %+v", result)
 				}
-			} else if !result.Committed || result.Updated != 4 || len(result.SeriesIDs) != 2 {
+			} else if !result.Committed || result.Updated != 502 || len(result.SeriesIDs) != 2 {
 				t.Fatalf("committed result: %+v", result)
 			}
 			if fail == "series_stats" && len(result.RefreshFailedIDs) != 2 {
