@@ -1,5 +1,5 @@
-// Package seriesediting owns complete manual series metadata saves.
-// Source rules remain in seriesmeta; this package owns atomic storage and the saved view.
+// Package seriesediting owns complete manual and bulk series metadata edits.
+// Source rules remain in seriesmeta; this package owns atomic storage, projections and save results.
 package seriesediting
 
 import (

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 )
 
 type SmartFilter struct {
@@ -179,12 +180,17 @@ func (s *SmartCollections) Delete(ctx context.Context, id int64) error {
 }
 
 type SmartCollectionPage struct {
+	Subject              reading.Subject
 	Items                []database.SearchSeriesPagedRow
 	Total, Limit, Offset int
 	Filter               SmartFilter
 }
 
-func (s *SmartCollections) Members(ctx context.Context, id, userID int64, limit, offset int) (SmartCollectionPage, error) {
+func (s *SmartCollections) Members(ctx context.Context, id int64, subject reading.Subject, limit, offset int) (SmartCollectionPage, error) {
+	userID, err := subject.UserID()
+	if err != nil {
+		return SmartCollectionPage{}, err
+	}
 	filter, err := s.Get(ctx, id)
 	if err != nil {
 		return SmartCollectionPage{}, err
@@ -196,7 +202,7 @@ func (s *SmartCollections) Members(ctx context.Context, id, userID int64, limit,
 		offset = 0
 	}
 	rows, total, err := s.store.SearchSmartCollectionSeries(ctx, smartCollectionFilterFrom(filter, userID), limit, offset)
-	return SmartCollectionPage{Items: rows, Total: total, Limit: limit, Offset: offset, Filter: filter}, err
+	return SmartCollectionPage{Subject: subject, Items: rows, Total: total, Limit: limit, Offset: offset, Filter: filter}, err
 }
 
 const DefaultSmartCollectionPageLimit = 30
@@ -211,7 +217,11 @@ func SmartCollectionPageLimit(want int) int {
 	}
 	return want
 }
-func (s *SmartCollections) Views(ctx context.Context, userID int64) ([]CollectionView, error) {
+func (s *SmartCollections) Views(ctx context.Context, subject reading.Subject) ([]CollectionView, error) {
+	userID, err := subject.UserID()
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.store.ListCollectionViews(ctx)
 	if err != nil {
 		return nil, err

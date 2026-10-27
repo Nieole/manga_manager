@@ -211,7 +211,12 @@ func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request
 }
 
 func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
-	views, err := c.loadCollectionViews(r.Context(), c.currentUserID(r))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	views, err := c.loadCollectionViews(r.Context(), subject)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch collections")
 		return
@@ -250,7 +255,12 @@ func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Reque
 	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", 30, 100)
-	result, err := c.readingLists().Page(r.Context(), c.currentUserID(r), listID, int64(limit), pageOffset(page, limit))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	result, err := c.readingLists().Page(r.Context(), subject, listID, int64(limit), pageOffset(page, limit))
 	if err != nil {
 		if errors.Is(err, organize.ErrReadingListMissing) {
 			jsonError(w, http.StatusNotFound, "Reading list not found")
@@ -320,7 +330,12 @@ func (c *Controller) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.R
 	}
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", filter.PageSize, 100)
-	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), c.currentUserID(r))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	rows, total, err := c.loadSmartCollectionSeries(r.Context(), filter, limit, int(pageOffset(page, limit)), subject)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch smart collection series")
 		return

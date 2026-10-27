@@ -143,13 +143,17 @@ func (s *ReadingLists) Reorder(ctx context.Context, id int64, itemIDs []int64) e
 
 // ReadingListItem preserves member identity and adds current-reader progress.
 type ReadingListItem struct {
+	Subject reading.Subject `json:"-"`
 	database.ListReadingListItemsRow
 	ReadBooks      int64 `json:"read_books"`
 	CompletedBooks int64 `json:"completed_books"`
 	TotalBooks     int64 `json:"total_books"`
 }
 
-func (s *ReadingLists) Items(ctx context.Context, uid, id int64) ([]ReadingListItem, error) {
+func (s *ReadingLists) Items(ctx context.Context, subject reading.Subject, id int64) ([]ReadingListItem, error) {
+	if _, err := subject.UserID(); err != nil {
+		return nil, err
+	}
 	if _, err := s.Get(ctx, id); err != nil {
 		return nil, err
 	}
@@ -159,14 +163,14 @@ func (s *ReadingLists) Items(ctx context.Context, uid, id int64) ([]ReadingListI
 	}
 	out := make([]ReadingListItem, 0, len(rows))
 	for _, row := range rows {
-		view, err := s.reading.Series(ctx, uid, row.SeriesID)
+		view, err := s.reading.SeriesBooks(ctx, subject, row.SeriesID)
 		if err != nil {
 			return nil, err
 		}
 		row.NextBookID = readingListTarget(view)
-		item := ReadingListItem{ListReadingListItemsRow: row, TotalBooks: int64(view.Continue.TotalBooks), CompletedBooks: int64(view.Continue.ReadBooks)}
+		item := ReadingListItem{Subject: subject, ListReadingListItemsRow: row, TotalBooks: int64(view.Continue.TotalBooks), CompletedBooks: int64(view.Continue.ReadBooks)}
 		for _, book := range view.Books {
-			if reading.InspectBook(book).Started {
+			if book.Inspect().Started {
 				item.ReadBooks++
 			}
 		}
@@ -177,14 +181,18 @@ func (s *ReadingLists) Items(ctx context.Context, uid, id int64) ([]ReadingListI
 
 // ReadingListPage keeps protocol list identity, member order and total together.
 type ReadingListPage struct {
-	List  database.ReadingList
-	Rows  []database.ListReadingListSeriesPageRow
-	Total int64
+	Subject reading.Subject
+	List    database.ReadingList
+	Rows    []database.ListReadingListSeriesPageRow
+	Total   int64
 }
 
 // Page preserves protocol identities and pagination while applying the same subject continuation as the web list.
-func (s *ReadingLists) Page(ctx context.Context, uid, id, limit, offset int64) (ReadingListPage, error) {
-	var out ReadingListPage
+func (s *ReadingLists) Page(ctx context.Context, subject reading.Subject, id, limit, offset int64) (ReadingListPage, error) {
+	out := ReadingListPage{Subject: subject}
+	if _, err := subject.UserID(); err != nil {
+		return out, err
+	}
 	var err error
 	out.List, err = s.Get(ctx, id)
 	if err != nil {
@@ -199,7 +207,7 @@ func (s *ReadingLists) Page(ctx context.Context, uid, id, limit, offset int64) (
 		return out, err
 	}
 	for i := range out.Rows {
-		view, err := s.reading.Series(ctx, uid, out.Rows[i].SeriesID)
+		view, err := s.reading.SeriesBooks(ctx, subject, out.Rows[i].SeriesID)
 		if err != nil {
 			return out, err
 		}
@@ -208,32 +216,32 @@ func (s *ReadingLists) Page(ctx context.Context, uid, id, limit, offset int64) (
 	return out, nil
 }
 
-func readingListTarget(view reading.SeriesView) int64 {
+func readingListTarget(view reading.BookSeriesView) int64 {
 	if len(view.Books) == 0 {
 		return 0
 	}
 	// Lists prefer unfinished books, then retain catalogue sort_number/name order,
 	// including the first-book fallback when every book is complete.
-	book := slices.MinFunc(view.Books, func(a, b database.Book) int {
-		aDone, bDone := reading.InspectBook(a).Completed, reading.InspectBook(b).Completed
+	book := slices.MinFunc(view.Books, func(a, b reading.BookView) int {
+		aDone, bDone := a.Inspect().Completed, b.Inspect().Completed
 		if aDone != bDone {
 			if aDone {
 				return 1
 			}
 			return -1
 		}
-		if a.SortNumber.Valid != b.SortNumber.Valid {
-			if a.SortNumber.Valid {
+		if a.Facts.SortNumber.Valid != b.Facts.SortNumber.Valid {
+			if a.Facts.SortNumber.Valid {
 				return 1
 			}
 			return -1
 		}
-		if a.SortNumber.Valid {
-			if order := cmp.Compare(a.SortNumber.Float64, b.SortNumber.Float64); order != 0 {
+		if a.Facts.SortNumber.Valid {
+			if order := cmp.Compare(a.Facts.SortNumber.Float64, b.Facts.SortNumber.Float64); order != 0 {
 				return order
 			}
 		}
-		return strings.Compare(a.Name, b.Name)
+		return strings.Compare(a.Facts.Name, b.Facts.Name)
 	})
-	return book.ID
+	return book.Facts.ID
 }

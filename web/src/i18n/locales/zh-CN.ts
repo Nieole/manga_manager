@@ -668,6 +668,8 @@ export const messages: MessageCatalog = {
     'bulkEdit.applying': '应用中…',
     'bulkEdit.success': '已更新 {{count}} 个系列',
     'bulkEdit.failed': '批量编辑失败',
+    'bulkEdit.savedRefreshFailed': '元数据已保存，但部分统计或页面刷新失败；请重新加载以查看最新结果',
+    'bulkEdit.savedLaterFailed': '已有元数据修改提交，后续处理失败',
     'home.selection.addToCollectionSuccess': '成功将 {{count}} 个系列加入合集',
     'home.selection.markRead': '标记已读',
     'home.selection.markUnread': '标记未读',

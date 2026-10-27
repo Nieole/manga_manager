@@ -20,7 +20,7 @@ func TestRelationChangesRebuildDerivedCollections(t *testing.T) {
 	if err != nil || created.Existing {
 		t.Fatalf("created=%+v err=%v", created, err)
 	}
-	views, err := organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err := organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 1 {
 		t.Fatalf("views=%+v err=%v", views, err)
 	}
@@ -39,7 +39,7 @@ func TestRelationChangesRebuildDerivedCollections(t *testing.T) {
 	if err := relations.Delete(ctx, list[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	views, err = organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err = organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 0 {
 		t.Fatalf("deleted views=%+v err=%v", views, err)
 	}
@@ -57,7 +57,7 @@ func TestFranchiseMergeSplitKeepsUnaffectedIdentitiesAndTimes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	views, err := organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err := organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestFranchiseMergeSplitKeepsUnaffectedIdentitiesAndTimes(t *testing.T) {
 	if err != nil || split.SeriesCount != 3 {
 		t.Fatalf("split=%+v err=%v", split, err)
 	}
-	views, err = organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err = organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 2 {
 		t.Fatalf("split views=%+v err=%v", views, err)
 	}
@@ -175,7 +175,7 @@ func TestFranchiseRebuildFailureKeepsPreviousProjectionAndQueuedLifecycle(t *tes
 	if err := service.Rebuild(ctx); err == nil {
 		t.Fatal("rebuild should fail")
 	}
-	views, err := organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err := organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 0 {
 		t.Fatalf("failed rebuild leaked partial collection: %+v err=%v", views, err)
 	}
@@ -185,7 +185,7 @@ func TestFranchiseRebuildFailureKeepsPreviousProjectionAndQueuedLifecycle(t *tes
 	if err := service.Rebuild(ctx); err != nil {
 		t.Fatal(err)
 	}
-	views, err = organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err = organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 1 {
 		t.Fatalf("recovered=%+v err=%v", views, err)
 	}
@@ -199,7 +199,7 @@ func TestFranchiseRebuildFailureKeepsPreviousProjectionAndQueuedLifecycle(t *tes
 	if err := service.Rebuild(ctx); err != nil {
 		t.Fatal(err)
 	}
-	views, err = organize.NewSmartCollections(store).Views(ctx, 0)
+	views, err = organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 0 {
 		t.Fatalf("deleted series projection=%+v err=%v", views, err)
 	}

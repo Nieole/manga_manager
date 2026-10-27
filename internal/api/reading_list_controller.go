@@ -102,7 +102,12 @@ func (c *Controller) listReadingListItems(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
 		return
 	}
-	items, err := c.readingLists().Items(r.Context(), c.currentUserID(r), id)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	items, err := c.readingLists().Items(r.Context(), subject, id)
 	if err != nil {
 		readingListError(w, err, "Failed to list reading list items")
 		return
