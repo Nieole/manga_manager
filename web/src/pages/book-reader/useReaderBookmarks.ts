@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useLayoutEffect, useState } from 'react';
+import { useSessionActive } from '../../session/ApplicationSessionProvider';
 import { apiClient } from '../../api/client';
 import type { ReadingBookmark } from './types';
 
@@ -17,6 +18,13 @@ export function useReaderBookmarks({
   activePageCount,
   currentPageNumber,
 }: UseReaderBookmarksOptions) {
+  const isSessionActive = useSessionActive();
+  const mounted = useRef(false);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const bookSession = useMemo(() => ({ bookId }), [bookId]);
+  const currentSession = useRef(bookSession);
+  useLayoutEffect(() => { currentSession.current = bookSession; }, [bookSession]);
+  const isCurrent = useCallback((target: string) => mounted.current && currentSession.current === bookSession && isSessionActive() && target === currentBookIdRef.current, [bookSession, currentBookIdRef, isSessionActive]);
   const [bookmarks, setBookmarks] = useState<ReadingBookmark[]>([]);
   const [bookmarkNote, setBookmarkNote] = useState('');
   const [savingBookmark, setSavingBookmark] = useState(false);
@@ -31,17 +39,17 @@ export function useReaderBookmarks({
 
     return apiClient.get<ReadingBookmark[]>(`/api/books/${bookId}/bookmarks`)
       .then((res) => {
-        if (bookId === currentBookIdRef.current) {
+        if (isCurrent(bookId)) {
           setBookmarks(res.data || []);
         }
       })
       .catch((err) => {
         console.error('Failed to load reading bookmarks', err);
-        if (bookId === currentBookIdRef.current) {
+        if (isCurrent(bookId)) {
           setBookmarks([]);
         }
       });
-  }, [bookId, currentBookIdRef]);
+  }, [bookId, isCurrent]);
 
   useEffect(() => {
      
@@ -60,7 +68,7 @@ export function useReaderBookmarks({
   }, [currentBookmark]);
 
   const saveBookmark = useCallback(() => {
-    if (!bookId || activePageCount === 0) return;
+    if (!bookId || !isCurrent(bookId) || activePageCount === 0) return;
 
     const targetBookId = bookId;
     setSavingBookmark(true);
@@ -68,7 +76,7 @@ export function useReaderBookmarks({
       page: currentPageNumber,
       note: bookmarkNote,
     }).then((res) => {
-      if (targetBookId !== currentBookIdRef.current) return;
+      if (!isCurrent(targetBookId)) return;
       setBookmarks((prev) => {
         const next = prev.filter((item) => item.id !== res.data.id && item.page !== res.data.page);
         next.push(res.data);
@@ -78,22 +86,22 @@ export function useReaderBookmarks({
     }).catch((err) => {
       console.error('Failed to save reading bookmark', err);
     }).finally(() => {
-      setSavingBookmark(false);
+      if (isCurrent(targetBookId)) setSavingBookmark(false);
     });
-  }, [activePageCount, bookId, bookmarkNote, currentBookIdRef, currentPageNumber]);
+  }, [activePageCount, bookId, bookmarkNote, isCurrent, currentPageNumber]);
 
   const deleteBookmark = useCallback((bookmark: ReadingBookmark) => {
-    if (!bookId) return;
+    if (!bookId || !isCurrent(bookId)) return;
 
     const targetBookId = bookId;
     apiClient.delete(`/api/books/${targetBookId}/bookmarks/${bookmark.id}`)
       .then(() => {
-        if (targetBookId === currentBookIdRef.current) {
+        if (isCurrent(targetBookId)) {
           setBookmarks((prev) => prev.filter((item) => item.id !== bookmark.id));
         }
       })
       .catch((err) => console.error('Failed to delete reading bookmark', err));
-  }, [bookId, currentBookIdRef]);
+  }, [bookId, isCurrent]);
 
   const resetBookmarks = useCallback(() => {
     setBookmarks([]);

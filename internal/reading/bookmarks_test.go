@@ -16,30 +16,30 @@ func TestBookmarksCRUDPreservesIdentityAndOrdersPages(t *testing.T) {
 	store, uid, bid := positionFixture(t)
 	bookmarks := reading.NewBookmarks(store)
 	ctx := context.Background()
-	items, err := bookmarks.List(ctx, uid, bid)
+	items, err := bookmarks.List(ctx, commandSubject(uid), bid)
 	if err != nil || items == nil || len(items) != 0 {
 		t.Fatalf("empty list=%+v err=%v", items, err)
 	}
-	created, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: 12, Note: "note"})
+	created, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: 12, Note: "note"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: 12, Note: "edited"})
+	updated, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: 12, Note: "edited"})
 	if err != nil || updated.ID != created.ID || updated.Note != "edited" || !updated.CreatedAt.Equal(created.CreatedAt) {
 		t.Fatalf("updated=%+v created=%+v err=%v", updated, created, err)
 	}
-	first, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: 3})
+	first, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err = bookmarks.List(ctx, uid, bid)
+	items, err = bookmarks.List(ctx, commandSubject(uid), bid)
 	if err != nil || len(items) != 2 || items[0].ID != first.ID || items[1].ID != created.ID {
 		t.Fatalf("list=%+v err=%v", items, err)
 	}
-	if err := bookmarks.Delete(ctx, uid, bid, created.ID); err != nil {
+	if err := bookmarks.Delete(ctx, commandSubject(uid), bid, created.ID); err != nil {
 		t.Fatal(err)
 	}
-	items, err = bookmarks.List(ctx, uid, bid)
+	items, err = bookmarks.List(ctx, commandSubject(uid), bid)
 	if err != nil || len(items) != 1 || items[0].ID != first.ID {
 		t.Fatalf("remaining=%+v err=%v", items, err)
 	}
@@ -65,7 +65,7 @@ func TestBookmarksScopeEveryOperationToReaderAndBookWithoutReadingEffects(t *tes
 	if _, err := service.RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: 7}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RecordTime(ctx, reading.TimeReport{UserID: uid, BookID: bid, Seconds: 30}); err != nil {
+	if err := service.RecordTime(ctx, reading.TimeReport{Subject: commandSubject(uid), BookID: bid, Seconds: 30}); err != nil {
 		t.Fatal(err)
 	}
 	queries := reading.NewQueries(store)
@@ -78,31 +78,31 @@ func TestBookmarksScopeEveryOperationToReaderAndBookWithoutReadingEffects(t *tes
 		t.Fatal(err)
 	}
 	bookmarks := reading.NewBookmarks(store)
-	owner, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: 8, Note: "private"})
+	owner, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: 8, Note: "private"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, subject := range []struct{ uid, bid int64 }{{otherUser.ID, bid}, {uid, otherBook.ID}, {0, bid}} {
-		items, err := bookmarks.List(ctx, subject.uid, subject.bid)
+		items, err := bookmarks.List(ctx, commandSubject(subject.uid), subject.bid)
 		if err != nil || len(items) != 0 {
 			t.Fatalf("subject=%+v leaked=%+v err=%v", subject, items, err)
 		}
-		if err := bookmarks.Delete(ctx, subject.uid, subject.bid, owner.ID); !errors.Is(err, reading.ErrBookmarkNotFound) {
+		if err := bookmarks.Delete(ctx, commandSubject(subject.uid), subject.bid, owner.ID); !errors.Is(err, reading.ErrBookmarkNotFound) {
 			t.Fatalf("subject=%+v delete error=%v", subject, err)
 		}
-		other, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: subject.uid, BookID: subject.bid, Page: 8, Note: "other"})
+		other, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(subject.uid), BookID: subject.bid, Page: 8, Note: "other"})
 		if err != nil || other.ID == owner.ID {
 			t.Fatalf("subject=%+v bookmark=%+v err=%v", subject, other, err)
 		}
-		if err := bookmarks.Delete(ctx, subject.uid, subject.bid, other.ID); err != nil {
+		if err := bookmarks.Delete(ctx, commandSubject(subject.uid), subject.bid, other.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	items, err := bookmarks.List(ctx, uid, bid)
+	items, err := bookmarks.List(ctx, commandSubject(uid), bid)
 	if err != nil || len(items) != 1 || items[0].Note != "private" {
 		t.Fatalf("owner list=%+v err=%v", items, err)
 	}
-	if err := bookmarks.Delete(ctx, uid, bid, owner.ID); err != nil {
+	if err := bookmarks.Delete(ctx, commandSubject(uid), bid, owner.ID); err != nil {
 		t.Fatal(err)
 	}
 	after, err := queries.Book(ctx, uid, bid)
@@ -125,7 +125,7 @@ func TestBookmarksExposeStorageFailuresAndKeepSavedNotes(t *testing.T) {
 			store, uid, bid := positionFixture(t)
 			ctx := context.Background()
 			bookmarks := reading.NewBookmarks(store)
-			saved, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: 5, Note: "retained"})
+			saved, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: 5, Note: "retained"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,16 +134,16 @@ func TestBookmarksExposeStorageFailuresAndKeepSavedNotes(t *testing.T) {
 				if _, err := store.DB().Exec(`ALTER TABLE reading_bookmarks RENAME TO unavailable_bookmarks`); err != nil {
 					t.Fatal(err)
 				}
-				_, err = bookmarks.List(ctx, uid, bid)
+				_, err = bookmarks.List(ctx, commandSubject(uid), bid)
 			case "book lookup":
 				if err := store.Close(); err != nil {
 					t.Fatal(err)
 				}
-				_, err = bookmarks.List(ctx, uid, bid)
+				_, err = bookmarks.List(ctx, commandSubject(uid), bid)
 				if !errors.Is(err, reading.ErrBookmarkBookUnavailable) {
 					t.Fatalf("list book failure=%v", err)
 				}
-				_, err = bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: 5})
+				_, err = bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: 5})
 				if !errors.Is(err, reading.ErrBookmarkBookUnavailable) {
 					t.Fatalf("save book failure=%v", err)
 				}
@@ -152,20 +152,20 @@ func TestBookmarksExposeStorageFailuresAndKeepSavedNotes(t *testing.T) {
 					t.Fatal(err)
 				}
 				if op == "delete" {
-					err = bookmarks.Delete(ctx, uid, bid, saved.ID)
+					err = bookmarks.Delete(ctx, commandSubject(uid), bid, saved.ID)
 				} else {
 					page := int64(5)
 					if op == "insert" {
 						page = 6
 					}
-					_, err = bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: page, Note: "lost"})
+					_, err = bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: page, Note: "lost"})
 				}
 			}
 			if err == nil || errors.Is(err, reading.ErrBookmarkNotFound) || errors.Is(err, sql.ErrNoRows) {
 				t.Fatalf("storage failure=%v", err)
 			}
 			if op == "insert" || op == "update" || op == "delete" {
-				items, err := bookmarks.List(ctx, uid, bid)
+				items, err := bookmarks.List(ctx, commandSubject(uid), bid)
 				if err != nil || len(items) != 1 || items[0].ID != saved.ID || items[0].Note != "retained" {
 					t.Fatalf("after failure=%+v err=%v", items, err)
 				}
@@ -178,13 +178,13 @@ func TestBookmarksMissingBookAndBookmarkRemainObservable(t *testing.T) {
 	store, uid, _ := positionFixture(t)
 	bookmarks := reading.NewBookmarks(store)
 	ctx := context.Background()
-	if _, err := bookmarks.List(ctx, uid, 999999); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := bookmarks.List(ctx, commandSubject(uid), 999999); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("list missing book error=%v", err)
 	}
-	if _, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: 999999, Page: 1}); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: 999999, Page: 1}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("save missing book error=%v", err)
 	}
-	if err := bookmarks.Delete(ctx, uid, 999999, 999999); !errors.Is(err, reading.ErrBookmarkNotFound) {
+	if err := bookmarks.Delete(ctx, commandSubject(uid), 999999, 999999); !errors.Is(err, reading.ErrBookmarkNotFound) {
 		t.Fatalf("delete missing bookmark error=%v", err)
 	}
 }
@@ -202,7 +202,7 @@ func TestBookmarksClampPagesTrimNotesAndKeepExistingIdentity(t *testing.T) {
 		note, wantNote string
 	}{{-1, 1, "\t 笔记 \n", "笔记"}, {0, 1, " \n ", ""}, {1, 1, "first", "first"}, {20, 20, "last", "last"}, {500, 20, "\u3000末页\u3000", "末页"}} {
 		t.Run(tc.note, func(t *testing.T) {
-			got, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: tc.page, Note: tc.note})
+			got, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: tc.page, Note: tc.note})
 			if err != nil || got.Page != tc.want || got.Note != tc.wantNote {
 				t.Fatalf("bookmark=%+v err=%v want page=%d note=%q", got, err, tc.want, tc.wantNote)
 			}
@@ -214,7 +214,7 @@ func TestBookmarksClampPagesTrimNotesAndKeepExistingIdentity(t *testing.T) {
 	if _, err := store.DB().Exec(`UPDATE books SET page_count=0 WHERE id=?`, bid); err != nil {
 		t.Fatal(err)
 	}
-	got, err := bookmarks.Save(ctx, reading.BookmarkInput{UserID: uid, BookID: bid, Page: 500})
+	got, err := bookmarks.Save(ctx, reading.BookmarkInput{Subject: commandSubject(uid), BookID: bid, Page: 500})
 	if err != nil || got.Page != 500 {
 		t.Fatalf("unknown page count bookmark=%+v err=%v", got, err)
 	}

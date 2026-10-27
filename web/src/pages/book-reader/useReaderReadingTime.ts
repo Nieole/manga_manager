@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { useSessionActive } from '../../session/ApplicationSessionProvider';
 import { apiClient } from '../../api/client';
 
 const TICK_MS = 1000;
@@ -20,6 +21,7 @@ interface Options {
 }
 
 export function useReaderReadingTime({ bookId, enabled = true }: Options) {
+  const isSessionActive = useSessionActive();
   const activeSecondsRef = useRef(0);
   const lastActivityRef = useRef(0);
 
@@ -38,6 +40,7 @@ export function useReaderReadingTime({ bookId, enabled = true }: Options) {
 
     // flush 结算本会话（闭包 bookId）已累计的秒数。useBeacon 用于卸载/隐藏期。
     const flush = (useBeacon: boolean) => {
+      if (!isSessionActive()) { activeSecondsRef.current = 0; return; }
       const secs = Math.round(activeSecondsRef.current);
       if (secs < MIN_FLUSH_SECONDS) return;
       activeSecondsRef.current = 0;
@@ -80,5 +83,5 @@ export function useReaderReadingTime({ bookId, enabled = true }: Options) {
       // 切书 / 卸载：组件仍存活，用普通请求结算旧书剩余时长。
       flush(false);
     };
-  }, [bookId, enabled]);
+  }, [bookId, enabled, isSessionActive]);
 }

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react';
+import { act, cleanup, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { apiClient } from '../../api/client';
+import { ApplicationSessionProvider } from '../../session/ApplicationSessionProvider';
 import { useReaderReadingTime } from './useReaderReadingTime';
 vi.mock('../../api/client', () => ({ apiClient: { post: vi.fn() } }));
 const post = vi.mocked(apiClient.post);
@@ -16,7 +17,7 @@ beforeEach(() => {
   visibility('visible');
   Object.defineProperty(navigator, 'sendBeacon', { configurable: true, value: vi.fn(() => true) });
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('reports only active visible reading and resumes after reader input', () => {
   renderHook(() => useReaderReadingTime({ bookId: '1' }));
@@ -80,5 +81,17 @@ it('disables time reporting and ignores subthreshold reading', () => {
   rerender({ enabled: true });
   advance(4000);
   unmount();
+  expect(post).not.toHaveBeenCalled();
+});
+
+it('discards the prior reader seconds when the application identity changes', () => {
+  vi.stubGlobal('EventSource', class { close() {} });
+  function Reader() { useReaderReadingTime({ bookId: '1' }); return null; }
+  const reader = render(<ApplicationSessionProvider identity="1:regular" isAdmin={false}><Reader /></ApplicationSessionProvider>);
+  advance(10_000);
+  reader.rerender(<ApplicationSessionProvider identity="2:regular" isAdmin={false}><Reader /></ApplicationSessionProvider>);
+  expect(post).not.toHaveBeenCalled();
+  advance(7_000);
+  reader.unmount();
   expect(post).not.toHaveBeenCalled();
 });

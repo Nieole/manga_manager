@@ -172,8 +172,8 @@ func TestUserReadingActivityWriteReadUseSameDay(t *testing.T) {
 	if err := store.LogUserReadingActivity(ctx, u, book1, 7); err != nil {
 		t.Fatalf("LogUserReadingActivity: %v", err)
 	}
-	if err := store.AddUserBookReadingTime(ctx, u, book1, 350); err != nil {
-		t.Fatalf("AddUserBookReadingTime: %v", err)
+	if err := store.AccumulateReadingTimeForBook(ctx, u, book1, 350, TodayDayKey()); err != nil {
+		t.Fatalf("AccumulateReadingTimeForBook: %v", err)
 	}
 
 	// 当前连续：今天刚读过 → 1 天。
