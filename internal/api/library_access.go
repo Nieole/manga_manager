@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"time"
 
+	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/task"
 )
@@ -52,26 +52,17 @@ func (c *Controller) guardLibraryRead(w http.ResponseWriter, libraryID int64) (f
 }
 
 func (c *Controller) guardBookRead(w http.ResponseWriter, r *http.Request, bookID int64) (func(), bool) {
-	version := c.taskEngine.engine.LibraryAccessVersion()
-	source, cached := c.pageArchive.lookupSource(bookID, time.Now())
-	if !cached {
-		book, err := c.store.GetBook(r.Context(), bookID)
-		if err != nil {
-			jsonError(w, http.StatusNotFound, "Book entity not found")
-			return nil, false
-		}
-		source = bookPageSourceFromBook(book)
-	}
-	release, ok := c.guardLibraryRead(w, source.LibraryID)
-	if !ok {
+	release, err := c.content.AcquireRead(r.Context(), bookID, c.taskEngine.engine)
+	if errors.Is(err, bookcontent.ErrSourceMissing) {
+		jsonError(w, http.StatusNotFound, "Book entity not found")
 		return nil, false
 	}
-	if !cached && version == c.taskEngine.engine.LibraryAccessVersion() {
-		c.pageArchive.storeSource(bookID, source, time.Now())
+	if err != nil {
+		writeLibraryUnavailable(w)
+		return nil, false
 	}
 	return release, true
 }
-
 func writeLibraryUnavailable(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", "1")
 	jsonResponse(w, http.StatusServiceUnavailable, map[string]string{"error": "Library is temporarily unavailable", "code": "library_unavailable"})

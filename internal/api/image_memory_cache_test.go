@@ -21,7 +21,7 @@ func TestImageMemoryCacheRespectsByteBudget(t *testing.T) {
 		cache.Add("k"+strconv.Itoa(i), make([]byte, 1<<10))
 	}
 
-	used, entries, evictions := cache.stats()
+	used, entries, evictions := cache.Stats()
 	if used > budget {
 		t.Fatalf("总字节 %d 越过预算 %d", used, budget)
 	}
@@ -50,7 +50,7 @@ func TestImageMemoryCacheOverwriteDoesNotLeakBytes(t *testing.T) {
 		cache.Add("same-key", payload)
 	}
 
-	used, entries, _ := cache.stats()
+	used, entries, _ := cache.Stats()
 	if entries != 1 {
 		t.Fatalf("同键覆盖后应只有 1 个条目，实际 %d", entries)
 	}
@@ -87,7 +87,7 @@ func TestImageMemoryCachePurgeResetsAccounting(t *testing.T) {
 	cache.Add("a", make([]byte, 1<<10))
 	cache.Purge()
 
-	used, entries, _ := cache.stats()
+	used, entries, _ := cache.Stats()
 	if used != 0 || entries != 0 {
 		t.Fatalf("Purge 后 used=%d entries=%d, want 0/0", used, entries)
 	}
@@ -116,7 +116,7 @@ func TestImageMemoryCacheConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 
-	used, _, _ := cache.stats()
+	used, _, _ := cache.Stats()
 	if used > budget {
 		t.Fatalf("并发写入后总字节 %d 越过预算 %d —— 记账与内容之间出现了漂移", used, budget)
 	}

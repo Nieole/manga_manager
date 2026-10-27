@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/booksort"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -35,13 +36,14 @@ type Scanner struct {
 	store  database.Store
 	config *config.Manager
 	// diskWork 执行扫描器的**磁盘作业**：闸门、策略、上限、令牌与观测都收在它里面。
-	diskWork     *diskwork.Runner
-	openArchive  func(string) (parser.Archive, error)
-	coverOnce    sync.Once
-	coverMu      sync.RWMutex
-	coverClosed  bool
-	coverWorkers sync.WaitGroup
-	coverQueue   chan coverJob
+	diskWork      *diskwork.Runner
+	openArchive   func(string) (parser.Archive, error)
+	contentReader *bookcontent.ArchiveReader
+	coverOnce     sync.Once
+	coverMu       sync.RWMutex
+	coverClosed   bool
+	coverWorkers  sync.WaitGroup
+	coverQueue    chan coverJob
 	// coverRuns 是**封面运行**的发起口，装配期注册（见 SetCoverRunLauncher）。
 	// 留 nil 的进程里封面照样生成，只是不建运行、无处可报。
 	coverRuns CoverRunLauncher
@@ -77,6 +79,13 @@ func NewScanner(store database.Store, cfg *config.Manager) *Scanner {
 		openArchive:          parser.OpenArchive,
 		dirtyRefreshInterval: defaultDirtyRefreshInterval,
 	}
+	s.contentReader = bookcontent.NewArchiveReader(func(path string) (parser.Archive, func(), error) {
+		arc, err := s.openArchive(path)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		return arc, func() { _ = arc.Close() }, nil
+	})
 	s.scanningLibraries = make(map[int64]int)
 	s.diskWork = diskwork.NewRunner(s.currentConfig, storageio.Default)
 	return s
@@ -1671,25 +1680,17 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 	mediaType := candidate.mediaType
 	coverWork := diskwork.Work{Kind: storageio.WorkKindCoverBuild, Path: candidate.path}
 	stats, err := s.diskWork.Do(ctx, coverWork, func() error {
-		arc, err := s.openArchive(candidate.path)
-		if err != nil {
-			return err
+		var materialized bookcontent.PageBytes
+		var err error
+		if candidate.pageName == "" {
+			materialized, err = s.contentReader.Page(ctx, candidate.path, 1)
+		} else {
+			materialized, err = s.contentReader.NamedPage(ctx, candidate.path, parser.PageMetadata{Name: candidate.pageName, MediaType: mediaType})
 		}
-		defer arc.Close()
-		batch.countOpenedArchive()
-		pageName := candidate.pageName
-		if pageName == "" {
-			// 续跑那条路只从库里读得到书行，页目录得在这里现读一遍。
-			pages, err := arc.GetPages()
-			if err != nil {
-				return err
-			}
-			if len(pages) == 0 {
-				return fmt.Errorf("archive %q has no pages to use as a cover", candidate.path)
-			}
-			pageName, mediaType = pages[0].Name, pages[0].MediaType
+		if materialized.ArchiveOpened {
+			batch.countOpenedArchive()
 		}
-		pageData, err = arc.ReadPage(pageName)
+		pageData, mediaType = materialized.Data, materialized.Page.MediaType
 		return err
 	})
 	batch.absorbDiskWork(stats)
@@ -1752,24 +1753,11 @@ func (s *Scanner) generateBookThumbnail(ctx context.Context, candidate coverCand
 // SetBookCoverFromPage 用书内指定页(1-based)重建封面并落到 cover_path，随后刷新系列统计。
 // GetPages() 已按自然阅读顺序排序，故第 N 页即 pages[N-1]。返回新的相对封面路径。
 func (s *Scanner) SetBookCoverFromPage(ctx context.Context, book database.Book, pageNumber int) (string, error) {
-	arc, err := s.openArchive(book.Path)
+	materialized, err := s.contentReader.Page(ctx, book.Path, int64(pageNumber))
 	if err != nil {
 		return "", err
 	}
-	defer arc.Close()
-	pages, err := arc.GetPages()
-	if err != nil {
-		return "", err
-	}
-	if pageNumber < 1 || pageNumber > len(pages) {
-		return "", fmt.Errorf("page %d out of range (1..%d)", pageNumber, len(pages))
-	}
-	page := pages[pageNumber-1]
-	data, err := arc.ReadPage(page.Name)
-	if err != nil {
-		return "", err
-	}
-	return s.applyCustomCover(ctx, book, data, page.MediaType)
+	return s.applyCustomCover(ctx, book, materialized.Data, materialized.Page.MediaType)
 }
 
 // SetBookCoverFromImage 用外部上传的图片字节重建封面（上传封面）。

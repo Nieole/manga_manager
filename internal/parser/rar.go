@@ -27,7 +27,8 @@ var ErrArchiveClosed = errors.New("parser: archive handle is closed")
 // 游标 / 缓存全程由 mu 保护，故被归档池共享的同一 *RarArchive 可安全并发读取（同档读取串行化，
 // 这与 RAR 解码本就顺序一致）。
 type RarArchive struct {
-	path string
+	path          string
+	releaseBorrow func()
 
 	mu     sync.Mutex
 	closed bool                  // Close 后置位：句柄进入终态，任何读取直接报错而非静默重开
@@ -42,6 +43,10 @@ type RarArchive struct {
 }
 
 func OpenRar(path string) (Archive, error) {
+	return openTrackedArchive(path, openRar)
+}
+
+func openRar(path string) (Archive, error) {
 	// 惰性打开：即使文件暂不存在也不报错，延迟到实际读取时。
 	return &RarArchive{
 		path:  path,
@@ -53,6 +58,9 @@ func OpenRar(path string) (Archive, error) {
 func (r *RarArchive) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.releaseBorrow != nil {
+		defer r.releaseBorrow()
+	}
 	if r.rr != nil {
 		r.rr.Close()
 		r.rr = nil

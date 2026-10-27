@@ -534,17 +534,12 @@ func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
-	book, err := c.store.GetBook(r.Context(), bookID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "Book not found")
-		return
-	}
-	pages, err := c.listBookArchivePages(r.Context(), book)
+	manifest, err := c.content.List(r.Context(), bookID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
 		return
 	}
-
+	pages := manifest.Pages
 	query := mihonImageQuery(r)
 	items := make([]MihonPageResponse, 0, len(pages))
 	for i, page := range pages {

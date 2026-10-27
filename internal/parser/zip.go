@@ -54,12 +54,17 @@ type PageMetadata struct {
 
 // ZipArchive 处理 zip/cbz 等标准归档
 type ZipArchive struct {
-	mu     sync.RWMutex
-	reader *zip.ReadCloser
-	path   string
+	mu            sync.RWMutex
+	reader        *zip.ReadCloser
+	path          string
+	releaseBorrow func()
 }
 
 func OpenZip(path string) (Archive, error) {
+	return openTrackedArchive(path, openZip)
+}
+
+func openZip(path string) (Archive, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open zip %s: %w", path, err)
@@ -70,6 +75,9 @@ func OpenZip(path string) (Archive, error) {
 func (z *ZipArchive) Close() error {
 	z.mu.Lock()
 	defer z.mu.Unlock()
+	if z.releaseBorrow != nil {
+		defer z.releaseBorrow()
+	}
 	return z.reader.Close()
 }
 
