@@ -84,8 +84,8 @@ func TestMigrateRewritesForeignZoneLastReadAt(t *testing.T) {
 	}
 
 	// 在线那条：本地 2030-10-01 06:00，走正常写入路径。
-	if err := store.SetUserBookProgress(ctx, user.ID, onlineBook, 10, time.Date(2030, 10, 1, 6, 0, 0, 0, time.Local)); err != nil {
-		t.Fatalf("SetUserBookProgress: %v", err)
+	if err := seedLegacyUserBookProgress(ctx, store, user.ID, onlineBook, 10, time.Date(2030, 10, 1, 6, 0, 0, 0, time.Local)); err != nil {
+		t.Fatalf("seed legacy user progress: %v", err)
 	}
 	onlineRaw := readText(t, store,
 		`SELECT CAST(last_read_at AS TEXT) FROM user_book_progress WHERE user_id = ? AND book_id = ?`, user.ID, onlineBook)

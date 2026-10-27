@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	appruntime "manga-manager/internal/application/runtime"
 	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/application/seriesediting"
+	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
@@ -41,7 +43,6 @@ import (
 	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/sync/singleflight"
 )
 
 type Controller struct {
@@ -49,9 +50,7 @@ type Controller struct {
 	// imageCache 必须按**总字节**限流（见 image_memory_cache.go），不能按条数——
 	// 页图大小悬殊，按条数给不出稳定的内存上界，而它只是个加速缓存。
 	imageCache *imageMemoryCache
-	// 阅读路径上的两级只读缓存（书籍归档来源 + 归档页清单）已抽成独立组件
-	// （page_archive.go 的 pageArchiveCache）：二者必须同时失效，收在一起才能把这条约束写下来。
-	pageArchive *pageArchiveCache
+	content    *bookcontent.Service
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
 	stats   *statsCache
 	scanner *scanner.Scanner
@@ -76,9 +75,6 @@ type Controller struct {
 
 	// AI 阅读推荐缓存已抽成独立组件（recommendation_cache.go，按 locale + TTL + singleflight）；Controller 仅持引用。
 	recommendations *recommendationCache
-	// pageTranscodeGroup 合并同一 cacheKey 的并发页图转码：冷缓存时多客户端/预取请求同一页只解码+编码一次，
-	// 其余等待者复用同一结果，避免重复 CPU 转码与重复归档读取。
-	pageTranscodeGroup singleflight.Group
 
 	// taskEngine 是任务子域的适配层：把启动入口、控制端点与**重启函数**注册表接到
 	// internal/task 的领域引擎与 internal/taskstore 的落盘上（它自己不留任务表，理由见它的符号 doc）。
@@ -337,7 +333,6 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		store:           store,
 		stats:           newStatsCache(),
 		imageCache:      cache,
-		pageArchive:     newPageArchiveCache(sizes.bookPageSource, sizes.page),
 		scanner:         scan,
 		config:          cfg,
 		configPath:      cfgPath,
@@ -347,6 +342,10 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 		auth:            newAuthState(),
 	}
 
+	c.content = bookcontent.New(func(ctx context.Context, id int64) (bookcontent.Source, error) {
+		book, err := c.store.GetBook(ctx, id)
+		return bookPageSourceFromBook(book), err
+	}, c.currentConfig, cache, sizes.bookPageSource, sizes.page)
 	if err := c.assembleRuntime(scan); err != nil {
 		panic(err)
 	}
@@ -994,18 +993,16 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	book, err := c.store.GetBook(ctx, bookID)
+	manifest, err := c.content.List(ctx, bookID)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "Book not found")
+		if errors.Is(err, bookcontent.ErrSourceMissing) {
+			jsonError(w, http.StatusNotFound, "Book not found")
+			return
+		}
+		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromSource(manifest.Source), err), "list_pages")
 		return
 	}
-
-	pagesInfo, err := c.listBookArchivePages(ctx, book)
-	if err != nil {
-		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromBook(book), err), "list_pages")
-		return
-	}
-
+	pagesInfo := manifest.Pages
 	type PageResponse struct {
 		Number int64  `json:"number"`
 		URL    string `json:"url"`

@@ -88,13 +88,17 @@ func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
 		return
 	}
-	uid := c.currentUserID(r)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
 	var req ReadingTimeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if err := reading.New(c.store, nil).RecordTime(r.Context(), reading.TimeReport{UserID: uid, BookID: bookID, Seconds: req.Seconds}); err != nil {
+	if err := reading.New(c.store, nil).RecordTime(r.Context(), reading.TimeReport{Subject: subject, BookID: bookID, Seconds: req.Seconds}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to record reading time")
 		return
 	}
@@ -154,7 +158,12 @@ func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
 		return
 	}
-	items, err := reading.NewBookmarks(c.store).List(r.Context(), c.currentUserID(r), bookID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	items, err := reading.NewBookmarks(c.store).List(r.Context(), subject, bookID)
 	if err != nil {
 		if errors.Is(err, reading.ErrBookmarkBookUnavailable) {
 			jsonError(w, http.StatusNotFound, "Book not found")
@@ -179,11 +188,16 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
 	item, err := reading.NewBookmarks(c.store).Save(r.Context(), reading.BookmarkInput{
-		UserID: c.currentUserID(r),
-		BookID: bookID,
-		Page:   req.Page,
-		Note:   req.Note,
+		Subject: subject,
+		BookID:  bookID,
+		Page:    req.Page,
+		Note:    req.Note,
 	})
 	if err != nil {
 		if errors.Is(err, reading.ErrBookmarkBookUnavailable) {
@@ -207,7 +221,12 @@ func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "Invalid bookmark ID")
 		return
 	}
-	err = reading.NewBookmarks(c.store).Delete(r.Context(), c.currentUserID(r), bookID, bookmarkID)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	err = reading.NewBookmarks(c.store).Delete(r.Context(), subject, bookID, bookmarkID)
 	if err != nil {
 		if errors.Is(err, reading.ErrBookmarkNotFound) {
 			jsonError(w, http.StatusNotFound, "Bookmark not found")

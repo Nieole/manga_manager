@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -67,8 +68,8 @@ func TestBulkSyncProgressUTCTimestampWinsContinueReading(t *testing.T) {
 
 	// 在线路径写的是 time.Now()，其 Location 恒为 time.Local；换成同时区的定点时刻以去掉不确定性。
 	onlineAt := time.Date(2030, 10, 1, 6, 0, 0, 0, time.Local)
-	if err := store.SetUserBookProgress(ctx, user.ID, onlineBook.ID, 10, onlineAt); err != nil {
-		t.Fatalf("SetUserBookProgress: %v", err)
+	if err := testfixture.UserBookProgress(ctx, store, user.ID, onlineBook.ID, 10, onlineAt); err != nil {
+		t.Fatalf("seed legacy user progress: %v", err)
 	}
 
 	bulkSyncOfflineItem(t, controller, user, offlineBook.ID, 10, "2030-09-30T23:00:00Z")

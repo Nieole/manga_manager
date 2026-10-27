@@ -11,8 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-
-	"manga-manager/internal/database"
 )
 
 // 「读不到书的字节」的四种分类。前端按 reason 选提示文案，运维按 reason 读日志。
@@ -53,16 +51,11 @@ type StorageFailureResponse struct {
 	Path        string `json:"path"`
 }
 
-// storageTarget 是一次读取所指向的书。诊断只需要这三样，因此 database.Book 与
-// bookPageSource 都能收敛到它，三条端点共用同一套判定。
+// storageTarget 是一次读取所指向的书，三条内容端点共用同一套诊断判定。
 type storageTarget struct {
 	BookID    int64
 	LibraryID int64
 	Path      string
-}
-
-func storageTargetFromBook(book database.Book) storageTarget {
-	return storageTarget{BookID: book.ID, LibraryID: book.LibraryID, Path: book.Path}
 }
 
 func storageTargetFromSource(source bookPageSource) storageTarget {

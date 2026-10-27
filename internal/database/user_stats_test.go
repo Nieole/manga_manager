@@ -66,13 +66,13 @@ func TestUserBookReadingTime(t *testing.T) {
 	ctx, _, _, book1, book2 := seedUserProgressFixture(t, store)
 	u := mkUser(t, ctx, store, "alice", RoleAdmin)
 
-	if err := store.AddUserBookReadingTime(ctx, u, book1, 100); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, u, book1, 100, TodayDayKey()); err != nil {
 		t.Fatalf("add time1: %v", err)
 	}
-	if err := store.AddUserBookReadingTime(ctx, u, book1, 50); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, u, book1, 50, TodayDayKey()); err != nil {
 		t.Fatalf("add time2: %v", err)
 	}
-	if err := store.AddUserBookReadingTime(ctx, u, book2, 200); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, u, book2, 200, TodayDayKey()); err != nil {
 		t.Fatalf("add time3: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestUserBookReadingTime(t *testing.T) {
 	}
 
 	// 读完一本（page_count=20）后，回顾的「读完本数」应为 1（验证 books_completed 用 substr 而非无法解析的 strftime）。
-	if err := store.SetUserBookProgress(ctx, u, book1, 20, calendarNow()); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u, book1, 20, calendarNow()); err != nil {
 		t.Fatalf("complete book1: %v", err)
 	}
 	monthStats, err := store.GetUserPeriodStats(ctx, u, curYear, curMonth)

@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -181,7 +182,7 @@ func TestUpdateBookProgressStaleUpdatedAtSkipped(t *testing.T) {
 	ctx := context.Background()
 
 	serverAt := time.Now()
-	if err := store.UpdateBookProgress(ctx, database.UpdateBookProgressParams{
+	if err := testfixture.BookProgress(ctx, store, database.UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 12, Valid: true},
 		LastReadAt:   sql.NullTime{Time: serverAt, Valid: true},
 		ID:           book.ID,
@@ -636,7 +637,7 @@ func TestReadingStatsDualPathPerUser(t *testing.T) {
 	userA := mkTestUser(t, store, "ua", database.RoleRegular)
 	userB := mkTestUser(t, store, "ub", database.RoleRegular)
 
-	if err := store.AddUserBookReadingTime(ctx, userA.ID, book.ID, 120); err != nil {
+	if err := store.AccumulateReadingTimeForBook(ctx, userA.ID, book.ID, 120, database.TodayDayKey()); err != nil {
 		t.Fatalf("add user reading time: %v", err)
 	}
 	// 全局与每用户活动分别写入，验证热力图按 uid 分流。

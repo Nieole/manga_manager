@@ -28,7 +28,7 @@ func TestGetUserBookProgressMap(t *testing.T) {
 	u := mkUser(t, ctx, store, "alice", RoleAdmin)
 	other := mkUser(t, ctx, store, "bob", RoleRegular)
 
-	if err := store.SetUserBookProgress(ctx, u, book1, 7, time.Now()); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u, book1, 7, time.Now()); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestMigrateGlobalProgressToUserIdempotentAndPreservesExisting(t *testing.T)
 	u := mkUser(t, ctx, store, "root", RoleAdmin)
 
 	// 用户已有 book1 本地进度=3（迁移不应覆盖它）。
-	if err := store.SetUserBookProgress(ctx, u, book1, 3, time.Now()); err != nil {
+	if err := seedLegacyUserBookProgress(ctx, store, u, book1, 3, time.Now()); err != nil {
 		t.Fatalf("seed local: %v", err)
 	}
 	// 全局世界：book1=12（会被 IGNORE）、book2=20（会被迁入）。
@@ -82,7 +82,7 @@ func TestMigrateGlobalProgressToUserIdempotentAndPreservesExisting(t *testing.T)
 		id   int64
 		page int64
 	}{{book1, 12}, {book2, 20}} {
-		if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+		if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 			LastReadPage: sql.NullInt64{Int64: pr.page, Valid: true},
 			LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			ID:           pr.id,

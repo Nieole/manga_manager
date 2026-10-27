@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useRef } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { apiClient } from '../../api/client';
 import { BookmarkPanel } from './BookmarkPanel';
@@ -49,4 +49,26 @@ it('shows an empty list and creates a bookmark with the returned identity', asyn
   await screen.findByText('saved note');
   fireEvent.click(screen.getByTitle('reader.bookmark.delete'));
   await waitFor(() => expect(apiClient.delete).toHaveBeenCalledWith('/api/books/1/bookmarks/41'));
+});
+
+it('ignores an old save after leaving a book and returning to the same book', async () => {
+  let complete!: (value: { data: typeof saved }) => void;
+  vi.mocked(apiClient.get).mockResolvedValue({ data: [] });
+  vi.mocked(apiClient.post).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  const reader = renderHook(({ bookId }) => {
+    const currentBookIdRef = useRef<string | null>(bookId);
+    currentBookIdRef.current = bookId;
+    return useReaderBookmarks({ bookId, currentBookIdRef, activePageCount: 12, currentPageNumber: 5 });
+  }, { initialProps: { bookId: '1' } });
+  await act(async () => {});
+  const oldSave = reader.result.current.saveBookmark;
+  const oldDelete = reader.result.current.deleteBookmark;
+  act(() => oldSave());
+  reader.rerender({ bookId: '2' });
+  act(() => { oldSave(); oldDelete(saved); });
+  expect(apiClient.post).toHaveBeenCalledTimes(1);
+  expect(apiClient.delete).not.toHaveBeenCalled();
+  reader.rerender({ bookId: '1' });
+  await act(async () => { complete({ data: saved }); });
+  expect(reader.result.current.bookmarks).toEqual([]);
 });

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/xml"
 	"fmt"
+	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -224,7 +225,7 @@ func TestOPDSFeeds(t *testing.T) {
 	})
 
 	t.Run("continue reading feed", func(t *testing.T) {
-		if err := store.UpdateBookProgress(context.Background(), database.UpdateBookProgressParams{
+		if err := testfixture.BookProgress(context.Background(), store, database.UpdateBookProgressParams{
 			ID:           book.ID,
 			LastReadPage: sql.NullInt64{Int64: 6, Valid: true},
 			LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},

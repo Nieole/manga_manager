@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"manga-manager/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -520,7 +521,7 @@ func TestRegisterDeviceDoesNotBindToAdminInMultiUserSite(t *testing.T) {
 
 	_, book := seedServiceBook(t, store, rootDir, "Library A", "Series Alpha", "Volume01.cbz")
 	// 预置独立的管理员进度，未绑定设备只能写全局兼容进度，不能改变它。
-	if err := store.SetUserBookProgress(ctx, admin.ID, book.ID, 4, time.Now()); err != nil {
+	if err := testfixture.UserBookProgress(ctx, store, admin.ID, book.ID, 4, time.Now()); err != nil {
 		t.Fatalf("预置管理员进度失败: %v", err)
 	}
 

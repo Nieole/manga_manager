@@ -160,16 +160,6 @@ func (s *SqlStore) GetUserReadingStreak(ctx context.Context, userID int64) (curr
 
 // ---- 每本阅读时长 ----
 
-// AddUserBookReadingTime 累加某用户某书的活跃阅读秒数，并同步累加到当天的 user_reading_activity（供回顾按期统计时长）。
-func (s *SqlStore) AddUserBookReadingTime(ctx context.Context, userID, bookID, seconds int64) error {
-	if seconds <= 0 {
-		return nil
-	}
-	return s.ExecTx(ctx, func(q *Queries) error {
-		return q.AccumulateReadingTime(ctx, userID, bookID, seconds, TodayDayKey())
-	})
-}
-
 // AccumulateReadingTime writes the lifetime and daily counters on the caller's transaction.
 func (q *Queries) AccumulateReadingTime(ctx context.Context, userID, bookID, seconds int64, day string) error {
 	if _, err := q.db.ExecContext(ctx,

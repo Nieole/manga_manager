@@ -79,8 +79,8 @@ func TestReadingActivityDateMatchesLastReadAt(t *testing.T) {
 	}
 
 	now := time.Now()
-	if err := store.SetUserBookProgress(ctx, user.ID, bookID, 5, now); err != nil {
-		t.Fatalf("SetUserBookProgress: %v", err)
+	if err := seedLegacyUserBookProgress(ctx, store, user.ID, bookID, 5, now); err != nil {
+		t.Fatalf("seed legacy user progress: %v", err)
 	}
 	if err := store.LogUserReadingActivity(ctx, user.ID, bookID, 5); err != nil {
 		t.Fatalf("LogUserReadingActivity: %v", err)

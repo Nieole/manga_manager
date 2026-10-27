@@ -298,7 +298,7 @@ func TestSeriesStatsRefreshDrivesSearchSeriesPaged(t *testing.T) {
 	if err := store.LinkSeriesAuthor(ctx, LinkSeriesAuthorParams{SeriesID: series.ID, AuthorID: author.ID}); err != nil {
 		t.Fatalf("link author failed: %v", err)
 	}
-	if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+	if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 7, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           book.ID,
@@ -410,7 +410,7 @@ func TestSearchSeriesPagedAdvancedFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create alpha book: %v", err)
 	}
-	if err := store.UpdateBookProgress(ctx, UpdateBookProgressParams{
+	if err := seedLegacyBookProgress(ctx, store, UpdateBookProgressParams{
 		LastReadPage: sql.NullInt64{Int64: 7, Valid: true},
 		LastReadAt:   sql.NullTime{Time: time.Now(), Valid: true},
 		ID:           alphaBook.ID,
