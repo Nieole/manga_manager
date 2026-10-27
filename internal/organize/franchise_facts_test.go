@@ -82,7 +82,7 @@ func TestFranchiseCascadeSourcesRecoverAfterReopenWithStableIdentity(t *testing.
 		t.Run(source, func(t *testing.T) {
 			store, service, path := newFranchiseFacts(t)
 			ctx := context.Background()
-			before, err := organize.NewSmartCollections(store).Views(ctx, 0)
+			before, err := organize.NewSmartCollections(store).Views(ctx, readerSubject(t, 0))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestFranchiseCascadeSourcesRecoverAfterReopenWithStableIdentity(t *testing.
 			if ran, err := recovered.RepairDue(ctx, time.Now()); !ran || err != nil {
 				t.Fatalf("reopen repair=%v %v", ran, err)
 			}
-			after, err := organize.NewSmartCollections(reopened).Views(ctx, 0)
+			after, err := organize.NewSmartCollections(reopened).Views(ctx, readerSubject(t, 0))
 			if err != nil || len(after) != 2 {
 				t.Fatalf("views=%+v %v", after, err)
 			}
@@ -195,6 +195,11 @@ func TestUnrelatedOrUnchangedSeriesFactsDoNotInvalidateFranchises(t *testing.T) 
 	if _, err := editor.Save(ctx, 1, seriesmeta.ManualInput{Summary: "Updated summary", Status: "ongoing", Publisher: "Changed publisher"}); err != nil {
 		t.Fatal(err)
 	}
+	status, publisher := "complete", "Bulk publisher"
+	result, err := seriesediting.NewSelection(seriesediting.NewSQLStore(store), nil).Edit(ctx, []int64{1, 2, 3}, seriesmeta.SelectionInput{Status: &status, Publisher: &publisher, AddTags: []string{"Selected tag"}})
+	if err != nil || !result.Committed || len(result.SeriesIDs) != 3 {
+		t.Fatalf("bulk edit=%+v %v", result, err)
+	}
 	if err := store.DeleteSeries(ctx, 6); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +252,7 @@ func TestOldFranchiseFailureCannotOverrideNewCascadeRepair(t *testing.T) {
 
 func TestNameChangeAfterOldRebuildCommitRemainsPending(t *testing.T) {
 	store, base, _ := newFranchiseFacts(t)
-	before, err := organize.NewSmartCollections(store).Views(context.Background(), 0)
+	before, err := organize.NewSmartCollections(store).Views(context.Background(), readerSubject(t, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +334,7 @@ func TestInstallingFranchiseFactCoverageRepairsPreviouslyUnmarkedCascade(t *test
 	if ran, err := recovered.RepairDue(ctx, time.Now()); !ran || err != nil {
 		t.Fatalf("upgrade repair=%v %v", ran, err)
 	}
-	views, err := organize.NewSmartCollections(reopened).Views(ctx, 0)
+	views, err := organize.NewSmartCollections(reopened).Views(ctx, readerSubject(t, 0))
 	if err != nil || len(views) != 2 {
 		t.Fatalf("repaired upgrade=%+v %v", views, err)
 	}
