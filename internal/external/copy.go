@@ -1,6 +1,7 @@
 package external
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -14,6 +15,13 @@ var transferCopyBufferPool = sync.Pool{New: func() any { buf := make([]byte, tra
 
 // CopyFile stages a missing destination atomically and preserves an existing file.
 func CopyFile(src, dst string, createdDirs map[string]struct{}) (bool, error) {
+	return copyFile(context.Background(), src, dst, createdDirs, nil, nil)
+}
+
+func copyFile(ctx context.Context, src, dst string, createdDirs map[string]struct{}, progress func(int64, int64), validate func() error) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if createdDirs == nil {
 		createdDirs = make(map[string]struct{})
 	}
@@ -61,7 +69,36 @@ func CopyFile(src, dst string, createdDirs map[string]struct{}) (bool, error) {
 	bufPtr := transferCopyBufferPool.Get().(*[]byte)
 	defer transferCopyBufferPool.Put(bufPtr)
 
-	if _, err := io.CopyBuffer(targetFile, sourceFile, *bufPtr); err != nil {
+	var copied int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		n, readErr := sourceFile.Read(*bufPtr)
+		if n > 0 {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			written, err := targetFile.Write((*bufPtr)[:n])
+			if err != nil {
+				return false, err
+			}
+			if written != n {
+				return false, io.ErrShortWrite
+			}
+			copied += int64(written)
+			if progress != nil {
+				progress(copied, info.Size())
+			}
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				return false, readErr
+			}
+			break
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	// Sync 之后再 rename：外接盘掉电时，只有落盘的数据才谈得上「原子替换」。
@@ -80,14 +117,20 @@ func CopyFile(src, dst string, createdDirs map[string]struct{}) (bool, error) {
 	if err := os.Chtimes(tmpName, info.ModTime(), info.ModTime()); err != nil {
 		return false, err
 	}
-	// rename 前再确认一次目标不存在。开头那次 Stat 到这里隔了整个拷贝过程（可能几分钟），
-	// 期间别的传输任务完全可能已经把同一本书放好了；rename 会无声覆盖，那才是真的丢数据。
-	if _, err := os.Stat(dst); err == nil {
-		return true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if err := os.Rename(tmpName, dst); err != nil {
+	// Publication must reject a concurrent destination atomically. A preceding
+	// existence check alone cannot protect another writer's completed book.
+	if validate != nil {
+		if err := validate(); err != nil {
+			return false, err
+		}
+	}
+	if err := publishMissing(tmpName, dst); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return true, nil
+		}
 		return false, err
 	}
 	committed = true

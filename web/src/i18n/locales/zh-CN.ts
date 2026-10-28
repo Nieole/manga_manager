@@ -1980,6 +1980,8 @@ export const messages: MessageCatalog = {
     'task.msg.scan_external_library.complete': '外部库扫描完成',
     'task.msg.scan_external_library.complete_empty': '外部库扫描完成（未发现可处理资源）',
     'task.msg.transfer_external_library.cancelled': '外部库传输已取消',
+    'task.msg.transfer_external_library.cancelled_with_results': '外部库传输已取消：新增 {{added}}，本已存在 {{existing}}；已完成文件保留',
+    'home.transfer.cancellationNote': '取消会在当前读取或写入返回后停止后续复制；已完成的文件会保留。',
     'task.msg.transfer_external_library.failed': '外部库传输失败',
     'task.msg.transfer_external_library.all_exist': '所选系列已全部存在于外部库',
     'task.msg.transfer_external_library.transferring': '正在传输 {{path}}',
