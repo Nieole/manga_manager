@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Activity, Loader2, Terminal } from 'lucide-react';
 import { PageShell, PageHeader } from '../components/PageShell';
 import { useI18n } from '../i18n/LocaleProvider';
-import type { RunSnapshot } from '../components/tasks/TaskCenter';
+import type { RunSnapshot } from '../features/task-observation/types';
 
 const BackgroundTasks = lazy(() => import('./BackgroundTasks'));
 const Logs = lazy(() => import('./Logs'));

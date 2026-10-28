@@ -10,8 +10,12 @@ import (
 	"manga-manager/internal/task"
 )
 
-// Store supplies current library facts and atomic deletion with its FK cascades.
+// Store supplies library facts, persistence, and relocation protection.
 type Store interface {
+	CreateLibrary(context.Context, database.CreateLibraryParams) (database.Library, error)
+	UpdateLibrary(context.Context, database.UpdateLibraryParams) (database.Library, error)
+	ListLibraries(context.Context) ([]database.Library, error)
+	LibraryHasRecords(context.Context, int64) (bool, error)
 	GetLibrary(context.Context, int64) (database.Library, error)
 	DeleteLibrary(context.Context, int64) error
 	LibraryRelocationProtection(context.Context, int64) (*database.LibraryRelocationProtection, error)
@@ -24,8 +28,11 @@ type Watcher interface {
 }
 
 type Effects struct {
-	Watcher     Watcher
-	AfterDelete func(int64)
+	Watcher          Watcher
+	AfterDelete      func(int64)
+	GuardRoot        func(string) (func(), error)
+	StartInitialScan func(database.Library) (task.Launched, error)
+	AfterSave        func()
 }
 
 // DeleteResult keeps occupied, uncommitted and committed outcomes distinguishable.

@@ -2,10 +2,9 @@ import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../auth/AuthProvider';
-import { libraryFormPayload, useLibraryForm, type LibraryFormValues } from './layout/useLibraryForm';
+import { useLibraryManagement } from '../features/libraries/useLibraryManagement';
 import { apiClient, isAxiosError } from '../api/client';
 import { Activity, BookOpen, ClipboardCheck, FolderOpen, Plus, X, Loader2, RefreshCw, Search, Trash2, Settings as SettingsIcon, Menu, LayoutDashboard, FolderHeart, Download, Eraser, MoreHorizontal, Sparkles, PanelLeftClose, PanelLeftOpen, ListOrdered, GitCompareArrows, HardDriveDownload, ChevronDown, Wrench, HelpCircle, BarChart3 } from 'lucide-react';
-import { DEFAULT_SCAN_FORMATS, DEFAULT_SCAN_INTERVAL } from './layout/constants';
 import type { Library, SearchHit } from './layout/types';
 import { RelocationEntry } from './layout/RelocationEntry';
 import { useGlobalSearch } from './layout/useGlobalSearch';
@@ -16,13 +15,12 @@ import { ShortcutsPanel } from './ShortcutsPanel';
 import { SidebarTaskBubble } from './SidebarTaskBubble';
 import { SidebarGroup, SidebarLink } from './layout/SidebarNav';
 import { UserMenu } from './layout/UserMenu';
-import { useDirectoryBrowser } from './layout/useDirectoryBrowser';
 import { useTaskBubbles } from '../features/task-observation/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
-import { useLibraryInvalidation } from '../session/ApplicationSessionProvider';
+
 import { DeleteLibraryDialog } from '../features/libraries/DeleteLibraryDialog';
 
-const LibraryFormModal = lazy(() => import('./layout/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
+const LibraryFormModal = lazy(() => import('../features/libraries/LibraryFormModal').then((module) => ({ default: module.LibraryFormModal })));
 const SearchModal = lazy(() => import('./layout/SearchModal').then((module) => ({ default: module.SearchModal })));
 
 interface ConfirmDialogState {
@@ -34,16 +32,6 @@ interface ConfirmDialogState {
     onConfirm: (() => Promise<void> | void) | null;
 }
 
-// EMPTY_LIBRARY_FORM 是「新增」弹窗的初始值，也是新增成功后重置回去的值。
-const EMPTY_LIBRARY_FORM: LibraryFormValues = {
-    name: '',
-    path: '',
-    scanMode: 'none',
-    koreaderSyncEnabled: true,
-    scanInterval: DEFAULT_SCAN_INTERVAL,
-    scanFormats: DEFAULT_SCAN_FORMATS,
-};
-
 export default function Layout() {
     // 资料库的增删改、扫描、AI 分组与系统设置在后端都是管理员专属（见 isRegularWritablePath：
     // 普通账号的写权限只有阅读进度、书签与短评）；任务与日志更连读都要管理员（见 isAdminOnlyPath：
@@ -51,16 +39,9 @@ export default function Layout() {
     // 403 再弹一句泛化的失败提示，或者整屏加载失败——看起来像系统坏了，而不是没权限。
     const { isAdmin } = useAuth();
     const { t } = useI18n();
-    const [recentLibraryPaths, setRecentLibraryPaths] = useState<string[]>([]);
-    const [supportedScanFormats, setSupportedScanFormats] = useState(DEFAULT_SCAN_FORMATS);
-    const [libraries, setLibraries] = useState<Library[]>([]);
     const [deleteLibraryTarget, setDeleteLibraryTarget] = useState<Library | null>(null);
     const [relocationTarget, setRelocationTarget] = useState<string | undefined>();
     const [relocationLibraryID, setRelocationLibraryID] = useState<string | null>(null);
-    const [loading, setLoading] = useState(true);
-    // 侧栏资料库列表加载失败标记，用于渲染一个「加载失败 · 重试」入口。
-    const [librariesError, setLibrariesError] = useState(false);
-    const [showAddModal, setShowAddModal] = useState(false);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(() => {
         try {
@@ -97,21 +78,12 @@ export default function Layout() {
             return next;
         });
     };
-    const addForm = useLibraryForm(EMPTY_LIBRARY_FORM);
 
-    // 编辑资料库状态
-    const [showEditModal, setShowEditModal] = useState(false);
-    const [editLibId, setEditLibId] = useState("");
-    const editForm = useLibraryForm(EMPTY_LIBRARY_FORM);
-
-    const invalidateLibrary = useLibraryInvalidation();
-    const outletContext = useMemo(() => ({ libraries }), [libraries]);
-
-    // 任务气泡自行消费会话，持有终态延时清理与手动关闭状态。
+// 任务气泡自行消费会话，持有终态延时清理与手动关闭状态。
     const { entries: taskBubbleEntries, dismiss: dismissTaskBubble, clearFinished: clearFinishedTaskBubbles } = useTaskBubbles();
 
-    // 文件夹浏览器状态与请求逻辑封装在 useDirectoryBrowser 内。
-    const { browsing, setBrowsing, browseDirs, browseCurrent, browseParent, browseDrives, openDirectoryBrowser, navigateDirectoryBrowser } = useDirectoryBrowser();
+    const { libraries, loading, librariesError, fetchLibraries, showAddModal, setShowAddModal, showEditModal, setShowEditModal, addForm, editForm, supportedScanFormats, recentLibraryPaths, openEditLibraryModal, handleAddLibrary, handleEditLibrarySubmit, browsing, setBrowsing, browseDirs, browseCurrent, browseParent, browseDrives, openDirectoryBrowser, navigateDirectoryBrowser } = useLibraryManagement(isAdmin, (id, path) => { setRelocationLibraryID(id); setRelocationTarget(path); });
+    const outletContext = useMemo(() => ({ libraries }), [libraries]);
     const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
         open: false,
         title: '',
@@ -143,42 +115,6 @@ export default function Layout() {
 
     const openConfirmDialog = (next: Omit<ConfirmDialogState, 'open'>) => {
         setConfirmDialog({ open: true, ...next });
-    };
-
-    const openEditLibraryModal = (libraryId: string | number) => {
-        const target = libraries.find((lib) => String(lib.id) === String(libraryId));
-        if (!target) return;
-        setEditLibId(String(target.id));
-        editForm.reset({
-            name: target.name || "",
-            path: target.path || "",
-            scanMode: target.scan_mode || "none",
-            koreaderSyncEnabled: target.koreader_sync_enabled ?? true,
-            scanInterval: target.scan_interval || DEFAULT_SCAN_INTERVAL,
-            // 编辑弹窗的格式回落到**当前后端支持的集合**，而不是编译期常量：
-            // 老库行可能是空的，此时该给用户一个可用的默认值。
-            scanFormats: target.scan_formats || supportedScanFormats,
-        });
-        setShowEditModal(true);
-    };
-
-    const saveRecentLibraryPath = (path: string) => {
-        const normalized = path.trim();
-        if (!normalized) return;
-        const next = [normalized, ...recentLibraryPaths.filter((item) => item !== normalized)].slice(0, 5);
-        setRecentLibraryPaths(next);
-        localStorage.setItem('manga_manager_recent_library_paths', JSON.stringify(next));
-    };
-
-    const extractErrorMessage = (error: unknown, fallback: string) => {
-        if (isAxiosError(error)) {
-            const validationIssues = error.response?.data?.validation?.issues;
-            if (Array.isArray(validationIssues) && validationIssues.length > 0) {
-                return validationIssues.map((issue: { field: string; message: string }) => `${issue.field}: ${issue.message}`).join('\n');
-            }
-            return error.response?.data?.error || fallback;
-        }
-        return fallback;
     };
 
     const handleSelectResult = (hit: SearchHit) => {
@@ -219,53 +155,7 @@ export default function Layout() {
         </div>
     );
 
-    const fetchLibraries = () => {
-        setLoading(true);
-        setLibrariesError(false);
-        apiClient.get('/api/libraries')
-            .then(res => {
-                setLibraries(res.data);
-                // 不要在这里加「跳转到第一个资料库」的逻辑："/" 本身就是仪表盘，强制跳转
-                // 会让刷新、书签、直接输入地址这三种场景全都不可达（进去就被弹走）。
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Failed to load libraries", err);
-                setLibrariesError(true);
-                setLoading(false);
-            });
-    };
-
     useEffect(() => {
-        fetchLibraries();
-        try {
-            const stored = localStorage.getItem('manga_manager_recent_library_paths');
-            if (stored) {
-                const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed)) {
-                    setRecentLibraryPaths(parsed.filter((item) => typeof item === 'string'));
-                }
-            }
-        } catch {
-            // ignore invalid local storage
-        }
-        // 扫描格式的默认集合只喂给资料库表单，而建库/改库本身是管理员专属。普通用户问这条
-        // 只会吃一个 403（后端把 /api/system/ 整片划归管理员），每次加载都白报一次错。
-        // Layout 在 AuthGate 放行之后才挂载，此刻角色已定，挂载时判一次即可。
-        if (isAdmin) {
-            apiClient.get('/api/system/capabilities')
-                .then((res) => {
-                    if (res.data?.default_scan_formats) {
-                        setSupportedScanFormats(res.data.default_scan_formats);
-                        // 两张表单的格式都跟着后端声明的默认集合走（保持原行为）。
-                        // 这个效应只在挂载时跑一次，用户还来不及输入，覆盖是安全的。
-                        addForm.setScanFormats(res.data.default_scan_formats);
-                        editForm.setScanFormats(res.data.default_scan_formats);
-                    }
-                })
-                .catch(() => { });
-        }
-
         const openAddLibrary = () => setShowAddModal(true);
         const openEditLibrary = (event: Event) => {
             const customEvent = event as CustomEvent<{ libraryId?: string | number }>;
@@ -281,7 +171,7 @@ export default function Layout() {
             window.removeEventListener('manga-manager:open-edit-library', openEditLibrary as EventListener);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [openEditLibraryModal]);
 
     useLayoutShortcuts({
         onOpenSearch: () => setIsSearchModalOpen(true),
@@ -290,51 +180,6 @@ export default function Layout() {
         onToggleSidebar: toggleDesktopSidebar,
         onNavigate: navigate,
     });
-
-    const handleAddLibrary = async (e: React.FormEvent) => {
-        e.preventDefault();
-        addForm.setSubmitting(true);
-        try {
-            await apiClient.post('/api/libraries', libraryFormPayload(addForm.values));
-            setShowAddModal(false);
-            // 新增成功后清空表单：下次点「新增」应当是一张白纸。
-            // 编辑不做这一步——那份值就是这个库的当前配置，留着才对。
-            addForm.reset(EMPTY_LIBRARY_FORM);
-            saveRecentLibraryPath(addForm.values.path);
-            fetchLibraries();
-            // 新库需要让各处的列表重新拉一遍；
-            // 编辑改的是已有库的配置，不涉及集合变化。
-            invalidateLibrary();
-        } catch (error) {
-            console.error(error);
-            showToast(extractErrorMessage(error, t('layout.toast.addLibraryFailed')), 'error');
-        } finally {
-            addForm.setSubmitting(false);
-        }
-    };
-
-    const handleEditLibrarySubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        editForm.setSubmitting(true);
-        try {
-            await apiClient.put(`/api/libraries/${editLibId}`, libraryFormPayload(editForm.values));
-            setShowEditModal(false);
-            saveRecentLibraryPath(editForm.values.path);
-            fetchLibraries();
-        } catch (error) {
-            if (isAxiosError(error) && error.response?.data?.code === 'relocation_required') {
-                setShowEditModal(false);
-                setRelocationTarget(editForm.values.path);
-                setRelocationLibraryID(editLibId);
-                showToast(t('relocation.editRedirect'));
-                return;
-            }
-            console.error(error);
-            showToast(isAxiosError(error) && error.response?.data?.code === 'relocation_protected' ? t('relocation.protection.explanation') : extractErrorMessage(error, t('layout.toast.editLibraryFailed')), 'error');
-        } finally {
-            editForm.setSubmitting(false);
-        }
-    };
 
     const handleScanLibrary = async (id: string, force: boolean = false) => {
         try {

@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Activity, RefreshCw } from 'lucide-react';
-import { TaskCenter, type TaskCenterFilters, type TaskTarget, type RunSnapshot } from '../components/tasks/TaskCenter';
+import { TaskCenter } from '../components/tasks/TaskCenter';
+import type { TaskCenterFilters, TaskTarget, RunSnapshot } from '../features/task-observation/types';
 import { useI18n } from '../i18n/LocaleProvider';
 import { isLiveRunStatus } from '../utils/runStatus';
 import { useTaskObservation } from '../features/task-observation/useTaskObservation';

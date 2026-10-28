@@ -1,3 +1,4 @@
+import type { TaskBubbleEntry } from '../features/task-observation/types';
 /**
  * 业务流程：共享组件承接跨页面交互模式，例如弹窗、选择条、任务入口、目录选择和全局搜索。
  * 数据边界：组件只应通过 props 表达业务意图，不直接假设当前页面或后端资源路径。
@@ -11,21 +12,7 @@ import { useI18n } from '../i18n/LocaleProvider';
 import { getTaskMessage } from '../i18n/task';
 import { isActiveRunStatus, isTerminalRunStatus } from '../utils/runStatus';
 
-export interface TaskBubbleEntry {
-  // taskId 是气泡的身份：同一个**任务**的历次推送更新同一个气泡。
-  // 它不是**任务键**——契约上已经没有那一格（ADR 0007），键也认不出「哪一次」。
-  taskId: number;
-  type: string;
-  status: string;
-  message: string;
-  message_code?: string;
-  message_params?: Record<string, string>;
-  error?: string;
-  current: number;
-  total: number;
-  scope_name?: string;
-  updatedAt: number;
-}
+
 
 interface TaskBubbleProps {
   tasks: TaskBubbleEntry[];

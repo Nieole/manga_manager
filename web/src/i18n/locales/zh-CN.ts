@@ -1,6 +1,9 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'librarySave.unavailable': '资料库仍被使用或目录已被保留，请等待访问结束后重试。表单内容已保留。',
+    'librarySave.refreshFailed': '资料库已保存，但导航刷新失败。请重试资料库列表，无需重复保存。',
+    'librarySave.savedWarning': '资料库已保存，监听或首扫未能启动。请检查任务和资料库设置；扫描获准启动不代表扫描完成。',
     'libraryDelete.busy': '资料库仍被占用，未执行删除。请结束相关操作后重试。',
     'libraryDelete.timedOut': '等待访问退出已达到时限，资料库未删除。请稍后重试。',
     'libraryDelete.cancelled': '删除请求已取消，资料库未删除。',

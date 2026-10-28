@@ -1219,6 +1219,23 @@ func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 	if created.ScanFormats != config.DefaultScanFormatsCSV {
 		t.Fatalf("unexpected default scan formats: %q", created.ScanFormats)
 	}
+	// Changing an empty root must wait for the admitted initial scan to release it.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		conflicts, err := controller.runtime.Engine.LibraryConflicts(ctx, created.ID, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(conflicts) == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 
 	updatedPath := filepath.Join(t.TempDir(), "library-updated")
 	if err := os.MkdirAll(updatedPath, 0o755); err != nil {
@@ -2983,7 +3000,7 @@ func TestRunSnapshotTracksScrapeMetricsAndLabels(t *testing.T) {
 func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 	provider := newBlockingMetadataProvider()
-	controller.providerFactory = func(string) metadata.Provider {
+	controller.fetcherFactory = func(string) metadata.Fetcher {
 		return provider
 	}
 

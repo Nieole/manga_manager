@@ -182,13 +182,10 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 		req.Prompt = "Hello, this is a test from Manga Manager."
 	}
 	if req.BaseURL == "" && req.Endpoint != "" {
-		tmpCfg := &config.Config{}
-		tmpCfg.LLM.Provider = req.Provider
-		tmpCfg.LLM.Endpoint = req.Endpoint
-		config.NormalizeConfig(tmpCfg)
-		req.BaseURL = tmpCfg.LLM.BaseURL
-		req.RequestPath = tmpCfg.LLM.RequestPath
-		req.APIMode = tmpCfg.LLM.APIMode
+		c := config.NormalizeLLMConnection(config.LLMConnection{Provider: req.Provider, Endpoint: req.Endpoint})
+		req.BaseURL = c.BaseURL
+		req.RequestPath = c.RequestPath
+		req.APIMode = c.APIMode
 	}
 
 	cfg := c.currentConfig()
@@ -201,7 +198,7 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	provider := metadata.NewAIProvider(req.Provider, req.APIMode, req.BaseURL, req.RequestPath, req.Model, req.APIKey, cfg.LLM.Timeout)
+	var provider metadata.ConnectionTester = metadata.NewAIProvider(req.Provider, req.APIMode, req.BaseURL, req.RequestPath, req.Model, req.APIKey, cfg.LLM.Timeout)
 	response, err := provider.TestLLM(r.Context(), req.Prompt)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("LLM Test failed: %v", err))
