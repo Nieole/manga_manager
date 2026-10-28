@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"manga-manager/internal/database"
@@ -32,6 +33,22 @@ func TestComicInfoCommittedFileSurvivesFactStoreFailure(t *testing.T) {
 	}
 	if run.MessageParams["written"] != "1" || run.MessageParams["failed"] != "0" || run.MessageParams["warnings"] != "1" {
 		t.Fatalf("committed result: %+v", run)
+	}
+	if run.MessageParams["committed_book_ids"] != strconv.FormatInt(book.ID, 10) {
+		t.Fatalf("lost committed scope: %+v", run.MessageParams)
+	}
+	events, err := c.runtime.Tasks.ListRunEvents(context.Background(), run.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Code == "comicinfo_facts_after_commit" && strings.Contains(event.Detail, "file committed; refresh facts before retrying") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("committed warning missing from actual run events: %+v", events)
 	}
 	arc, err := parser.OpenArchive(book.Path)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"manga-manager/internal/storageio"
 	"manga-manager/internal/task"
 	"strconv"
+	"strings"
 )
 
 // ComicInfoLaunch describes the accepted series write without retaining request state.
@@ -109,6 +110,7 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 
 	return c.runs.Start(ctx, spec, func(ctx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		written, skipped, failed, warnings := 0, 0, 0, 0
+		committedIDs := []string{}
 		for i, book := range books {
 			// 聚合是纯 CPU，留在**磁盘作业**之外：把它夹进令牌的持有区间只会虚占这块盘的归档打开额度。
 			info := seriesmeta.BuildComicInfoForBook(book, series, tags, authors)
@@ -130,9 +132,11 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 			switch {
 			case writeErr == nil:
 				written++
+				committedIDs = append(committedIDs, strconv.FormatInt(book.ID, 10))
+				handle.MergeParams(map[string]string{"committed_book_ids": strings.Join(committedIDs, ","), "written": strconv.Itoa(written)})
 				if publication.Warning != nil {
 					warnings++
-					handle.Warn("comicinfo_facts_after_commit", book.Name+": file committed; refresh facts before retrying: "+publication.Warning.Error(), 1)
+					handle.Warn("comicinfo_facts_after_commit", "book_id="+strconv.FormatInt(book.ID, 10)+" "+book.Name+": file committed; refresh facts before retrying: "+publication.Warning.Error(), 1)
 				}
 			case errors.Is(writeErr, parser.ErrArchiveNotWritable), errors.Is(writeErr, parser.ErrComicInfoNotMergeable):
 				// 无法安全合并的原文档与不可写的格式同属「这本书写不了」，都按跳过计，不算失败。
@@ -143,7 +147,7 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 			}
 			if errors.Is(writeErr, context.Canceled) || errors.Is(writeErr, context.DeadlineExceeded) {
 				if ctx.Err() != nil {
-					return task.Result{Params: map[string]string{"written": strconv.Itoa(written), "skipped": strconv.Itoa(skipped), "failed": strconv.Itoa(failed), "warnings": strconv.Itoa(warnings)}}, ctx.Err()
+					return task.Result{Params: map[string]string{"written": strconv.Itoa(written), "skipped": strconv.Itoa(skipped), "failed": strconv.Itoa(failed), "committed_book_ids": strings.Join(committedIDs, ","), "warnings": strconv.Itoa(warnings)}}, ctx.Err()
 				}
 			}
 
@@ -163,10 +167,10 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 			})
 		}
 		return task.Result{Params: map[string]string{
-			"written":  strconv.Itoa(written),
-			"skipped":  strconv.Itoa(skipped),
-			"failed":   strconv.Itoa(failed),
-			"warnings": strconv.Itoa(warnings),
+			"written":            strconv.Itoa(written),
+			"skipped":            strconv.Itoa(skipped),
+			"failed":             strconv.Itoa(failed),
+			"committed_book_ids": strings.Join(committedIDs, ","), "warnings": strconv.Itoa(warnings),
 		}}, nil
 	})
 }
