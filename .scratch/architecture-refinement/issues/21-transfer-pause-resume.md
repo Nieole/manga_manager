@@ -4,7 +4,7 @@
 
 **Blocked by:** 20: 复制中的取消与提交结果。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 114、115、116、117、118、121、122、196。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -30,3 +30,9 @@
 - Frontend after-merge full suite passed 101 files / 942 tests in `.tmp/ticket21-after-merge-ui-full.log`, including pause → running → completed coverage consumption and prior failure/cancellation recovery. After-merge frontend lint and real build passed. The transfer dialog explains retained progress, safety checks, cancellation latency and the absence of automatic continuation after restart.
 - A final merge also incorporated ticket 26. `.tmp/ticket21-last-integration.log` records related external 2.744s, diskjobs 1.942s and API 8.013s actually passing afterward; `.tmp/ticket21-last-integration-lint.log` records `0 issues.`.
 - No Linux/Darwin runtime execution or forced interruption of a blocked single OS IO call is claimed. Existing Unix-only fixtures remain platform-qualified. Pending merger verification and closure; status stays ready-for-agent.
+
+### Integration verification (2026-10-29)
+
+- Merged through bf3514f260974d6af1c7be2234709dfbc223186e. Recovered completed main-tree logs confirm actual diskjobs full race 20.742s, diskwork full race 6.009s, storageio full race 5.424s and external full ordinary 4.675s. The diskjobs suite includes the real Engine pause/resume/cancel consumer. External race launches were blocked twice by Application Control; they are not passes. Implementer full external race 34.446s remains the actual race evidence for that package.
+- Main-tree External HTTP race retry passed 10.430s, including the failed relocation-policy test selected by the earlier broad pattern. The earlier run failed on a Windows directory rename with Access is denied; its log is retained as failure evidence, not counted as a pass. Frontend transfer consumers passed 3 files / 14 tests. Logs: .tmp/merge-wave14-transfer-owner.log, merge-wave14-external-ordinary.log, merge-wave14-transfer-api.log, merge-wave14-transfer-api-retry.log and merge-wave14-web.log.
+- Final Go lint reported 0 issues and gofmt emitted no files. Whole-baseline whitespace and tracked conflict-marker scans pass. No incomplete launch or uncommitted staging is inferred successful.
