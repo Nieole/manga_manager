@@ -27,16 +27,17 @@ type preemptingAIGroupingStore struct {
 	preempt func()
 }
 
-func (s *preemptingAIGroupingStore) ExecTx(ctx context.Context, fn func(*database.Queries) error) error {
+func (s *preemptingAIGroupingStore) WithAIGroupingWrite(ctx context.Context, fn func(database.AIGroupingWrite) error) error {
 	s.once.Do(s.preempt)
-	return s.Store.ExecTx(ctx, fn)
+	return s.Store.WithAIGroupingWrite(ctx, fn)
 }
 
 type applyAIGroupingCollectionResponse struct {
-	Success             bool  `json:"success"`
-	ReviewID            int64 `json:"review_id"`
-	CollectionID        int64 `json:"collection_id"`
-	CreatedCollectionID int64 `json:"created_collection_id"`
+	Review              aiGroupingReviewView `json:"review"`
+	Success             bool                 `json:"success"`
+	ReviewID            int64                `json:"review_id"`
+	CollectionID        int64                `json:"collection_id"`
+	CreatedCollectionID int64                `json:"created_collection_id"`
 }
 
 // seedAIGroupingReviewWithCollections 建一条待应用的审核，候选合集按 names 顺序各挂一个系列。
@@ -180,6 +181,16 @@ func TestApplyAIGroupingReviewCollectionReportsCreatedID(t *testing.T) {
 					t.Fatalf("解析响应: %v", err)
 				}
 
+				if res.Review.ID != review.ID || len(res.Review.Collections) != len(collections) {
+					t.Fatalf("missing authoritative review: %+v", res.Review)
+				}
+				expected := "pending"
+				if i == len(collections)-1 {
+					expected = "applied"
+				}
+				if res.Review.Status != expected || res.Review.Collections[i].Status != "applied" {
+					t.Fatalf("incorrect authoritative outcome: %+v", res.Review)
+				}
 				stored, err := store.GetAIGroupingReviewCollection(ctx, collection.ID)
 				if err != nil {
 					t.Fatalf("GetAIGroupingReviewCollection: %v", err)

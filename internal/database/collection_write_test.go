@@ -50,4 +50,14 @@ func TestCollectionTransactionCapabilitiesDoNotExposeSQLOrUnrelatedEdits(t *test
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.WithAIGroupingWrite(context.Background(), func(tx database.AIGroupingWrite) error {
+		assertNoSQL(tx)
+		if _, ok := tx.(database.CollectionWrite); ok {
+			t.Fatal("AI adjudication exposes manual collection deletion")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 }
