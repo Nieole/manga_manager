@@ -10,14 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/bookidentity"
 	"strings"
 	"time"
 
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
-	"manga-manager/internal/diskwork"
+
 	"manga-manager/internal/reading"
-	"manga-manager/internal/storageio"
 )
 
 // kosync 进度载荷各字段的长度上限。设备侧本就只会推送文件路径/百分比串/设备名，
@@ -335,7 +335,7 @@ func (s *Service) SaveProgress(ctx context.Context, creds Credentials, payload P
 	)
 	matchConfig := s.currentMatchConfig()
 	documentKey := normalizeDocumentForMatch(payload.Document, matchConfig)
-	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
+	if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, string(documentKey), matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
 		bookID = sql.NullInt64{Int64: match.BookID, Valid: true}
 		matchedBy = match.MatchedBy
 		if projection, applyErr = s.applyReceivedBookProgress(ctx, match, payload.Percentage, syncUserID, receivedAt); applyErr != nil {
@@ -406,7 +406,7 @@ func (s *Service) GetProgress(ctx context.Context, creds Credentials, document s
 	if !record.BookID.Valid {
 		matchConfig := s.currentMatchConfig()
 		documentKey := normalizeDocumentForMatch(record.Document, matchConfig)
-		if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
+		if match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, string(documentKey), matchConfig.MatchMode, matchConfig.PathIgnoreExtension); matchErr == nil {
 			pullUserID, ownerErr := s.store.GetKOReaderAccountUserID(ctx, record.Username)
 			if ownerErr != nil {
 				return record, fmt.Errorf("resolve reading owner: %w", ownerErr)
@@ -464,121 +464,10 @@ func (s *Service) ResetProgress(ctx context.Context, id int64) (database.KOReade
 	return record, nil
 }
 
-// TaskHandle 是两个批循环干活所需的资格，由发起这次重建/对账的一方交出——它是那一方的
-// **运行句柄**收窄到本包真正用得上的三样：报**计数推进**、在可中断点过**暂停闸门**、
-// 以及发起**磁盘作业**（**指纹**重建逐本读完整个文件）。别的上报面本包一概够不着，
-// 因为批循环不知道自己在为哪个任务跑、也不该知道。
-//
-// 声明在这里而不是 import 句柄所在的包：本包说的是「批循环需要什么」，谁来满足由调用方决定，
-// 结构化满足即可（同 external.Store）。
-//
-// Advance 只报两个计数、不带展示文案，理由见 external.TaskHandle。
+// TaskHandle supplies progress counts and the caller-owned pause/cancellation gate.
 type TaskHandle interface {
 	Advance(current, total int)
-	Checkpoint(ctx context.Context) error
-	Disk(ctx context.Context, work diskwork.Work, fn func() error) error
-}
-
-// RebuildOptions 调节一次**指纹**重建。零值即「按当前配置的匹配模式、一批 500 本、批间不停顿」。
-type RebuildOptions struct {
-	// BatchSize 是一批取几本；非正时取 500。
-	BatchSize int
-	// BatchGap 是每批之后的停顿，用来把后台回填压低到不与别的活抢盘；非正时不停。
-	// 停顿先过**暂停闸门**，且本身可被取消。
-	BatchGap time.Duration
-	// MatchMode 钉住这次重建按哪种模式补身份；留空表示读当前配置。发起时已按某一种模式盘算过
-	// 缺口的调用方钉住它，免得任务跑到一半配置被改、口径跟着换。
-	MatchMode string
-}
-
-// RebuildBookIdentities 回填缺**指纹**的书。二进制哈希模式下每本要读完整个文件，那是一次
-// **磁盘作业**；路径模式只拼字符串，一次盘都不读。
-//
-// 指纹算不出来只跳过这一本、推进分页游标；中止只由磁盘作业入口返回的错误——闸门与令牌的错误
-// ——决定。游标停住即死循环：批次按 id > afterID 切，坏书排在末尾时同一本会被永远切回来。
-//
-// task 不得为 nil：过闸门与发起磁盘作业都经它，没有兜底的空实现可用。
-func (s *Service) RebuildBookIdentities(ctx context.Context, opts RebuildOptions, task TaskHandle) (int, int, error) {
-	limit := opts.BatchSize
-	if limit <= 0 {
-		limit = 500
-	}
-	matchMode := strings.TrimSpace(opts.MatchMode)
-	if matchMode == "" {
-		matchMode = s.currentMatchConfig().MatchMode
-	}
-	missingCount, err := s.store.CountBooksMissingIdentity(ctx, matchMode)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	total := int(missingCount)
-	updated := 0
-	var afterID int64
-	for {
-		if err := task.Checkpoint(ctx); err != nil {
-			return updated, total, err
-		}
-		books, err := s.store.ListBooksMissingIdentityBatch(ctx, matchMode, afterID, limit)
-		if err != nil {
-			return updated, total, err
-		}
-		if len(books) == 0 {
-			break
-		}
-
-		for _, book := range books {
-			if err := task.Checkpoint(ctx); err != nil {
-				return updated, total, err
-			}
-			params := database.UpdateBookIdentityParams{ID: book.ID}
-			if matchMode == config.KOReaderMatchModeBinaryHash {
-				var fileHash string
-				var hashErr error
-				// 闭包只捕获自己的错误：算不出指纹不该中止整个回填。
-				err := task.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
-					fileHash, hashErr = FingerprintFileContext(ctx, book.Path)
-					return nil
-				})
-				if err != nil {
-					return updated, total, err
-				}
-				if hashErr != nil {
-					slog.WarnContext(ctx, "Failed to fingerprint book", "book_id", book.ID, "path", book.Path, "error", hashErr)
-					afterID = book.ID
-					continue
-				}
-				params.FileHash = fileHash
-			} else {
-				params.PathFingerprint = FingerprintRelativePath(book.LibraryPath, book.Path, false)
-				params.PathFingerprintNoExt = FingerprintRelativePath(book.LibraryPath, book.Path, true)
-			}
-
-			if err := s.store.UpdateBookIdentity(ctx, params); err != nil {
-				return updated, total, err
-			}
-
-			updated++
-			afterID = book.ID
-			task.Advance(updated, total)
-		}
-
-		if opts.BatchGap > 0 {
-			if err := task.Checkpoint(ctx); err != nil {
-				return updated, total, err
-			}
-			timer := time.NewTimer(opts.BatchGap)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return updated, total, ctx.Err()
-			}
-		}
-	}
-	return updated, total, nil
+	Checkpoint(context.Context) error
 }
 
 // ReconcileProgress 给尚未匹配到书的进度记录补上归属。它一次盘都不读，只用到 task 的
@@ -618,7 +507,7 @@ func (s *Service) ReconcileProgressWithMatching(ctx context.Context, limit int, 
 				return updated, total, err
 			}
 			documentKey := normalizeDocumentForMatch(item.Document, matchConfig)
-			match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, documentKey, matchConfig.MatchMode, matchConfig.PathIgnoreExtension)
+			match, matchErr := s.store.FindBookByDocumentFingerprint(ctx, string(documentKey), matchConfig.MatchMode, matchConfig.PathIgnoreExtension)
 			if matchErr == nil {
 				reconcileUserID, ownerErr := s.store.GetKOReaderAccountUserID(ctx, item.Username)
 				if ownerErr != nil {
@@ -739,18 +628,22 @@ func (s *Service) currentMatchConfig() MatchConfig {
 	}
 }
 
-func normalizeDocumentForMatch(document string, cfg MatchConfig) string {
+// DocumentKey is the protocol document normalized for one matching mode.
+// It identifies a device lookup, not a persistent book or an account credential.
+type DocumentKey string
+
+func normalizeDocumentForMatch(document string, cfg MatchConfig) DocumentKey {
 	document = strings.TrimSpace(document)
 	if document == "" {
 		return ""
 	}
 	if cfg.MatchMode == config.KOReaderMatchModeFilePath {
-		return FingerprintDocumentPath(document, cfg.PathIgnoreExtension)
+		return DocumentKey(bookidentity.FingerprintPath(document, cfg.PathIgnoreExtension))
 	}
-	return strings.ToLower(document)
+	return DocumentKey(strings.ToLower(document))
 }
 
-func NormalizeDocumentForMatch(document string, matchMode string, pathIgnoreExtension bool) string {
+func NormalizeDocumentForMatch(document string, matchMode string, pathIgnoreExtension bool) DocumentKey {
 	return normalizeDocumentForMatch(document, MatchConfig{
 		MatchMode:           matchMode,
 		PathIgnoreExtension: pathIgnoreExtension,

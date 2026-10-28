@@ -10,9 +10,21 @@
 
 **切片类型：** 纵向切片。
 
-- [ ] 分别表达书身份、内容证据和设备文档键，不因移包改口径。
-- [ ] 扫描、维护和设备同步的生产消费者迁移，不为新接口增加空转发。
-- [ ] 保持哈希、路径、字节身份及 size+mtime 重连歧义取舍。
-- [ ] 真实文件证据与设备协议矩阵验证重建、匹配及兼容身份。
+- [x] 分别表达书身份、内容证据和设备文档键，不因移包改口径。
+- [x] 扫描、维护和设备同步的生产消费者迁移，不为新接口增加空转发。
+- [x] 保持哈希、路径、字节身份及 size+mtime 重连歧义取舍。
+- [x] 真实文件证据与设备协议矩阵验证重建、匹配及兼容身份。
 
 ## Comments
+
+### Implementation and verification — 2026-10-28
+
+- `bookidentity` owns full-byte MD5, size/head/tail quick SHA-1 and normalized relative-path evidence, with distinct `ContentHash`, `QuickHash` and `PathHash` types. Persistent book IDs remain database identities; evidence equality does not authorize merging records. `koreader.DocumentKey` expresses a protocol lookup separately from those evidence values and from account sync keys. `CONTEXT.md` records the vocabulary through the domain-modeling skill.
+- The complete evidence rebuild loop moved from `koreader.Service` to the narrow-store `bookidentity.Service.Rebuild`. It retains batch cursors, actual disk admission/checkpoints, unreadable-file skipping, cancellation, gaps and caller-retained matching mode. Maintenance calls this owner directly for rebuild, background backfill and the first stage of matching refresh. Scanner consumes neutral evidence functions directly. Old KOReader fingerprint/rebuild producers were removed; no protocol-to-evidence forwarding layer remains.
+- KOReader retains account registration/authentication, constant-time credential checks, device document normalization and matching, receipt persistence and reconciliation. MD5 credential derivation stays in `koreader/credentials.go`. HTTP maps typed device lookup keys to the existing JSON strings. Algorithms, path normalization, hash bytes, enabled-library matching and the scanner's size+mtime/ambiguity/old-file-exists policies are preserved; scanner ingestion organization is outside this ticket.
+- TDD at the approved complete seams: neutral evidence and rebuild interfaces were absent before their first tests (`.tmp/ticket26-red-evidence.log`, `ticket26-red-rebuild.log`). Fixed literal fixtures verify full MD5, quick SHA-1 and relative path digests over real files. A real temporary SQLite rebuild verifies the original book IDs, evidence writes, unreadable tail and advancing batch cursor. Existing real scan/rename/cleanup and KOReader credential/position/replay matrices now consume the neutral capability.
+- Actual passing executions: scanner full 17.188s, maintenance full 2.377s and runtime full 8.085s (`ticket26-full-packages.log`); neutral owner full race 5.730s, KOReader full race 40.366s and maintenance full race 9.663s (`ticket26-owner-protocol-race.log`). Backend `go build ./...` passed and lint reported 0 issues. The binary-hash HTTP JSON consumer explicitly passed 6.204s after adapting the assertion to JSON's string boundary.
+- Preserved failed evidence: several ordinary neutral/KOReader temporary executables were blocked by Windows Application Control, and those attempts are not passes. The initial full API execution failed 107.036s only because a JSON `map[string]any` string was compared directly with the new named content-hash type; the wire value was unchanged. The assertion now compares at its string boundary; full API retry and final integration checks follow below.
+- This is an ownership/typing change with compatible visible behavior, so CHANGELOG has no new behavior entry. No frontend sources, SQL source or generated response structs changed.
+- Status remains ready-for-agent until merger verification and closure.
+- Scanner rename/identity race regressions also executed and passed 9.756s (ticket26-scanner-identity-race.log), including size+mtime ambiguity, content-hash preference, one-row claiming and preservation through cleanup. Full API retry is recorded separately; scanner watcher-stop behavior belongs to ticket 28 and is not claimed repaired here.

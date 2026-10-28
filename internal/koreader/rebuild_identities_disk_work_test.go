@@ -10,6 +10,7 @@ package koreader
 import (
 	"context"
 	"errors"
+	"manga-manager/internal/bookidentity"
 	"os"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestRebuildBookIdentitiesReadsBooksThroughDiskWork(t *testing.T) {
 	book := seedHashableBook(t, store, rootDir, "Book1")
 
 	task := &fakeTaskHandle{}
-	updated, total, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 500}, task)
+	updated, total, err := bookidentity.New(service.store).Rebuild(context.Background(), bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 500}, task)
 	if err != nil {
 		t.Fatalf("重建返回 %v, want nil", err)
 	}
@@ -66,7 +67,7 @@ func TestRebuildBookIdentitiesStopsWhenDiskWorkIsRefused(t *testing.T) {
 
 	refused := errors.New("storage token unavailable")
 	task := &fakeTaskHandle{diskErr: refused}
-	updated, _, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 500}, task)
+	updated, _, err := bookidentity.New(service.store).Rebuild(context.Background(), bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 500}, task)
 	if !errors.Is(err, refused) {
 		t.Fatalf("重建返回 %v, want %v —— 磁盘作业被回绝时它该就地中止", err, refused)
 	}
@@ -91,7 +92,7 @@ func TestRebuildBookIdentitiesPausesBetweenBatches(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	updated, total, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 1, BatchGap: 300 * time.Millisecond}, &fakeTaskHandle{})
+	updated, total, err := bookidentity.New(service.store).Rebuild(ctx, bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 1, BatchGap: 300 * time.Millisecond}, &fakeTaskHandle{})
 	if err == nil {
 		t.Fatal("重建跑完了 —— 批间停顿没生效，两批之间一步没歇")
 	}
@@ -122,7 +123,7 @@ func TestRebuildBookIdentitiesSkipsUnreadableBookAndAdvancesCursor(t *testing.T)
 	defer cancel()
 
 	task := &fakeTaskHandle{}
-	updated, total, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 500}, task)
+	updated, total, err := bookidentity.New(service.store).Rebuild(ctx, bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 500}, task)
 	if err != nil {
 		t.Fatalf("重建返回 %v, want nil —— 超时说明坏书上的分页游标没推进，同一本被永远切回来", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/bookidentity"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
@@ -175,7 +176,7 @@ func (c *Service) RebuildFileIdentities(trigger task.Trigger) error {
 }
 
 // RebuildFileIdentityRecords repairs missing quick identities in bounded database batches.
-func (c *Service) RebuildFileIdentityRecords(ctx context.Context, limit int, task koreader.TaskHandle) (int, int, error) {
+func (c *Service) RebuildFileIdentityRecords(ctx context.Context, limit int, task bookidentity.TaskHandle) (int, int, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -203,10 +204,10 @@ func (c *Service) RebuildFileIdentityRecords(ctx context.Context, limit int, tas
 			// 最干净的**磁盘作业**形状：取令牌 → 读一遍文件 → 立刻归还。闭包只捕获自己的错误，
 			// 因为算不出指纹不该中止整个回填；中止只由句柄返回的闸门与令牌错误决定。
 			// 这次作业的实况由句柄自己吸收，「已哈希文件数」也由它按「闭包真的跑了」计数。
-			var quickHash string
+			var quickHash bookidentity.QuickHash
 			var hashErr error
 			if err := task.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: book.Path}, func() error {
-				quickHash, hashErr = koreader.FingerprintQuickFile(book.Path)
+				quickHash, hashErr = bookidentity.FingerprintQuickFile(book.Path)
 				return nil
 			}); err != nil {
 				return updated, total, err
@@ -218,7 +219,7 @@ func (c *Service) RebuildFileIdentityRecords(ctx context.Context, limit int, tas
 			}
 			if err := c.store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{
 				ID:        book.ID,
-				QuickHash: quickHash,
+				QuickHash: string(quickHash),
 			}); err != nil {
 				return updated, total, err
 			}
@@ -281,11 +282,11 @@ func (c *Service) ChainBookHashBackfill(ctx context.Context, reason string) {
 }
 
 // BackfillFullHashRecords repairs binary identities with bounded batches and cancellable gaps.
-func (c *Service) BackfillFullHashRecords(ctx context.Context, limit int, batchGap time.Duration, task koreader.TaskHandle) (int, int, error) {
+func (c *Service) BackfillFullHashRecords(ctx context.Context, limit int, batchGap time.Duration, task bookidentity.TaskHandle) (int, int, error) {
 	if limit <= 0 {
 		limit = lowPriorityBookHashBatchSize
 	}
-	return c.koreader.RebuildBookIdentities(ctx, koreader.RebuildOptions{
+	return c.identities.Rebuild(ctx, bookidentity.RebuildOptions{
 		BatchSize: limit,
 		BatchGap:  batchGap,
 		MatchMode: config.KOReaderMatchModeBinaryHash,
@@ -432,8 +433,8 @@ func (c *Service) rebuildBookHashes(trigger task.Trigger, cfg config.Config) err
 	}
 
 	return c.run(systemIdentity("rebuild_book_hashes", "foreground"), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (task.Result, error) {
-		opts := koreader.RebuildOptions{BatchSize: koreaderTaskBatchSize, MatchMode: cfg.KOReader.MatchMode}
-		updated, total, err := c.koreader.RebuildBookIdentities(ctx, opts, koreaderFingerprintHandle{Handle: handle})
+		opts := bookidentity.RebuildOptions{BatchSize: koreaderTaskBatchSize, MatchMode: cfg.KOReader.MatchMode}
+		updated, total, err := c.identities.Rebuild(ctx, opts, koreaderFingerprintHandle{Handle: handle})
 		if err != nil {
 			return task.Result{}, err
 		}
@@ -497,8 +498,8 @@ func (c *Service) refreshKOReaderMatching(trigger task.Trigger, cfg config.Confi
 
 	return c.run(systemIdentity("refresh_koreader_matching", ""), trigger, spec, func(ctx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		handle.Phase("hashing", "task.msg.refresh_koreader_matching.rebuild_start", nil)
-		opts := koreader.RebuildOptions{BatchSize: koreaderTaskBatchSize, MatchMode: cfg.KOReader.MatchMode}
-		updatedBooks, totalBooks, err := c.koreader.RebuildBookIdentities(ctx, opts,
+		opts := bookidentity.RebuildOptions{BatchSize: koreaderTaskBatchSize, MatchMode: cfg.KOReader.MatchMode}
+		updatedBooks, totalBooks, err := c.identities.Rebuild(ctx, opts,
 			koreaderFingerprintHandle{Handle: handle, holdStepCount: true})
 		if err != nil {
 			return failure("task.msg.refresh_koreader_matching.rebuild_failed", err), err
