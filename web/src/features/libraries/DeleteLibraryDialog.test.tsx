@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { apiClient } from '../../api/client';
 import { LocaleProvider } from '../../i18n/LocaleProvider';
 import { messages } from '../../i18n/locales/zh-CN';
@@ -36,4 +36,19 @@ it('reports watcher restoration failure while preserving the deletion target', a
  expect(await screen.findByText(messages['libraryDelete.restoreFailed'])).toBeTruthy();
  expect(deleted).not.toHaveBeenCalled();
  expect(screen.getByRole('dialog')).toBeTruthy();
+});
+
+it('ignores a late delete response after the target changes', async () => {
+ let finish: (() => void) | undefined;
+ apiClient.defaults.adapter = config => new Promise(resolve => {
+  finish = () => resolve({ config, data: { deleted: true, status: 'deleted' }, status: 200, statusText: 'OK', headers: {} });
+ });
+ const deleted = vi.fn();
+ const view = dialog(deleted);
+ fireEvent.click(screen.getByText(messages['layout.libraryActions.confirmDelete']));
+ await waitFor(() => expect(finish).toBeDefined());
+ view.rerender(<LocaleProvider initialLocale="zh-CN" initialMessages={messages} fallbackMessages={messages}><DeleteLibraryDialog library={{ id: '8', name: 'Library eight' }} onClose={vi.fn()} onDeleted={deleted} /></LocaleProvider>);
+ await act(async () => { finish?.(); });
+ expect(deleted).not.toHaveBeenCalled();
+ expect(screen.getByText(/Library eight/)).toBeTruthy();
 });

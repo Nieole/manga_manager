@@ -29,3 +29,5 @@
 - Go 1.26.10：task、application/libraries、application/runtime、application/relocating 整包通过，api 整包最终通过；task/libraries/api 相关 race 通过；gofmt 输出为空，Go lint 为 `0 issues.`。旧“忙碌也先取消再删除”回归已按本票前置切片改为拒绝且保留运行。
 - 前端全量 99 文件、929 测试通过；统一 client fixture 修正后本票组件再验证通过，前端 lint/build 通过。无 SQL 或受管传输生成类型修改。原始输出在 `.tmp/ticket22-*.log`。
 - 以上为本票工作树基线门禁；合入更新的集成分支后复验另行记录。状态留 ready-for-agent，待集成关闭。
+- 已合入集成 `cca0f0b`（本分支合并 `9f71ed1`），补充实际整书下载 HTTP 消费者：响应尚未关闭时删除返回冲突并保留记录，响应关闭后删除成功且文件字节保留；针对性 HTTP 复验及新增单测通过。界面补充目标切换后忽略旧删除响应，组件共 3 测试通过，合并后前端 lint/build 通过。
+- 合并后 race：task 相关保留/互斥测试通过，application/libraries 整包通过，API 删除/下载相关测试通过。首轮 libraries/API 测试程序被 Application Control 拦截，原始失败保留；重试实际执行通过，不将系统拦截算作通过。原始记录为 `.tmp/ticket22-merged-*.log`、`.tmp/ticket22-download-final.log` 与 `.tmp/ticket22-ui-merged*.log`；gofmt 与 diff 空白检查通过。
