@@ -1,6 +1,6 @@
 import { CheckCircle2, HardDrive, Loader2, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { DirectoryPicker } from '../../components/layout/DirectoryPicker';
+import { DirectoryPicker } from '../../features/libraries/DirectoryPicker';
 import type { BrowseDirEntry, BrowseDrive } from '../../components/layout/types';
 import { useI18n } from '../../i18n/LocaleProvider';
 import type { ExternalSession } from './types';

@@ -1,9 +1,6 @@
 /**
  * @vitest-environment jsdom
- *
- * 守「新增」「编辑」共享的资料库表单状态：字段独立更新互不影响、reset/setPath/setScanFormats
- * 只精确改自己那个字段、两个 hook 实例互不串状态、bindings 形状与弹窗受控 props 对齐、载荷
- * 字段名与后端契约一致。破了任一条，两条路会在某个字段上重新悄悄漂移。
+ * 新增与编辑的字段独立更新、表单实例隔离，并保留一致的提交载荷。
  */
 
 import { act, renderHook } from '@testing-library/react';

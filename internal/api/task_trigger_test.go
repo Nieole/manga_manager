@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"manga-manager/internal/application/libraries"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
@@ -308,13 +309,19 @@ func TestInitialLibraryScanIsVisible(t *testing.T) {
 		t.Fatalf("建库返回 %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var created database.Library
+	var created libraries.SaveResult
 	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
 		t.Fatalf("解析建库响应失败: %v", err)
 	}
-	run := currentTask(t, controller.taskEngine, scanKeyFor(created))
-	if run.Trigger != string(task.TriggerManual) {
-		t.Fatalf("建库首扫的发起方为 %q, want manual", run.Trigger)
+	if created.InitialScan == nil || !created.InitialScan.Admitted {
+		t.Fatalf("missing initial scan admission: %+v", created)
+	}
+	snapshot, err := controller.runtime.Engine.SnapshotOf(context.Background(), created.InitialScan.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Run.Trigger != task.TriggerManual {
+		t.Fatalf("建库首扫的发起方为 %q, want manual", snapshot.Run.Trigger)
 	}
 }
 

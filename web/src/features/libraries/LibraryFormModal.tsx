@@ -2,8 +2,8 @@ import { Loader2 } from 'lucide-react';
 import { DirectoryPicker } from './DirectoryPicker';
 import { DEFAULT_SCAN_INTERVAL } from './constants';
 import type { BrowseDirEntry, BrowseDrive } from './types';
-import { ModalShell } from '../ui/ModalShell';
-import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalSectionClass } from '../ui/modalStyles';
+import { ModalShell } from '../../components/ui/ModalShell';
+import { modalGhostButtonClass, modalInputClass, modalPrimaryButtonClass, modalSectionClass } from '../../components/ui/modalStyles';
 import { useI18n } from '../../i18n/LocaleProvider';
 
 interface LibraryFormModalProps {

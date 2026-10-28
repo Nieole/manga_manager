@@ -1,7 +1,7 @@
 package api
 
 import (
-	"context"
+	"manga-manager/internal/application/libraries"
 	"strings"
 	"testing"
 )
@@ -38,10 +38,9 @@ func TestAPITextLocalization(t *testing.T) {
 // TestValidateLibraryRequestLocalized 验证资料库校验消息随 locale 本地化：
 // 默认中文、en-US 输出英文且不残留中文标点。
 func TestValidateLibraryRequestLocalized(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
-	req := CreateLibraryRequest{Name: "", Path: ""} // 触发多条校验
+	req := &libraries.ValidationError{Issues: []libraries.ValidationIssue{{Field: "name", Code: "library.validation.name_required"}, {Field: "path", Code: "library.validation.path_required"}}}
 
-	zh := controller.validateLibraryRequest(context.Background(), "zh-CN", nil, req)
+	zh := localizeLibraryIssues("zh-CN", req)
 	if len(zh) == 0 {
 		t.Fatal("expected validation issues for empty request")
 	}
@@ -49,7 +48,7 @@ func TestValidateLibraryRequestLocalized(t *testing.T) {
 		t.Fatalf("zh-CN first issue = %q, want 名称不能为空。", zh[0].Message)
 	}
 
-	en := controller.validateLibraryRequest(context.Background(), "en-US", nil, req)
+	en := localizeLibraryIssues("en-US", req)
 	if len(en) != len(zh) {
 		t.Fatalf("en-US issue count %d != zh-CN %d", len(en), len(zh))
 	}

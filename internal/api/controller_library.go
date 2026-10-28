@@ -5,15 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"manga-manager/internal/application/libraries"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/task"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 type deleteLibraryResponse struct {
@@ -48,57 +44,37 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, deleteLibraryResponse{DeleteResult: result, Status: "deleted"})
 }
 
-type CreateLibraryRequest struct {
-	Name                string `json:"name"`
-	Path                string `json:"path"`
-	ScanMode            string `json:"scan_mode"`
-	KOReaderSyncEnabled *bool  `json:"koreader_sync_enabled"`
-	ScanInterval        int64  `json:"scan_interval"`
-	ScanFormats         string `json:"scan_formats"`
+type CreateLibraryRequest = libraries.CreateInput
+type UpdateLibraryRequest = libraries.UpdateInput
+
+func localizeLibraryIssues(locale string, validation *libraries.ValidationError) []config.ValidationIssue {
+	issues := make([]config.ValidationIssue, 0, len(validation.Issues))
+	for _, issue := range validation.Issues {
+		issues = append(issues, config.ValidationIssue{Field: issue.Field, Message: apiText(locale, issue.Code), Severity: "error"})
+	}
+	return issues
 }
 
-// validateLibraryRequest 的校验消息随 HTTP 响应结构直接下发、前端只能原样展示，故按 locale
-// 在后端本地化（见 apiText）。locale 由各 handler 用 requestLocale(r) 传入。
-func (c *Controller) validateLibraryRequest(ctx context.Context, locale string, libraryID *int64, req CreateLibraryRequest) []config.ValidationIssue {
-	issues := make([]config.ValidationIssue, 0)
-	if strings.TrimSpace(req.Name) == "" {
-		issues = append(issues, config.ValidationIssue{Field: "name", Message: apiText(locale, "library.validation.name_required"), Severity: "error"})
+func writeLibrarySaveError(w http.ResponseWriter, r *http.Request, err error) {
+	var validation *libraries.ValidationError
+	var busy *task.LibraryBusyError
+	switch {
+	case errors.As(err, &validation):
+		jsonResponse(w, http.StatusUnprocessableEntity, map[string]any{"error": "Library validation failed", "validation": config.ValidationResult{Valid: false, Issues: localizeLibraryIssues(requestLocale(r), validation)}})
+	case errors.Is(err, libraries.ErrRelocationRequired):
+		jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_required", "error": "Use library path relocation to preserve existing records"})
+	case errors.Is(err, libraries.ErrRelocationProtected):
+		writeRelocationProtected(w)
+	case errors.As(err, &busy):
+		w.Header().Set("Retry-After", "1")
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "Library is temporarily unavailable", "code": "library_unavailable", "conflicts": busy.Conflicts})
+	case errors.Is(err, task.ErrLibraryUnavailable):
+		writeLibraryUnavailable(w)
+	case errors.Is(err, sql.ErrNoRows):
+		jsonError(w, http.StatusNotFound, "Library not found")
+	default:
+		jsonError(w, http.StatusInternalServerError, "Failed to save library")
 	}
-	if strings.TrimSpace(req.Path) == "" {
-		issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_required"), Severity: "error"})
-	} else {
-		info, err := os.Stat(req.Path)
-		if err != nil {
-			issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_missing"), Severity: "error"})
-		} else if !info.IsDir() {
-			issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_not_dir"), Severity: "error"})
-		}
-	}
-
-	if req.ScanInterval <= 0 {
-		issues = append(issues, config.ValidationIssue{Field: "scan_interval", Message: apiText(locale, "library.validation.interval_min"), Severity: "error"})
-	}
-
-	normalizedFormats := config.ParseScanFormats(req.ScanFormats)
-	if len(normalizedFormats) == 0 {
-		issues = append(issues, config.ValidationIssue{Field: "scan_formats", Message: apiText(locale, "library.validation.formats_empty"), Severity: "error"})
-	}
-
-	libs, err := c.store.ListLibraries(ctx)
-	if err == nil {
-		cleanTarget := filepath.Clean(req.Path)
-		for _, lib := range libs {
-			if libraryID != nil && lib.ID == *libraryID {
-				continue
-			}
-			if filepath.Clean(lib.Path) == cleanTarget {
-				issues = append(issues, config.ValidationIssue{Field: "path", Message: apiText(locale, "library.validation.path_in_use"), Severity: "error"})
-				break
-			}
-		}
-	}
-
-	return issues
 }
 
 func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
@@ -111,73 +87,20 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Name and Path are required")
 		return
 	}
-
-	if req.ScanInterval <= 0 {
-		req.ScanInterval = config.DefaultScanInterval
-	}
-	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
-
-	ctx := r.Context()
-	releaseRoot, rootErr := c.moves.GuardRoot(req.Path)
-	if rootErr != nil {
-		writeLibraryUnavailable(w)
-		return
-	}
-	defer releaseRoot()
-	if issues := c.validateLibraryRequest(ctx, requestLocale(r), nil, req); len(issues) > 0 {
-		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
-			"error":      "Library validation failed",
-			"validation": config.ValidationResult{Valid: false, Issues: issues},
-		})
-		return
-	}
-	libParams := database.CreateLibraryParams{
-		Name:                req.Name,
-		Path:                req.Path,
-		ScanMode:            req.ScanMode,
-		KoreaderSyncEnabled: req.KOReaderSyncEnabled == nil || *req.KOReaderSyncEnabled,
-		ScanInterval:        req.ScanInterval,
-		ScanFormats:         req.ScanFormats,
-	}
-
-	createdLib, err := c.store.CreateLibrary(ctx, libParams)
+	result, err := c.libraryManagement.Create(r.Context(), req)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to create library")
+		writeLibrarySaveError(w, r, err)
 		return
 	}
-	c.invalidateDashboardStatsCache("library_created")
-
-	if createdLib.ScanMode == "watch" && c.watcher != nil {
-		_ = c.watcher.WatchLibrary(createdLib.ID, createdLib.Path, createdLib.ScanFormats)
-	}
-
-	// 建库后的首扫是一条正常的扫描运行，因此在任务中心里看得见、也停得下来。
-	// **发起方**记手动：它是用户刚按下「添加资料库」的直接后果，用户正等着看它扫到哪了。
-	// 发起是同步的（准入落库那一下），任务体在后台跑，不阻塞这次响应。
-	if err := c.launchLibraryScanTask(createdLib, false, task.TriggerManual); err != nil {
-		slog.WarnContext(ctx, "Initial library scan could not be started", "library_id", createdLib.ID, "error", err)
-	}
-
-	jsonResponse(w, http.StatusCreated, createdLib)
-}
-
-type UpdateLibraryRequest struct {
-	Name                string `json:"name"`
-	Path                string `json:"path"`
-	ScanMode            string `json:"scan_mode"`
-	KOReaderSyncEnabled *bool  `json:"koreader_sync_enabled"`
-	ScanInterval        int64  `json:"scan_interval"`
-	ScanFormats         string `json:"scan_formats"`
+	jsonResponse(w, http.StatusCreated, result)
 }
 
 func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	libraryID, err := parseID(r, "libraryId")
+	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
-
 	var req UpdateLibraryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
@@ -187,94 +110,12 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Name and Path are required")
 		return
 	}
-	releaseRoot, rootErr := c.moves.GuardRoot(req.Path)
-	if rootErr != nil {
-		writeLibraryUnavailable(w)
-		return
-	}
-	defer releaseRoot()
-	release, ok := c.guardLibraryRead(w, libraryID)
-	if !ok {
-		return
-	}
-	defer release()
-
-	existingLib, err := c.store.GetLibrary(ctx, libraryID)
+	result, err := c.libraryManagement.Update(r.Context(), id, req)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, "Library not found")
+		writeLibrarySaveError(w, r, err)
 		return
 	}
-	protection, err := c.store.LibraryRelocationProtection(ctx, libraryID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Unable to inspect relocation protection")
-		return
-	}
-	if protection != nil && req.ScanMode != "none" {
-		writeRelocationProtected(w)
-		return
-	}
-	if !sameNativePath(existingLib.Path, req.Path) {
-		var populated bool
-		if err = c.store.DB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM series WHERE library_id=?) OR EXISTS(SELECT 1 FROM books WHERE library_id=?)`, libraryID, libraryID).Scan(&populated); err != nil {
-			jsonError(w, http.StatusInternalServerError, "Unable to inspect library")
-			return
-		}
-		if populated {
-			jsonResponse(w, http.StatusConflict, map[string]string{"code": "relocation_required", "error": "Use library path relocation to preserve existing records"})
-			return
-		}
-	}
-
-	if req.ScanInterval <= 0 {
-		req.ScanInterval = config.DefaultScanInterval
-	}
-	req.ScanFormats = config.NormalizeScanFormatsCSV(req.ScanFormats)
-	koreaderSyncEnabled := existingLib.KoreaderSyncEnabled
-	if req.KOReaderSyncEnabled != nil {
-		koreaderSyncEnabled = *req.KOReaderSyncEnabled
-	}
-
-	validateReq := CreateLibraryRequest{
-		Name:                req.Name,
-		Path:                req.Path,
-		ScanMode:            req.ScanMode,
-		KOReaderSyncEnabled: &koreaderSyncEnabled,
-		ScanInterval:        req.ScanInterval,
-		ScanFormats:         req.ScanFormats,
-	}
-	if issues := c.validateLibraryRequest(ctx, requestLocale(r), &libraryID, validateReq); len(issues) > 0 {
-		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
-			"error":      "Library validation failed",
-			"validation": config.ValidationResult{Valid: false, Issues: issues},
-		})
-		return
-	}
-
-	libParams := database.UpdateLibraryParams{
-		ID:                  libraryID,
-		Name:                req.Name,
-		Path:                req.Path,
-		ScanMode:            req.ScanMode,
-		KoreaderSyncEnabled: koreaderSyncEnabled,
-		ScanInterval:        req.ScanInterval,
-		ScanFormats:         req.ScanFormats,
-	}
-
-	updatedLib, err := c.store.UpdateLibrary(ctx, libParams)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to update library")
-		return
-	}
-	c.invalidateDashboardStatsCache("library_updated")
-
-	if c.watcher != nil {
-		c.watcher.UnwatchLibrary(existingLib.Path)
-		if updatedLib.ScanMode == "watch" {
-			_ = c.watcher.WatchLibrary(updatedLib.ID, updatedLib.Path, updatedLib.ScanFormats)
-		}
-	}
-
-	jsonResponse(w, http.StatusOK, updatedLib)
+	jsonResponse(w, http.StatusOK, result)
 }
 
 // launchLibraryScanTask adapts legacy callers to the application scan use case.

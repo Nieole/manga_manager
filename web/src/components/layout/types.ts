@@ -1,14 +1,3 @@
-export interface Library {
-  id: string;
-  name: string;
-  path: string;
-  scan_mode?: string;
-  koreader_sync_enabled?: boolean;
-  scan_interval?: number;
-  scan_formats?: string;
-  relocation_protected?: boolean;
-}
-
 export interface SearchHit {
   id: string;
   score?: number;
@@ -21,12 +10,4 @@ export interface SearchHit {
   };
 }
 
-export interface BrowseDirEntry {
-  name: string;
-  path: string;
-}
-
-export interface BrowseDrive {
-  name: string;
-  path: string;
-}
+export type { Library, BrowseDirEntry, BrowseDrive } from '../../features/libraries/types';
