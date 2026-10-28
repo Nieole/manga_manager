@@ -2,6 +2,7 @@ package bookcontent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -62,6 +63,9 @@ func (s *Service) Open(ctx context.Context, id int64, access LibraryAccess) (*Re
 		file, err := parser.OpenContentFile(source.Path)
 		if err != nil {
 			release()
+			if errors.Is(err, parser.ErrArchivePublishing) {
+				return nil, fmt.Errorf("%w: %w", ErrBusy, err)
+			}
 			return nil, &FileError{Source: source, Err: err}
 		}
 		info, err := file.Stat()

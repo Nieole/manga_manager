@@ -15,7 +15,10 @@ func OpenArchive(path string) (Archive, error) {
 }
 
 func openTrackedArchive(path string, open func(string) (Archive, error)) (Archive, error) {
-	release := retainArchiveBorrow(path)
+	release, err := retainArchiveBorrow(path)
+	if err != nil {
+		return nil, err
+	}
 	arc, err := open(path)
 	if err != nil {
 		release()

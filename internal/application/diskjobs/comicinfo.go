@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/parser"
@@ -107,7 +108,7 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 	}
 
 	return c.runs.Start(ctx, spec, func(ctx context.Context, handle *runhandle.Handle) (task.Result, error) {
-		written, skipped, failed := 0, 0, 0
+		written, skipped, failed, warnings := 0, 0, 0, 0
 		for i, book := range books {
 			// 聚合是纯 CPU，留在**磁盘作业**之外：把它夹进令牌的持有区间只会虚占这块盘的归档打开额度。
 			info := seriesmeta.BuildComicInfoForBook(book, series, tags, authors)
@@ -118,8 +119,9 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 			// 返回的闸门错误决定。
 			// 实况由句柄吸收，但这个任务不报 IO 指标：上报是任务体的选择，这一处没有选它。
 			var writeErr error
+			var publication bookcontent.Publication
 			if err := handle.Disk(ctx, diskwork.Work{Kind: storageio.WorkKindMetadataScan, Path: book.Path}, func() error {
-				writeErr = parser.WriteComicInfoIntoArchive(book.Path, info)
+				publication, writeErr = c.content.Publish(ctx, bookcontent.Source{ID: book.ID, LibraryID: book.LibraryID, Path: book.Path, Size: book.Size, FileModifiedAt: book.FileModifiedAt, PageCount: book.PageCount}, info)
 				return nil
 			}); err != nil {
 				return task.Result{}, err
@@ -128,12 +130,21 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 			switch {
 			case writeErr == nil:
 				written++
+				if publication.Warning != nil {
+					warnings++
+					handle.Warn("comicinfo_facts_after_commit", book.Name+": file committed; refresh facts before retrying: "+publication.Warning.Error(), 1)
+				}
 			case errors.Is(writeErr, parser.ErrArchiveNotWritable), errors.Is(writeErr, parser.ErrComicInfoNotMergeable):
 				// 无法安全合并的原文档与不可写的格式同属「这本书写不了」，都按跳过计，不算失败。
 				skipped++
 			default:
 				slog.ErrorContext(ctx, "write ComicInfo into archive failed", "book_id", book.ID, "path", book.Path, "error", writeErr)
 				failed++
+			}
+			if errors.Is(writeErr, context.Canceled) || errors.Is(writeErr, context.DeadlineExceeded) {
+				if ctx.Err() != nil {
+					return task.Result{Params: map[string]string{"written": strconv.Itoa(written), "skipped": strconv.Itoa(skipped), "failed": strconv.Itoa(failed), "warnings": strconv.Itoa(warnings)}}, ctx.Err()
+				}
 			}
 
 			// 计数、书名与三个结局计数同属这一本书，必须整帧报出：拆开报会被投递水位撕断，
@@ -147,14 +158,15 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 				Code:    "task.msg.write_comicinfo.progress",
 				Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
 				Metrics: map[string]int64{
-					"written": int64(written), "skipped": int64(skipped), "failed": int64(failed),
+					"written": int64(written), "skipped": int64(skipped), "failed": int64(failed), "warnings": int64(warnings),
 				},
 			})
 		}
 		return task.Result{Params: map[string]string{
-			"written": strconv.Itoa(written),
-			"skipped": strconv.Itoa(skipped),
-			"failed":  strconv.Itoa(failed),
+			"written":  strconv.Itoa(written),
+			"skipped":  strconv.Itoa(skipped),
+			"failed":   strconv.Itoa(failed),
+			"warnings": strconv.Itoa(warnings),
 		}}, nil
 	})
 }

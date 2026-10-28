@@ -25,7 +25,13 @@ func NewArchiveReader(borrow ArchiveBorrower) *ArchiveReader {
 	if borrow == nil {
 		borrow = parser.GetArchiveFromPool
 	}
-	return &ArchiveReader{borrow: borrow}
+	return &ArchiveReader{borrow: func(path string) (parser.Archive, func(), error) {
+		arc, release, err := borrow(path)
+		if errors.Is(err, parser.ErrArchivePublishing) {
+			err = fmt.Errorf("%w: %w", ErrBusy, err)
+		}
+		return arc, release, err
+	}}
 }
 
 // PageBytes is an independent page buffer and its archive entry facts.

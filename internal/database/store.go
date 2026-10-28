@@ -94,6 +94,7 @@ type Store interface {
 	CountBooksMissingQuickHash(ctx context.Context) (int64, error)
 	ListBooksMissingQuickHashBatch(ctx context.Context, afterID int64, limit int) ([]BookIdentityCandidate, error)
 	UpdateBookIdentity(ctx context.Context, arg UpdateBookIdentityParams) error
+	UpdateBookContent(ctx context.Context, arg BookContentUpdate) error
 	ListUnmatchedKOReaderProgress(ctx context.Context, limit int) ([]KOReaderProgress, error)
 	ListUnmatchedKOReaderProgressBatch(ctx context.Context, afterID int64, limit int) ([]KOReaderProgress, error)
 	LinkKOReaderProgressToBook(ctx context.Context, progressID, bookID int64, matchedBy string) error
