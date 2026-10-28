@@ -26,6 +26,17 @@ function setup() {
   }), { initialProps: { id: '1' }, wrapper });
 }
 afterEach(() => { cleanup(); apiClient.defaults.adapter = adapter; vi.unstubAllGlobals(); localStorage.clear(); onError.mockClear(); });
+it.each([
+  ['external_root_overlap', 'home.external.rootOverlap'],
+  ['external_root_unresolvable', 'home.external.rootUnresolvable'],
+])('explains %s without creating a session', async (code, message) => {
+  apiClient.defaults.adapter = async () => { throw { isAxiosError: true, response: { data: { code } } }; };
+  const view = setup();
+  act(() => view.result.current.external.setExternalPath('/device'));
+  await act(async () => { await view.result.current.external.startExternalLibraryScan(); });
+  expect(onError).toHaveBeenCalledWith(message);
+  expect(view.result.current.external.externalSession).toBeNull();
+});
 it('discards a scan start response after switching library and keeps device input', async () => {
   let finish: (() => void) | undefined;
   apiClient.defaults.adapter = async config => {

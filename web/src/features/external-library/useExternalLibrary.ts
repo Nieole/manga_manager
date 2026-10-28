@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiClient } from '../../api/client';
+import { apiClient, isAxiosError } from '../../api/client';
 import { useLatestRequest } from '../../hooks/useLatestRequest';
 import type { BrowseDirEntry, BrowseDrive } from '../../components/layout/types';
 import {
   type ExternalSession,
   type ExternalSessionCreateResponse,
   type ExternalSeriesStatus,
-} from '../../pages/library/types';
+  type ExternalTransferResponse,
+} from './types';
 
 import { useLibraryInvalidation, useLibraryRefresh, useSessionRecovery, useSessionRunPush } from '../../session/ApplicationSessionProvider';
 import { isTerminalRunStatus } from '../../utils/runStatus';
@@ -238,7 +239,8 @@ export function useExternalLibrary({
     } catch (err) {
       if (!isCurrent()) return;
       console.error('Failed to start external scan', err);
-      onError('home.external.scanStartFailed');
+      const code = isAxiosError<{ code?: string }>(err) ? err.response?.data.code : undefined;
+      onError(code === 'external_root_overlap' ? 'home.external.rootOverlap' : code === 'external_root_unresolvable' ? 'home.external.rootUnresolvable' : 'home.external.scanStartFailed');
     } finally {
       if (isCurrent()) setStartingExternalScan(false);
     }
@@ -296,12 +298,12 @@ export function useExternalLibrary({
       }
       setStartingTransfer(true);
       try {
-        const res = await apiClient.post<{ task_key: string }>(
+        const res = await apiClient.post<ExternalTransferResponse>(
           `/api/libraries/${libId}/external-libraries/session/${externalSession.session_id}/transfer`,
           { series_ids: seriesIds },
         );
         if (!isCurrent() || activeSessionId.current !== externalSession.session_id) return;
-        setExternalTransferTaskKey(res.data.task_key);
+        setExternalTransferTaskKey(res.data.task_key ?? null);
         onSuccess();
       } catch (err) {
         if (!isCurrent()) return;

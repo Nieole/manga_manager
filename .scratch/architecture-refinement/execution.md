@@ -29,4 +29,6 @@
 
 18 已合入并关闭（`1e4c436`）：主树实际执行了文件提交范围与RunEvents断言，发布/原文件保护/下载占用/删库准入相关回归、runtime/parser整包、diskjobs/content完整race通过，格式及lint通过。普通API启动拦截保留原始失败记录，最终API-race实际通过。
 
-当前完成：01、02、03、04、05、06、07、08、09、10、13、14、16、17、18、22。11、19、23 在独立工作树实施。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
+
+当前完成 19/48：01、02、03、04、05、06、07、08、09、10、11、13、14、16、17、18、19、22、23。12、20 在独立工作树实施，24 将继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。

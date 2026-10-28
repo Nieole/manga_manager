@@ -110,8 +110,7 @@ func (c *Service) ScanExternal(ctx context.Context, libraryID int64, sessionID s
 				return err
 			}
 		}
-		_, err := c.external.GetSession(libraryID, sessionID)
-		return err
+		return c.external.ValidateSession(context.WithoutCancel(ctx), libraryID, sessionID)
 	}
 	return c.runs.Start(ctx, spec, func(ctx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		snapshot, err := c.external.ScanSession(ctx, sessionID, externalScanHandle{handle})

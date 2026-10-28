@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 31、32、39、56、57、58。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -26,3 +26,9 @@
 - Some additional ordinary test executions were blocked by Windows Application Control, including reading and database in the resume sweep. Those launches are not counted as passes; raw evidence remains in `.tmp/ticket11-resume-go.log`. Integration verification and ticket closure remain pending.
 
 - Focused resume retry executed the full database suite successfully (13.472s, .tmp/ticket11-resume-retry.log); reading launch remained blocked by Application Control.
+
+### Integration verification (2026-10-28)
+
+- Merged into integration through commit 82c4e01236b86b95278f5774c978b53df744d9a9. Main-tree organize (8.175s), reading (9.227s), collection/snapshot/permissions API race (86.945s), and database capability race (7.237s) actually executed and passed.
+- Collection page consumers passed 8 files / 41 tests. gofmt emitted no files, Go lint reported 0 issues, and diff whitespace checks passed. Raw integration logs: .tmp/merge-wave9-owner.log, .tmp/merge-wave9-api.log, .tmp/merge-wave9-database-race.log, .tmp/merge-wave9-web.log and .tmp/merge-wave9-lint.log.
+- Main-tree ordinary database full-suite launches were blocked twice by Application Control; they are not counted as passes. The implementer full database suite passed 13.472s and the main-tree new capability race test passed as recorded above.

@@ -16,8 +16,8 @@ import (
 	"manga-manager/internal/task"
 )
 
-func TestDeleteLibraryHTTPReportsRealCoverageWithoutCancellingWork(t *testing.T) {
-	for _, kind := range []string{"local", "shared-local", "global"} {
+func TestDeleteLibraryHTTPReportsSharedCoverageWithoutCancellingWork(t *testing.T) {
+	for _, kind := range []string{"shared-local", "global"} {
 		t.Run(kind, func(t *testing.T) {
 			c, store, _, _ := newTestController(t)
 			lib, _, _ := seedBookFixture(t, store, t.TempDir(), "Target", "Series", "book.cbz", 3)
@@ -73,6 +73,64 @@ func TestDeleteLibraryHTTPReportsRealCoverageWithoutCancellingWork(t *testing.T)
 			}
 			if _, err := store.GetLibrary(context.Background(), lib.ID); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestDeleteLibraryHTTPPreservesCancellationFactsOnEveryOutcome(t *testing.T) {
+	for _, mode := range []string{"success", "read-busy", "database-failure", "request-cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			c, store, _, root := newTestController(t)
+			lib, _, _ := seedBookFixture(t, store, root, "Drain", "Series", "book.cbz", 1)
+			if mode == "read-busy" {
+				release, err := c.runtime.Engine.AcquireLibraryRead(lib.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer release()
+			}
+			if mode == "database-failure" {
+				if _, err := store.DB().Exec(`CREATE TRIGGER reject_delete_http BEFORE DELETE ON libraries BEGIN SELECT RAISE(ABORT,'rejected'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
+			ctx, cancel := context.WithCancel(req.Context())
+			defer cancel()
+			launched, err := c.runtime.Runs.Start(context.Background(), task.RunSpec{Identity: task.Identity{Type: "local_delete", Scope: task.ScopeSeries, ScopeID: 17}, LibraryIDs: []int64{lib.ID}, Trigger: task.TriggerManual, CanCancel: true}, func(bodyCtx context.Context, _ *runhandle.Handle) (task.Result, error) {
+				<-bodyCtx.Done()
+				if mode == "request-cancel" {
+					cancel()
+				}
+				return task.Result{}, bodyCtx.Err()
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			c.deleteLibrary(rec, req.WithContext(ctx))
+			want := map[string]int{"success": 200, "read-busy": 409, "database-failure": 500, "request-cancel": 408}[mode]
+			if rec.Code != want {
+				t.Fatalf("HTTP%d %s", rec.Code, rec.Body.String())
+			}
+			var result deleteLibraryResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.CancellationRequested) != 1 || result.CancellationRequested[0] != launched.Run.ID || result.Deleted != (mode == "success") {
+				t.Fatalf("lost cancellation/commit: %+v", result)
+			}
+			if mode != "request-cancel" && len(result.ExitedRuns) != 1 {
+				t.Fatalf("exit not reported: %+v", result)
+			}
+			if mode == "read-busy" && (!result.DrainTimedOut || len(result.Conflicts) != 1) {
+				t.Fatalf("busy facts=%+v", result)
+			}
+			if mode != "success" {
+				if _, err := store.GetLibrary(context.Background(), lib.ID); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
 	}

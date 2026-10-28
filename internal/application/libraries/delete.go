@@ -30,10 +30,11 @@ type Effects struct {
 
 // DeleteResult keeps occupied, uncommitted and committed outcomes distinguishable.
 type DeleteResult struct {
-	Deleted   bool                   `json:"deleted"`
-	LibraryID int64                  `json:"library_id"`
-	Conflicts []task.LibraryConflict `json:"conflicts,omitempty"`
-	Warnings  []string               `json:"warnings,omitempty"`
+	task.LibraryDrainResult
+	Deleted       bool     `json:"deleted"`
+	LibraryID     int64    `json:"library_id"`
+	Warnings      []string `json:"warnings,omitempty"`
+	DrainTimedOut bool     `json:"drain_timed_out,omitempty"`
 }
 
 type Service struct {
@@ -46,10 +47,10 @@ func New(store Store, engine *task.Engine, effects Effects) *Service {
 	return &Service{store: store, engine: engine, effects: effects}
 }
 
-// Delete closes admission before checking occupiers. Busy libraries remain unchanged.
-// Cancellation and bounded draining of eligible runs are separate from this immediate operation.
-func (s *Service) Delete(ctx context.Context, id int64) (DeleteResult, error) {
-	result := DeleteResult{LibraryID: id}
+// Delete closes admission, cancels eligible local work and drains actual accesses
+// for at most two seconds before obtaining exclusive deletion access.
+func (s *Service) Delete(ctx context.Context, id int64) (result DeleteResult, err error) {
+	result = DeleteResult{LibraryID: id}
 	// Only existence is checked here; path facts are loaded again after admission closes.
 	if _, err := s.store.GetLibrary(ctx, id); err != nil {
 		return result, err
@@ -63,19 +64,33 @@ func (s *Service) Delete(ctx context.Context, id int64) (DeleteResult, error) {
 	if err != nil {
 		return result, err
 	}
-	if err := reservation.Upgrade(ctx); err != nil {
-		return deleteConflict(result, err)
+	if s.effects.Watcher != nil {
+		s.effects.Watcher.UnwatchLibrary(library.Path)
+	}
+	defer func() {
+		if !result.Deleted {
+			if restoreErr := s.restoreWatcher(ctx, id); restoreErr != nil {
+				result.Warnings = append(result.Warnings, "watcher_restore_failed")
+			}
+		}
+	}()
+	drainCtx, stopDrain := context.WithTimeout(ctx, 2*time.Second)
+	result.LibraryDrainResult, err = reservation.Drain(drainCtx)
+	stopDrain()
+	if err != nil {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			result.DrainTimedOut = true
+			return result, &task.LibraryBusyError{Conflicts: result.Conflicts}
+		}
+		return result, err
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if s.effects.Watcher != nil {
-		s.effects.Watcher.UnwatchLibrary(library.Path)
-	}
 	if err := s.store.DeleteLibrary(ctx, id); err != nil {
-		if restoreErr := s.restoreWatcher(ctx, id); restoreErr != nil {
-			result.Warnings = append(result.Warnings, "watcher_restore_failed")
-		}
 		return result, err
 	}
 	result.Deleted = true
