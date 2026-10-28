@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,8 +138,12 @@ func TestTransferRunPauseResumeAndCancelKeepCommittedRange(t *testing.T) {
 			if run.Status != want {
 				t.Fatalf("run=%+v", run)
 			}
-			if !strings.Contains(run.MessageParams["committed_book_ids"], strconv.FormatInt(plan.Operations[0].BookID, 10)) {
-				t.Fatalf("lost earlier commit: %+v", run)
+			wantIDs := strconv.FormatInt(plan.Operations[0].BookID, 10)
+			if action == "resume" {
+				wantIDs += "," + strconv.FormatInt(plan.Operations[1].BookID, 10)
+			}
+			if run.MessageParams["committed_book_ids"] != wantIDs {
+				t.Fatalf("incorrect committed range: %+v", run)
 			}
 			coverage, err := rig.manager.GetSession(rig.lib.ID, session.SessionID)
 			if err != nil {
