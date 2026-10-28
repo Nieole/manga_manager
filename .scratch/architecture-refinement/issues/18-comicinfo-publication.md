@@ -4,7 +4,7 @@
 
 **Blocked by:** 17: 整书下载与读取句柄。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 41、98、99、100、101、102、103、104、105、196。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -26,7 +26,12 @@
 - TDD 两轮首先因缺少 PrepareComicInfo/Publisher 编译失败，随后真实文件回归通过。Windows 实际验证替换成功、已淘汰借用继续读页、新借用被拒、超时/取消/外部源变化保留原文及 staging 清理；完整 ReadHandle 下载读完前发布等待，既有字节不被截断。
 - 实际通过：完整 parser（4.121s）；完整 bookcontent `-race`（7.460s）；完整 diskjobs `-race`（14.647s）及普通完整包（3.084s）；HTTP 发布占用、真实数据库触发器造成的提交后失败、下载/协议和 ComicInfo 运行回归（6.919s）。初轮 parser 定向保守合并与发布回归亦实际通过（1.417s）。
 - 完整 parser 的两次 `-race` 启动遭 Windows Application Control 拦截，未计通过；随后普通完整 parser 实际通过。合并后首次完整 API/runtime 启动同样被拦，单独重试的最终结果另行记录。最终 lint 为 `0 issues.`，此前 build 与 gofmt 门禁实际通过。前端源未变，告警沿用运行事件消费者展示。
-- 已合入集成 `f197115`（包含 22 资料库 reservation），沿用原 Engine 访问接口。原始日志保存在本工作树 `.tmp/ticket18-*.log`，清理前应保留；Status 保持 ready-for-agent 等待集成验收关闭。
+- 已合入集成 `f197115`（包含 22 资料库 reservation），沿用原 Engine 访问接口。原始日志保存在本工作树 `.tmp/ticket18-*.log`，清理前应保留；本票已完成集成验收并关闭。
 - 合并后完整 API 实际通过（113.652s）。runtime 完整包两次被 Windows Application Control 阻止启动，未计通过。
 - 已提交范围由每次文件提交后立即写入运行的 `committed_book_ids`/`written` 保存；终态参数另列 warnings，实际事实库触发器失败保持 written=1/failed=0/warnings=1。告警事件带 book_id 与已提交、先刷新事实再重试的明确文字，既有 TaskCenter Warn 消费者展示其 detail；ComicInfo 无自动重启/重试能力。新增范围与 ListRunEvents 断言的普通二进制启动被拦，最终实际结果另录。
-- 新增精确范围/告警事件断言的最终 `-race` 二进制同样遭 Application Control 阻止启动，尚未实际执行；必须由集成工作树实际复验后关闭。本票不将这个最终门禁记作通过。该断言扩展前同一真实触发器失败路径及最终完整 API 已实际通过，不能替代新增断言本身的执行证据。
+- 新增精确范围/告警事件断言的最终 `-race` 二进制同样遭 Application Control 阻止启动，在该工作树未实际执行；此最终新增断言随后已在集成工作树实际复验通过，见集成验收。本票不将此前启动拦截记作通过。该断言扩展前同一真实触发器失败路径及最终完整 API 已实际通过，不能替代新增断言本身的执行证据。
+### 集成验收
+
+- 已由合并提交 `4d23f99` 纳入 `codex/architecture-refinement`，无冲突。
+- 主树使用 Go 1.26.10 实际执行最终 `TestComicInfoCommitted`、`TestPublicationWindow`、`TestWriteComicInfo`，覆盖新增的真实 Run 已提交范围与 `ListRunEvents` 告警断言，并联合 22 删除准入与 17 整书下载/真实退出回归：普通程序两次遭 Application Control 拦截，随后 `-race` 变体实际通过（17.221s），未把启动拦截计为通过。
+- 最终完整 runtime/parser 实际通过（8.019s/3.742s）；完整 diskjobs `-race` 通过（16.263s），bookcontent 完整 `-race` 首次被拦、重跑实际通过（7.973s）。gofmt 无输出，独立缓存 lint 为 `0 issues.`。原始输出保留在主工作树 `.tmp/merge-wave8-18-*.log`；没有前端或 SQL/TS 生成源变化，未重复无关全仓门禁。
