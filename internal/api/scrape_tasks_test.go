@@ -68,7 +68,7 @@ type scrapeTestProvider struct {
 	clock    *fakeClock
 	fetchErr error
 
-	// requestedKeys 记下 getProvider 每次收到的刮削源键，供重试用例断言那个键确实从任务参数里读回。
+	// requestedKeys 记下 getMetadataFetcher 每次收到的刮削源键，供重试用例断言那个键确实从任务参数里读回。
 	requestedKeys []string
 	titles        []string
 	onFetch       func(title string)
@@ -101,7 +101,7 @@ func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, 
 	cfg := &config.Config{}
 	config.NormalizeConfig(cfg)
 	c := &Controller{taskEngine: e, store: newScrapeTaskStore(), config: config.NewManager(cfg)}
-	c.providerFactory = func(name string) metadata.Provider {
+	c.fetcherFactory = func(name string) metadata.Fetcher {
 		provider.requestedKeys = append(provider.requestedKeys, name)
 		return provider
 	}
@@ -221,7 +221,7 @@ func TestScrapeCancellationCodeSplitsByScope(t *testing.T) {
 
 // TestScrapeTaskDeclarationLandsWhole 守任务诞生那一刻就带齐**作用域**显示名、刮削源参数与标签。
 // 拆成启动之后的补写会留下一个「任务已在列表里、却还不知道用的哪个源」的窗口，任务列表接口
-// 能观察到它；而参数里必须是刮削源的**键**，重启函数拿显示名去 getProvider 会回落到默认源。
+// 能观察到它；而参数里必须是刮削源的**键**，重启函数拿显示名去 getMetadataFetcher 会回落到默认源。
 func TestScrapeTaskDeclarationLandsWhole(t *testing.T) {
 	for _, tc := range scrapeScopes {
 		t.Run(tc.name, func(t *testing.T) {

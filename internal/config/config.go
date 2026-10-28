@@ -412,49 +412,13 @@ func normalizeLLMConfig(cfg *Config) {
 	if cfg == nil {
 		return
 	}
-
-	provider := strings.ToLower(strings.TrimSpace(cfg.LLM.Provider))
-	if provider == "" {
-		provider = "ollama"
-		cfg.LLM.Provider = provider
-	}
-
-	if cfg.LLM.BaseURL == "" && cfg.LLM.Endpoint != "" {
-		cfg.LLM.BaseURL, cfg.LLM.RequestPath = splitEndpoint(cfg.LLM.Endpoint)
-	}
-
-	switch provider {
-	case "openai-legacy":
-		cfg.LLM.Provider = "openai"
-		if cfg.LLM.APIMode == "" {
-			cfg.LLM.APIMode = "chat_completions"
-		}
-	case "openai":
-		if cfg.LLM.APIMode == "" {
-			cfg.LLM.APIMode = inferAPIModeFromRequestPath(cfg.LLM.RequestPath)
-		}
-	default:
-		cfg.LLM.APIMode = ""
-		cfg.LLM.RequestPath = ""
-	}
-
-	if cfg.LLM.BaseURL == "" {
-		if cfg.LLM.Provider == "openai" {
-			cfg.LLM.BaseURL = "https://api.openai.com"
-		} else {
-			cfg.LLM.BaseURL = "http://localhost:11434"
-		}
-	}
-
-	if cfg.LLM.Provider == "openai" && cfg.LLM.RequestPath == "" {
-		cfg.LLM.RequestPath = defaultRequestPath(cfg.LLM.APIMode)
-	}
-
-	cfg.LLM.Endpoint = BuildLLMEndpoint(cfg)
-
-	if cfg.LLM.Timeout <= 0 {
-		cfg.LLM.Timeout = 120
-	}
+	c := NormalizeLLMConnection(LLMConnection{Provider: cfg.LLM.Provider, APIMode: cfg.LLM.APIMode, BaseURL: cfg.LLM.BaseURL, RequestPath: cfg.LLM.RequestPath, Endpoint: cfg.LLM.Endpoint, Timeout: cfg.LLM.Timeout})
+	cfg.LLM.Provider = c.Provider
+	cfg.LLM.APIMode = c.APIMode
+	cfg.LLM.BaseURL = c.BaseURL
+	cfg.LLM.RequestPath = c.RequestPath
+	cfg.LLM.Endpoint = c.Endpoint
+	cfg.LLM.Timeout = c.Timeout
 }
 
 func NormalizeConfig(cfg *Config) {
@@ -633,19 +597,5 @@ func BuildLLMEndpoint(cfg *Config) string {
 	if cfg == nil {
 		return ""
 	}
-
-	baseURL := strings.TrimSpace(cfg.LLM.BaseURL)
-	if baseURL == "" {
-		return ""
-	}
-	if cfg.LLM.Provider != "openai" {
-		return strings.TrimRight(baseURL, "/")
-	}
-
-	requestPath := strings.TrimSpace(cfg.LLM.RequestPath)
-	if requestPath == "" {
-		requestPath = defaultRequestPath(cfg.LLM.APIMode)
-	}
-
-	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(requestPath, "/")
+	return LLMEndpoint(LLMConnection{Provider: cfg.LLM.Provider, APIMode: cfg.LLM.APIMode, BaseURL: cfg.LLM.BaseURL, RequestPath: cfg.LLM.RequestPath})
 }

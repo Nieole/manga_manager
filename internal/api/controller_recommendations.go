@@ -116,7 +116,7 @@ func (c *Controller) computeRecommendations(ctx context.Context, locale string, 
 
 	// 3. 构建 Provider
 	cfg := c.currentConfig()
-	provider := metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
+	var provider metadata.Recommender = metadata.NewAIProvider(cfg.LLM.Provider, cfg.LLM.APIMode, cfg.LLM.BaseURL, cfg.LLM.RequestPath, cfg.LLM.Model, cfg.LLM.APIKey, cfg.LLM.Timeout)
 
 	// 4. 交给 LLM 甄选并产出理
 	recList, err := provider.GenerateRecommendations(ctx, userTags, candidates, 3)

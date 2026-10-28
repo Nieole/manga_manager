@@ -7,21 +7,46 @@ import (
 	"manga-manager/internal/config"
 )
 
-// Provider 定义外部元数据服务的最小契约。
-// 业务上它既要支持“按标题直接补全当前系列”，也要支持“搜索候选后交给用户审核”，因此返回值不能直接覆盖数据库。
-type Provider interface {
+// Fetcher consumes single-series metadata enrichment.
+type Fetcher interface {
 	Name() string
-	FetchSeriesMetadata(ctx context.Context, title string) (*SeriesMetadata, error)
-	SearchMetadata(ctx context.Context, title string, limit, offset int) ([]*SeriesMetadata, int, error)
+	FetchSeriesMetadata(context.Context, string) (*SeriesMetadata, error)
 }
 
-// AIProvider 继承 Provider 接口并扩展 LLM 能力。
-// 推荐和智能分组面向的是资料库级辅助决策，输出必须保留理由和候选集合，方便前端做审核而不是静默改库。
+// Searcher consumes paginated candidates without enrichment authority.
+type Searcher interface {
+	Name() string
+	SearchMetadata(context.Context, string, int, int) ([]*SeriesMetadata, int, error)
+}
+
+// Recommender generates reasoned recommendations.
+type Recommender interface {
+	GenerateRecommendations(context.Context, []string, []CandidateSeries, int) ([]AIRecommendation, error)
+}
+
+// Grouper generates collection suggestions without applying them.
+type Grouper interface {
+	Name() string
+	GenerateGrouping(context.Context, []CandidateSeries) ([]AIGroupCollection, error)
+}
+
+// ConnectionTester checks the configured model connection.
+type ConnectionTester interface {
+	TestLLM(context.Context, string) (string, error)
+}
+
+// Provider combines the capabilities implemented by catalogue source adapters.
+type Provider interface {
+	Fetcher
+	Searcher
+}
+
+// AIProvider is the concrete factory result; consumers choose only their required capability.
 type AIProvider interface {
 	Provider
-	GenerateRecommendations(ctx context.Context, userTags []string, candidates []CandidateSeries, limit int) ([]AIRecommendation, error)
-	GenerateGrouping(ctx context.Context, seriesList []CandidateSeries) ([]AIGroupCollection, error)
-	TestLLM(ctx context.Context, prompt string) (string, error)
+	Recommender
+	Grouper
+	ConnectionTester
 }
 
 // NewAIProvider 根据运行时配置选择 LLM 实现。
@@ -41,12 +66,7 @@ func NewAIProvider(provider, apiMode, baseURL, requestPath, model, apiKey string
 
 	switch provider {
 	case "openai":
-		cfg := &config.Config{}
-		cfg.LLM.Provider = "openai"
-		cfg.LLM.APIMode = apiMode
-		cfg.LLM.BaseURL = baseURL
-		cfg.LLM.RequestPath = requestPath
-		endpoint := config.BuildLLMEndpoint(cfg)
+		endpoint := config.LLMEndpoint(config.LLMConnection{Provider: "openai", APIMode: apiMode, BaseURL: baseURL, RequestPath: requestPath})
 		if strings.EqualFold(apiMode, "chat_completions") {
 			return NewOpenAILegacyProvider(endpoint, model, apiKey, timeout)
 		}

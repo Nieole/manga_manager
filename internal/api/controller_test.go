@@ -3000,7 +3000,7 @@ func TestRunSnapshotTracksScrapeMetricsAndLabels(t *testing.T) {
 func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 	provider := newBlockingMetadataProvider()
-	controller.providerFactory = func(string) metadata.Provider {
+	controller.fetcherFactory = func(string) metadata.Fetcher {
 		return provider
 	}
 
