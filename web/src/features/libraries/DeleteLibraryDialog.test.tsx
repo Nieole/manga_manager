@@ -52,3 +52,23 @@ it('ignores a late delete response after the target changes', async () => {
  expect(deleted).not.toHaveBeenCalled();
  expect(screen.getByText(/Library eight/)).toBeTruthy();
 });
+
+it('keeps cancellation and exit facts visible when draining times out', async () => {
+ apiClient.defaults.adapter = async config => { throw Object.assign(new Error('busy'), { isAxiosError: true, response: { config, data: { code: 'library_busy', deleted: false, drain_timed_out: true, cancellation_requested: [14, 15], exited_runs: [14], conflicts: [{ run_id: 15, reason: 'wait_for_exit' }] }, status: 409, statusText: 'Conflict', headers: {} } }); };
+ const deleted = vi.fn();
+ dialog(deleted);
+ fireEvent.click(screen.getByText(messages['layout.libraryActions.confirmDelete']));
+ expect(await screen.findByText(/已请求取消运行 #14/)).toBeTruthy();
+ expect(screen.getByText(/运行 #14 已退出访问/)).toBeTruthy();
+ expect(screen.getByText(/不会自动重新执行/)).toBeTruthy();
+ expect(deleted).not.toHaveBeenCalled();
+});
+
+it('hands off an already committed deletion even if later work failed', async () => {
+ apiClient.defaults.adapter = async config => { throw Object.assign(new Error('later failure'), { isAxiosError: true, response: { config, data: { deleted: true, warnings: ['access_retirement_failed'] }, status: 500, statusText: 'Failure', headers: {} } }); };
+ const deleted = vi.fn();
+ dialog(deleted);
+ fireEvent.click(screen.getByText(messages['layout.libraryActions.confirmDelete']));
+ await waitFor(() => expect(deleted).toHaveBeenCalledWith({ id: '7', name: 'Library seven' }, ['access_retirement_failed']));
+ expect(screen.queryByText(messages['layout.toast.deleteFailed'])).toBeNull();
+});

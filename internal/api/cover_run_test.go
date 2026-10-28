@@ -141,8 +141,8 @@ func TestCoverRunIsControllableOnItsOwn(t *testing.T) {
 	}
 }
 
-// TestDeletingABusyLibraryPreservesEveryRun keeps the immediate deletion slice non-destructive.
-func TestDeletingABusyLibraryPreservesEveryRun(t *testing.T) {
+// TestDeletingABusyLibraryCancelsOnlyLocalRuns retains records until bodies exit.
+func TestDeletingABusyLibraryCancelsOnlyLocalRuns(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	controller.taskEngine.slots = func() int { return 8 }
 	const libraryID int64 = 9
@@ -160,7 +160,7 @@ func TestDeletingABusyLibraryPreservesEveryRun(t *testing.T) {
 		t.Fatalf("busy delete HTTP%d: %s", rec.Code, rec.Body.String())
 	}
 	for key := range keys {
-		if got := currentTask(t, controller.taskEngine, key).Status; got != "running" {
+		if got := currentTask(t, controller.taskEngine, key).Status; got != "cancelling" {
 			t.Fatalf("busy delete changed %s to %s", key, got)
 		}
 	}
