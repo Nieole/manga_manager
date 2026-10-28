@@ -180,3 +180,29 @@ func TestRenameUsesSQLiteNameComparison(t *testing.T) {
 		t.Fatalf("conflicting rename=%v", err)
 	}
 }
+
+func TestCollectionMemberDisappearingDuringBatchIsNotAStorageFailure(t *testing.T) {
+	store, service := newCollections(t)
+	ctx := context.Background()
+	if _, err := store.DB().Exec(`INSERT INTO libraries(id,name,path) VALUES(1,'Library','lib');INSERT INTO series(id,library_id,name,path) VALUES(1,1,'Alpha','a'),(2,1,'Beta','b')`); err != nil {
+		t.Fatal(err)
+	}
+	id, err := service.Create(ctx, "Picks", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().Exec(`CREATE TRIGGER remove_next_member BEFORE INSERT ON collection_series WHEN NEW.series_id=1 BEGIN DELETE FROM series WHERE id=2;END`); err != nil {
+		t.Fatal(err)
+	}
+	count, err := service.AddMembers(ctx, id, []int64{1, 2})
+	if !errors.Is(err, organize.ErrCollectionSeriesNotFound) || count != 0 {
+		t.Fatalf("disappeared member count=%d err=%v", count, err)
+	}
+	members, err := service.Members(ctx, id)
+	if err != nil || len(members) != 0 {
+		t.Fatalf("partial members=%+v err=%v", members, err)
+	}
+	if _, err := store.GetSeries(ctx, 2); err != nil {
+		t.Fatalf("batch failed to roll back deletion: %v", err)
+	}
+}

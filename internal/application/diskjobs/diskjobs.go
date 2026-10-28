@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"manga-manager/internal/application"
+	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/database"
 	"manga-manager/internal/external"
 	"manga-manager/internal/runhandle"
@@ -25,7 +26,10 @@ type Store interface {
 }
 
 // Effects supplies semantic publication at the application completion boundary.
-type Effects struct{ Publish func(string) }
+type Effects struct {
+	Publish           func(string)
+	PurgeReadingPaths func()
+}
 
 // Service launches disk use cases through the process's shared run entry.
 type Service struct {
@@ -33,11 +37,20 @@ type Service struct {
 	store    Store
 	external *external.Manager
 	effects  Effects
+	content  *bookcontent.Publisher
 }
 
 // New binds domain capabilities before any disk work can be admitted.
 func New(runs *application.Runs, store Store, manager *external.Manager, effects Effects) *Service {
-	return &Service{runs: runs, store: store, external: manager, effects: effects}
+	var persist func(context.Context, bookcontent.Source) error
+	if facts, ok := store.(interface {
+		UpdateBookContent(context.Context, database.BookContentUpdate) error
+	}); ok {
+		persist = func(ctx context.Context, source bookcontent.Source) error {
+			return facts.UpdateBookContent(ctx, database.BookContentUpdate{ID: source.ID, Path: source.Path, Size: source.Size, FileModifiedAt: source.FileModifiedAt})
+		}
+	}
+	return &Service{runs: runs, store: store, external: manager, effects: effects, content: bookcontent.NewPublisher(persist, effects.PurgeReadingPaths)}
 }
 
 // SessionLaunch contains the compatible session projection and admitted scan run.

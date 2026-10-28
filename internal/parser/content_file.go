@@ -16,7 +16,10 @@ type ContentFile struct {
 
 // OpenContentFile opens original bytes without decoding the archive format.
 func OpenContentFile(path string) (*ContentFile, error) {
-	release := retainArchiveBorrow(path)
+	release, err := retainArchiveBorrow(path)
+	if err != nil {
+		return nil, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		release()
@@ -25,7 +28,8 @@ func OpenContentFile(path string) (*ContentFile, error) {
 	return &ContentFile{file: file, release: release}, nil
 }
 
-func (f *ContentFile) Read(p []byte) (int, error) { return f.file.Read(p) }
+func (f *ContentFile) Read(p []byte) (int, error)                 { return f.file.Read(p) }
+func (f *ContentFile) ReadAt(p []byte, offset int64) (int, error) { return f.file.ReadAt(p, offset) }
 func (f *ContentFile) Seek(offset int64, whence int) (int64, error) {
 	return f.file.Seek(offset, whence)
 }

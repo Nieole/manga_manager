@@ -25,9 +25,9 @@ type preemptingSnapshotStore struct {
 	preempt func()
 }
 
-func (s *preemptingSnapshotStore) ExecTx(ctx context.Context, fn func(*database.Queries) error) error {
+func (s *preemptingSnapshotStore) WithSmartSnapshot(ctx context.Context, fn func(database.SmartSnapshotWrite) error) error {
 	s.once.Do(s.preempt)
-	return s.Store.ExecTx(ctx, fn)
+	return s.Store.WithSmartSnapshot(ctx, fn)
 }
 
 // seedSmartSnapshotFixture 建一个命中两个系列的智能书架，返回它的 id 与命中的系列 id。
@@ -78,7 +78,7 @@ func TestSnapshotSmartCollectionRejectsDuplicateName(t *testing.T) {
 		controller, store, filterID, _ := seedSmartSnapshotFixture(t, "Action in A")
 		ctx := context.Background()
 
-		// 抢先者走的是同一条写入通路，只是提前一步提交；它落在 ExecTx 开事务之前，
+		// 抢先者走的是同一条写入通路，只是提前一步提交；它落在 WithSmartSnapshot 开事务之前，
 		// 也就是固化路径「查完重、还没写」的那一刻，不靠 sleep 赛跑。
 		controller.store = &preemptingSnapshotStore{Store: store, preempt: func() {
 			if err := store.ExecTx(ctx, func(q *database.Queries) error {

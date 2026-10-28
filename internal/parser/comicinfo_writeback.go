@@ -6,11 +6,14 @@ package parser
 
 import (
 	"archive/zip"
+	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ErrArchiveNotWritable 表示归档格式不支持写入（如 rar/cbr）。调用方据此给出可读提示。
@@ -36,41 +39,133 @@ const comicInfoRootName = "ComicInfo"
 // 仅支持 .zip / .cbz —— .rar / .cbr 返回 ErrArchiveNotWritable（Go 无 rar 写库）；
 // 原有的 ComicInfo.xml 无法安全改写时返回 ErrComicInfoNotMergeable，归档保持原样。
 func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
-	ext := strings.ToLower(filepath.Ext(archivePath))
-	if ext != ".zip" && ext != ".cbz" {
-		return ErrArchiveNotWritable
-	}
-
-	reader, err := zip.OpenReader(archivePath)
+	stage, err := PrepareComicInfo(context.Background(), archivePath, info)
 	if err != nil {
 		return err
 	}
-	readerClosed := false
-	closeReader := func() {
-		if !readerClosed {
-			_ = reader.Close()
-			readerClosed = true
-		}
-	}
-	defer closeReader()
+	defer stage.Close()
+	_, err = stage.Publish(context.Background())
+	return err
+}
 
-	// 先记下原文件权限：os.CreateTemp 建出来的是 0600，直接 rename 覆盖会把归档变成
-	// 仅属主可读，其他账号（媒体服务器、家庭共享）从此打不开这本书。
-	var originalMode os.FileMode = 0o644
-	if stat, statErr := os.Stat(archivePath); statErr == nil {
-		originalMode = stat.Mode().Perm()
+// PreparedComicInfo owns a temporary archive and the original content fingerprint.
+// Close removes only this operation's staging file. Publish is single-use.
+type PreparedComicInfo struct {
+	path, temporary string
+	original        os.FileInfo
+	digest          [32]byte
+}
+
+// ErrArchiveChanged preserves an externally changed source instead of overwriting it.
+var ErrArchiveChanged = errors.New("archive changed before publication")
+
+func (p *PreparedComicInfo) Close() error {
+	if p.temporary == "" {
+		return nil
+	}
+	err := os.Remove(p.temporary)
+	if err == nil || os.IsNotExist(err) {
+		p.temporary = ""
+		return nil
+	}
+	return err
+}
+
+// Publish reserves a bounded, cancellable window, drains readers, verifies the source,
+// then atomically replaces it. The returned FileInfo describes the committed file.
+func (p *PreparedComicInfo) Publish(ctx context.Context) (os.FileInfo, error) {
+	if p.temporary == "" {
+		return nil, errors.New("ComicInfo staging is already closed")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	release, err := AcquireArchivePublication(ctx, p.path)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	EvictArchiveFromPool(p.path)
+	file, err := os.Open(p.path)
+	if err != nil {
+		return nil, err
+	}
+	current, statErr := file.Stat()
+	hash := sha256.New()
+	_, hashErr := io.Copy(hash, &contextReader{ctx: ctx, reader: file})
+	_ = file.Close()
+	if statErr != nil {
+		return nil, statErr
+	}
+	if hashErr != nil {
+		return nil, hashErr
+	}
+	if !os.SameFile(p.original, current) || !p.original.ModTime().Equal(current.ModTime()) || p.original.Size() != current.Size() || string(hash.Sum(nil)) != string(p.digest[:]) {
+		return nil, ErrArchiveChanged
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(p.temporary)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(p.temporary, p.path); err != nil {
+		return nil, err
+	}
+	p.temporary = ""
+	return info, nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
+}
+
+// PrepareComicInfo builds a conservative merged archive while readers remain admitted.
+// Its own source borrow is returned before the staging object is handed to the publisher.
+func PrepareComicInfo(ctx context.Context, archivePath string, info ComicInfo) (*PreparedComicInfo, error) {
+	ext := strings.ToLower(filepath.Ext(archivePath))
+	if ext != ".zip" && ext != ".cbz" {
+		return nil, ErrArchiveNotWritable
 	}
 
+	source, err := OpenContentFile(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
+	original, err := source.Stat()
+	if err != nil {
+		return nil, err
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, &contextReader{ctx: ctx, reader: source}); err != nil {
+		return nil, err
+	}
+	var digest [32]byte
+	copy(digest[:], hash.Sum(nil))
+	reader, err := zip.NewReader(source, original.Size())
+	if err != nil {
+		return nil, err
+	}
+	originalMode := original.Mode().Perm()
 	base := pickZipMetadataEntry(reader.File, comicInfoEntryName)
 	xmlData, err := mergeArchiveComicInfo(base, info)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	dir := filepath.Dir(archivePath)
 	tmp, err := os.CreateTemp(dir, ".comicinfo-*.tmp")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tmpName := tmp.Name()
 	committed := false
@@ -86,12 +181,16 @@ func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
 	// 别处的同名条目留着：本包没有依据判定它是这本书的元数据还是随卷附带的别的东西，
 	// 而回写就地改写、不留备份，删错了拿不回来。
 	for _, f := range reader.File {
+		if err := ctx.Err(); err != nil {
+			_ = zw.Close()
+			return nil, err
+		}
 		if f == base {
 			continue
 		}
 		if err := copyZipEntry(zw, f); err != nil {
 			_ = zw.Close()
-			return err
+			return nil, err
 		}
 	}
 
@@ -106,42 +205,30 @@ func WriteComicInfoIntoArchive(archivePath string, info ComicInfo) error {
 	entry, err := zw.CreateHeader(header)
 	if err != nil {
 		_ = zw.Close()
-		return err
+		return nil, err
 	}
 	if _, err := entry.Write(xmlData); err != nil {
 		_ = zw.Close()
-		return err
+		return nil, err
 	}
 
 	if err := zw.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return err
+		return nil, err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := os.Chmod(tmpName, originalMode); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Windows 下无法 rename 覆盖仍被打开的目标文件，必须先关闭源归档句柄。
-	closeReader()
-	// 归档池里可能缓存着同一路径的共享句柄（阅读器刚翻过这本书就会有）。
-	// Windows 上那个句柄未持有 FILE_SHARE_DELETE，会让 os.Rename 直接失败——
-	// 也就是说「阅读过的书写不回元数据」，而失败原因对用户完全不可见。
-	EvictArchiveFromPool(archivePath)
-	if err := os.Rename(tmpName, archivePath); err != nil {
-		return err
-	}
-	// rename 期间可能又有请求把旧路径重新打开进池，此时池里那个句柄指向的是已被替换掉的
-	// 旧 inode，再驱逐一次让后续请求重新打开新文件。
-	EvictArchiveFromPool(archivePath)
 	committed = true
-	return nil
+	return &PreparedComicInfo{path: archivePath, temporary: tmpName, original: original, digest: digest}, nil
 }
 
 // mergeArchiveComicInfo 读出基底条目的内容并把 info 合并进去。

@@ -194,7 +194,12 @@ func (c *Controller) previewSmartCollectionSnapshot(w http.ResponseWriter, r *ht
 		return
 	}
 	req := organize.SmartSnapshotRequest{Name: r.URL.Query().Get("name"), Description: r.URL.Query().Get("description"), Limit: queryInt(r, "limit")}
-	preview, err := organize.NewSmartCollections(c.store).PreviewSnapshot(r.Context(), id, c.currentUserID(r), req, queryInt(r, "preview_limit"))
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	preview, err := organize.NewSmartCollections(c.store).PreviewSnapshot(r.Context(), id, subject, req, queryInt(r, "preview_limit"))
 	if err != nil {
 		smartCollectionError(w, err, "Failed to preview smart collection members")
 		return
@@ -214,7 +219,12 @@ func (c *Controller) snapshotSmartCollection(w http.ResponseWriter, r *http.Requ
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
-	result, err := organize.NewSmartCollections(c.store).Snapshot(r.Context(), id, c.currentUserID(r), organize.SmartSnapshotRequest{Name: req.Name, Description: req.Description, Limit: req.Limit})
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	result, err := organize.NewSmartCollections(c.store).Snapshot(r.Context(), id, subject, organize.SmartSnapshotRequest{Name: req.Name, Description: req.Description, Limit: req.Limit})
 	if err != nil {
 		smartCollectionError(w, err, "Failed to snapshot smart collection")
 		return

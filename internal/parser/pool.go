@@ -209,7 +209,10 @@ func PoolMaxSize() int {
 // 引用计数归零之前不会真正关闭，这样淘汰/GC 就不会在别人读到一半时抽走文件描述符。
 // release 幂等，且在返回 error 时也非 nil，调用方可以无条件 defer。
 func GetArchiveFromPool(path string) (Archive, func(), error) {
-	releaseBorrow := retainArchiveBorrow(path)
+	releaseBorrow, err := retainArchiveBorrow(path)
+	if err != nil {
+		return nil, noopRelease, err
+	}
 	arc, release, err := getArchiveFromPool(path)
 	if err != nil {
 		releaseBorrow()
@@ -312,12 +315,11 @@ func EvictArchiveFromPool(path string) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	item, ok := pool.items[path]
-	if !ok {
-		return
+	for key, item := range pool.items {
+		if archiveBorrowKey(key) == archiveBorrowKey(path) {
+			pool.evictLocked(key, item)
+		}
 	}
-
-	pool.evictLocked(path, item)
 }
 
 // ResetArchivePool 移出全部缓存句柄；仍被借用的推迟到引用归零后关闭。
