@@ -12,4 +12,5 @@ it('explains cancellation latency and preserves completed-file expectations', ()
     <TransferConfirmModal open onClose={vi.fn()} selectedCount={2} externalPath="E:/device" summary={{ total: 2, matched: 0, missing: 2 }} submitting={false} onConfirm={vi.fn()} />
   </LocaleProvider>);
   expect(screen.getByText('Cancel stops further copying once the current read or write returns. Files already transferred are kept.')).toBeTruthy();
+  expect(screen.getByText('Pause keeps the current copy for this run. Resume checks the source and destination again; changed files stop safely. A server restart does not resume this transfer.')).toBeTruthy();
 });

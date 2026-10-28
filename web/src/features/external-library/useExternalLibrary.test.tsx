@@ -26,6 +26,35 @@ function setup() {
   }), { initialProps: { id: '1' }, wrapper });
 }
 afterEach(() => { cleanup(); apiClient.defaults.adapter = adapter; vi.unstubAllGlobals(); localStorage.clear(); onError.mockClear(); });
+
+it('keeps the transfer active through pause and resume, then refreshes committed coverage', async () => {
+  let matched = 1;
+  apiClient.defaults.adapter = async config => {
+    const url = config.url ?? '';
+    const session = { session_id: 's1', library_id: 1, status: 'ready', external_path: '/device' };
+    const data = config.method === 'post' ? url.endsWith('/transfer') ? { task_key: 'transfer' } : { session, task_key: 'scan' }
+      : url.endsWith('/series') ? [{ series_id: 7, external_match_count: matched, external_total_count: 2, external_sync_status: matched === 2 ? 'complete' : 'partial' }] : session;
+    return { data, status: 200, statusText: 'OK', headers: {}, config };
+  };
+  const view = setup();
+  act(() => view.result.current.external.setExternalPath('/device'));
+  await act(async () => view.result.current.external.startExternalLibraryScan());
+  await act(async () => view.result.current.external.startExternalTransfer([7], () => {}));
+  await waitFor(() => expect(view.result.current.external.externalSeriesMap[7]?.external_match_count).toBe(1));
+  const push = async (sequence: number, status: string) => {
+    await act(async () => Source.current.onmessage?.({ data: 'run_snapshot:' + JSON.stringify({ sequence, prev: sequence - 1, run: { type: 'transfer_external_library', scope_id: 1, status, params: { session_id: 's1' } } }) }));
+  };
+  await push(1, 'paused');
+  expect(view.result.current.external.externalTransferTaskKey).toBe('transfer');
+  expect(view.result.current.external.externalSeriesMap[7]?.external_match_count).toBe(1);
+  await push(2, 'running');
+  expect(view.result.current.external.externalTransferTaskKey).toBe('transfer');
+  matched = 2;
+  await push(3, 'completed');
+  await waitFor(() => expect(view.result.current.external.externalSeriesMap[7]?.external_match_count).toBe(2));
+  expect(view.result.current.external.externalTransferTaskKey).toBeNull();
+});
+
 it.each([
   ['external_root_overlap', 'home.external.rootOverlap'],
   ['external_root_unresolvable', 'home.external.rootUnresolvable'],

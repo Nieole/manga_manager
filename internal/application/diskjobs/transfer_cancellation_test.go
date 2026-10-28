@@ -10,6 +10,9 @@ import (
 
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/diskjobs"
+	"manga-manager/internal/config"
+	"manga-manager/internal/diskwork"
+	"manga-manager/internal/storageio"
 	"manga-manager/internal/task"
 )
 
@@ -22,7 +25,7 @@ func TestTransferCancelledDuringCurrentBookPublishesOnlyCommittedFacts(t *testin
 	var cancel context.CancelFunc
 	now := time.Now()
 	engine := task.New(task.Config{
-		Store: rig.tasks, RunBackground: func(fn func()) { fn() },
+		Store: rig.tasks, DiskWork: diskwork.NewRunner(func() config.Config { return config.Config{} }, storageio.NewScheduler()), RunBackground: func(fn func()) { fn() },
 		Now: func() time.Time { now = now.Add(time.Second); return now },
 		DecorateRunContext: func(ctx context.Context, _ task.Run, _ task.RunSpec) context.Context {
 			var runCtx context.Context

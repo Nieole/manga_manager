@@ -62,34 +62,48 @@ func (r *Runner) Do(ctx context.Context, w Work, fn func() error) (Stats, error)
 
 	limit := concurrencyLimit(w.Kind, policy.IOPolicy)
 	if limit <= 0 || strings.TrimSpace(policy.VolumeKey) == "" {
+		if err := taskcontrol.Wait(ctx); err != nil {
+			return stats, err
+		}
 		return stats, fn()
 	}
 
-	lease, err := r.scheduler.Acquire(ctx, storageio.Request{
-		VolumeKey:        policy.VolumeKey,
-		Limit:            limit,
-		Kind:             w.Kind,
-		PauseWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
-		IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
-	})
-	stats.Wait = lease.Wait
-	stats.PausedWait = lease.PausedWait
-	// 先记日志再判错：等了很久最终被取消的申领，正是这条观测要治的场景。
-	if lease.Wait >= slowAcquireThreshold {
-		slog.InfoContext(ctx, "Disk work waited for storage IO token",
-			"work_kind", string(w.Kind),
-			"path", w.Path,
-			"storage_profile", policy.StorageProfile,
-			"volume_key", policy.VolumeKey,
-			"io_wait_ms", lease.Wait.Milliseconds(),
-		)
-	}
-	if err != nil {
-		return stats, err
-	}
-	defer lease.Release()
+	for {
+		lease, err := r.scheduler.Acquire(ctx, storageio.Request{
+			VolumeKey:        policy.VolumeKey,
+			Limit:            limit,
+			Kind:             w.Kind,
+			PauseWhenReading: policy.IOPolicy.PauseBackgroundWhenReading,
+			IdleOnly:         policy.IOPolicy.IdleOnlyHeavyTasks,
+		})
+		stats.Wait += lease.Wait
+		stats.PausedWait += lease.PausedWait
+		// 先记日志再判错：等了很久最终被取消的申领，正是这条观测要治的场景。
+		if lease.Wait >= slowAcquireThreshold {
+			slog.InfoContext(ctx, "Disk work waited for storage IO token",
+				"work_kind", string(w.Kind),
+				"path", w.Path,
+				"storage_profile", policy.StorageProfile,
+				"volume_key", policy.VolumeKey,
+				"io_wait_ms", lease.Wait.Milliseconds(),
+			)
+		}
+		if err != nil {
+			return stats, err
+		}
+		// Pause may have arrived while Acquire was waiting. Give the acquired
+		// slot back before waiting; a paused job must not retain a reader's quota.
+		if gate := taskcontrol.FromContext(ctx); gate != nil && gate.IsPaused() {
+			lease.Release()
+			if err := taskcontrol.Wait(ctx); err != nil {
+				return stats, err
+			}
+			continue
+		}
+		defer lease.Release()
 
-	return stats, fn()
+		return stats, fn()
+	}
 }
 
 // resolvePolicy 挑出本次作业生效的存储策略：字节落在哪决定卷键，和谁抢同一块盘决定 IO 策略。
@@ -109,7 +123,7 @@ func concurrencyLimit(kind storageio.WorkKind, policy config.StorageIOPolicy) in
 	switch kind {
 	case storageio.WorkKindMetadataScan: // 打开归档读元数据
 		return policy.ArchiveOpenConcurrency
-	case storageio.WorkKindIdentityHash: // 流式读整个文件，不开归档
+	case storageio.WorkKindIdentityHash, storageio.WorkKindTransferCopy: // 流式读写，不开归档
 		return policy.HashConcurrency
 	case storageio.WorkKindCoverBuild: // 打开归档读一页
 		return minPositive(policy.ArchiveOpenConcurrency, policy.CoverConcurrency)

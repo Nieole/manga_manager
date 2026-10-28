@@ -1985,6 +1985,7 @@ export const messages: MessageCatalog = {
     'task.msg.transfer_external_library.cancelled': 'External library transfer cancelled',
     'task.msg.transfer_external_library.cancelled_with_results': 'External library transfer cancelled: {{added}} added, {{existing}} already existed; completed files kept',
     'home.transfer.cancellationNote': 'Cancel stops further copying once the current read or write returns. Files already transferred are kept.',
+    'home.transfer.pauseNote': 'Pause keeps the current copy for this run. Resume checks the source and destination again; changed files stop safely. A server restart does not resume this transfer.',
     'task.msg.transfer_external_library.failed': 'External library transfer failed',
     'task.msg.transfer_external_library.all_exist': 'All selected series already exist in the external library',
     'task.msg.transfer_external_library.transferring': 'Transferring {{path}}',

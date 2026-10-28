@@ -17,6 +17,7 @@ const (
 	WorkKindCoverBuild   WorkKind = "cover_build"
 	WorkKindCacheWrite   WorkKind = "cache_write"
 	WorkKindIdentityHash WorkKind = "identity_hash"
+	WorkKindTransferCopy WorkKind = "transfer_copy"
 
 	defaultReaderIdleDuration = 30 * time.Second
 )
