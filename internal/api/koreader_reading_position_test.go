@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"manga-manager/internal/bookidentity"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +23,7 @@ func TestMatchedKOReaderProtocolUpdatesPositionAndInvalidatesDashboard(t *testin
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeFilePath
 	c.config.Replace(&cfg)
 	lib, _, book := seedBookFixture(t, store, root, "Lib", "Series", "Book.cbz", 32)
-	if err := store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{ID: book.ID, PathFingerprint: koreader.FingerprintRelativePath(lib.Path, book.Path, false), PathFingerprintNoExt: koreader.FingerprintRelativePath(lib.Path, book.Path, true)}); err != nil {
+	if err := store.UpdateBookIdentity(ctx, database.UpdateBookIdentityParams{ID: book.ID, PathFingerprint: string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, false)), PathFingerprintNoExt: string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, true))}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateKOReaderAccount(ctx, database.CreateKOReaderAccountParams{Username: "device", SyncKey: "secret", Enabled: true}); err != nil {

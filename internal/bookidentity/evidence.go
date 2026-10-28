@@ -1,4 +1,7 @@
-package koreader
+// Package bookidentity derives content and path evidence for persistent book identities.
+// A book keeps its database ID; equal evidence alone does not authorize merging records.
+// Device document keys, account credentials and protocol matching belong to koreader.
+package bookidentity
 
 import (
 	"context"
@@ -11,36 +14,29 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
-var syncKeyPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+// ContentHash is the complete file's MD5 evidence, independent of its path.
+type ContentHash string
 
-func HashKey(raw string) string {
-	sum := md5.Sum([]byte(strings.TrimSpace(raw)))
-	return hex.EncodeToString(sum[:])
-}
+// QuickHash samples size, head and tail; equal samples do not prove equal bytes.
+type QuickHash string
 
-func NormalizeSyncKey(raw string) string {
-	return strings.ToLower(strings.TrimSpace(raw))
-}
-
-func IsValidSyncKey(raw string) bool {
-	return syncKeyPattern.MatchString(NormalizeSyncKey(raw))
-}
+// PathHash is normalized relative-path evidence, with or without the extension.
+type PathHash string
 
 // FingerprintFile 计算整个文件的 md5。
 //
 // 仅供无长任务上下文的调用方使用；扫描/重建索引这类可被取消的批量路径请用
 // FingerprintFileContext——它们一本可能有几个 GB，读完一遍要几十秒，
 // 期间取消信号完全传不进来，任务面板上的「取消」会像是没反应。
-func FingerprintFile(path string) (string, error) {
+func FingerprintFile(path string) (ContentHash, error) {
 	return FingerprintFileContext(context.Background(), path)
 }
 
 // FingerprintFileContext 与 FingerprintFile 相同，但整文件读取可被 ctx 打断。
-func FingerprintFileContext(ctx context.Context, path string) (string, error) {
+func FingerprintFileContext(ctx context.Context, path string) (ContentHash, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -51,7 +47,7 @@ func FingerprintFileContext(ctx context.Context, path string) (string, error) {
 	if _, err := io.Copy(h, &contextReader{ctx: ctx, r: f}); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return ContentHash(hex.EncodeToString(h.Sum(nil))), nil
 }
 
 // contextReader 在每次 Read 前检查取消。
@@ -70,7 +66,7 @@ func (c *contextReader) Read(p []byte) (int, error) {
 	return c.r.Read(p)
 }
 
-func FingerprintQuickFile(path string) (string, error) {
+func FingerprintQuickFile(path string) (QuickHash, error) {
 	const chunkSize = 64 * 1024
 
 	info, err := os.Stat(path)
@@ -114,23 +110,23 @@ func FingerprintQuickFile(path string) (string, error) {
 		}
 	}
 
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return QuickHash(hex.EncodeToString(h.Sum(nil))), nil
 }
 
-func FingerprintRelativePath(libraryRoot, bookPath string, ignoreExtension bool) string {
+func FingerprintRelativePath(libraryRoot, bookPath string, ignoreExtension bool) PathHash {
 	rel, err := filepath.Rel(libraryRoot, bookPath)
 	if err != nil {
 		rel = bookPath
 	}
-	return FingerprintDocumentPath(rel, ignoreExtension)
+	return FingerprintPath(rel, ignoreExtension)
 }
 
-func FingerprintDocumentPath(documentPath string, ignoreExtension bool) string {
+func FingerprintPath(documentPath string, ignoreExtension bool) PathHash {
 	normalized := normalizePathFragment(documentPath, ignoreExtension)
 	if normalized == "" {
 		return ""
 	}
-	return hashMD5(normalized)
+	return PathHash(hashMD5(normalized))
 }
 
 func normalizePathFragment(raw string, ignoreExtension bool) string {

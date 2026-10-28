@@ -3,16 +3,16 @@ package api
 import (
 	"context"
 	"manga-manager/internal/application/maintenance"
-	"manga-manager/internal/koreader"
+	"manga-manager/internal/bookidentity"
 	"manga-manager/internal/runhandle"
 	"time"
 )
 
-func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, h koreader.TaskHandle) (int, int, error) {
+func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, h bookidentity.TaskHandle) (int, int, error) {
 	return c.maintenance.RebuildFileIdentityRecords(ctx, limit, h)
 }
 
-func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, gap time.Duration, h koreader.TaskHandle) (int, int, error) {
+func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, gap time.Duration, h bookidentity.TaskHandle) (int, int, error) {
 	return c.maintenance.BackfillFullHashRecords(ctx, limit, gap, h)
 }
 

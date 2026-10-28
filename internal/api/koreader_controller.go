@@ -208,7 +208,7 @@ func (c *Controller) listKOReaderUnmatched(w http.ResponseWriter, r *http.Reques
 		result = append(result, KOReaderUnmatchedItem{
 			ID:            item.ID,
 			Document:      item.Document,
-			NormalizedKey: ksvc.NormalizeDocumentForMatch(item.Document, cfg.KOReader.MatchMode, cfg.KOReader.PathIgnoreExtension),
+			NormalizedKey: string(ksvc.NormalizeDocumentForMatch(item.Document, cfg.KOReader.MatchMode, cfg.KOReader.PathIgnoreExtension)),
 			Device:        item.Device,
 			DeviceID:      item.DeviceID,
 			Percentage:    item.Percentage,
@@ -311,7 +311,7 @@ func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http
 			Device:        firstNonEmpty(conflict.Device, "Unknown device"),
 			DeviceID:      conflict.DeviceID,
 			Document:      conflict.Document,
-			NormalizedKey: ksvc.NormalizeDocumentForMatch(conflict.Document, cfg.KOReader.MatchMode, cfg.KOReader.PathIgnoreExtension),
+			NormalizedKey: string(ksvc.NormalizeDocumentForMatch(conflict.Document, cfg.KOReader.MatchMode, cfg.KOReader.PathIgnoreExtension)),
 			MatchedBy:     conflict.MatchedBy,
 			Status:        conflict.Status,
 			Message:       conflict.Message,
