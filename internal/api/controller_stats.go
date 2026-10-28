@@ -192,7 +192,13 @@ func (c *Controller) getRecentReadAll(w http.ResponseWriter, r *http.Request) {
 	// 与 /api/series/search 统一口径：limit 必须有上限，避免单请求拉出全部阅读记录。
 	limit := int64(queryLimit(r, "limit", 20, maxListLimit))
 
-	items, err := reading.RecentReads(r.Context(), c.store, c.currentUserID(r), limit)
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	recent, err := reading.RecentBooks(r.Context(), c.store, subject, limit)
+	items := recent.Items
 	if err != nil {
 		slog.Error("GetRecentReadAll failed", "error", err)
 		jsonError(w, http.StatusInternalServerError, "Failed to get recent reads")

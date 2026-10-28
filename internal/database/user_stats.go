@@ -48,18 +48,6 @@ type UserSeriesReview struct {
 
 // ---- 每用户每日活动 ----
 
-// LogUserReadingActivity 记录某用户当天在某书翻读的页数（pages_read 取 MAX，语义同旧全局表）。
-func (s *SqlStore) LogUserReadingActivity(ctx context.Context, userID, bookID, pages int64) error {
-	// 日期在 Go 侧按本地日历日算好再传参，不用 DATE('now')（那是 UTC，见 TodayDayKey）。
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_reading_activity (user_id, book_id, date, pages_read)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(user_id, book_id, date) DO UPDATE SET
-		   pages_read = MAX(user_reading_activity.pages_read, excluded.pages_read)`,
-		userID, bookID, TodayDayKey(), pages)
-	return err
-}
-
 // GetUserActivityHeatmap 返回某用户近期每日阅读页数（offsetClause 形如 "-112 days"）。
 func (s *SqlStore) GetUserActivityHeatmap(ctx context.Context, userID int64, offsetClause string) ([]ActivityDay, error) {
 	rows, err := s.db.QueryContext(ctx,

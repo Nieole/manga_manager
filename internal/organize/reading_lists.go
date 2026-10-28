@@ -26,7 +26,7 @@ var (
 
 // ReadingListStore supplies ordered catalogue facts and transaction-bound writes.
 type ReadingListStore interface {
-	reading.ProjectionStore
+	reading.BookQueryStore
 	ExecTx(context.Context, func(*database.Queries) error) error
 	ListReadingLists(context.Context) ([]database.ListReadingListsRow, error)
 	GetReadingList(context.Context, int64) (database.ReadingList, error)

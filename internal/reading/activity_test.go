@@ -170,7 +170,7 @@ func TestLegacyCompletionMigrationPreservesHistoryAndDoesNotInventCurrentPages(t
 	if err != nil || !book.IsRead || book.LastReadPage.Valid {
 		t.Fatalf("book=%+v err=%v", book, err)
 	}
-	if state := reading.InspectBook(book); !state.Completed || state.ReadPages != 0 {
+	if state := readerBookState(t, reopened, reading.AnonymousSubject(), bid); !state.Completed || state.ReadPages != 0 {
 		t.Fatalf("state=%+v", state)
 	}
 	stats, err := reopened.GetUserPeriodStats(ctx, uid, 2026, 10)
@@ -191,7 +191,7 @@ func TestLegacyCompletionMigrationPreservesHistoryAndDoesNotInventCurrentPages(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := reading.InspectBook(book); !state.Completed || state.ReadPages != 0 {
+	if state := readerBookState(t, reopened, reading.AnonymousSubject(), bid); !state.Completed || state.ReadPages != 0 {
 		t.Fatalf("discovered pages changed position: %+v", state)
 	}
 	if count, err := reopened.GetUserReadBooksCount(ctx, uid); err != nil || count != 1 {
@@ -257,9 +257,7 @@ func TestKnownPageMarksFollowRescannedPageCounts(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("progress=%+v found=%v err=%v", p, found, err)
 	}
-	book.LastReadPage = p.LastReadPage
-	book.IsRead = p.IsRead
-	if state := reading.InspectBook(book); !state.Completed || state.ReadPages != 20 {
+	if state := readerBookState(t, store, commandSubject(uid), bid); !state.Completed || state.ReadPages != 20 {
 		t.Fatalf("known completion=%+v", state)
 	}
 	if _, err := store.DB().Exec(`UPDATE books SET page_count=30 WHERE id=?`, bid); err != nil {
@@ -268,8 +266,16 @@ func TestKnownPageMarksFollowRescannedPageCounts(t *testing.T) {
 	if err := store.RefreshSeriesDerivedData(ctx, book.SeriesID); err != nil {
 		t.Fatal(err)
 	}
-	book.PageCount = 30
-	if state := reading.InspectBook(book); state.Completed || state.ReadPages != 20 {
+	if state := readerBookState(t, store, commandSubject(uid), bid); state.Completed || state.ReadPages != 20 {
 		t.Fatalf("rescanned completion=%+v", state)
 	}
+}
+
+func readerBookState(t *testing.T, store reading.BookQueryStore, subject reading.Subject, bid int64) reading.BookState {
+	t.Helper()
+	view, err := reading.NewQueries(store).BookView(context.Background(), subject, bid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return view.Inspect()
 }

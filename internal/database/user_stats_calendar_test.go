@@ -169,8 +169,8 @@ func TestUserReadingActivityWriteReadUseSameDay(t *testing.T) {
 	ctx, _, _, book1, _ := seedUserProgressFixture(t, store)
 	u := mkUser(t, ctx, store, "alice", RoleAdmin)
 
-	if err := store.LogUserReadingActivity(ctx, u, book1, 7); err != nil {
-		t.Fatalf("LogUserReadingActivity: %v", err)
+	if err := store.LogUserReadingActivityAt(ctx, u, book1, 7, calendarNow()); err != nil {
+		t.Fatalf("LogUserReadingActivityAt: %v", err)
 	}
 	if err := store.AccumulateReadingTimeForBook(ctx, u, book1, 350, TodayDayKey()); err != nil {
 		t.Fatalf("AccumulateReadingTimeForBook: %v", err)
