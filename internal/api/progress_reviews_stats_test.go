@@ -10,6 +10,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"manga-manager/internal/recommendation"
 	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
@@ -903,18 +904,18 @@ func TestRecommendationCacheIsPartitionedPerUser(t *testing.T) {
 	userB := mkTestUser(t, store, "bob", database.RoleRegular)
 
 	// 只给 A 预置缓存。
-	controller.recommendations.storeAt(controller.recommendations.snapshotGen(), recommendationCacheKey("zh-CN", userA.ID), []AIRecommendationResponse{{
+	controller.recommendations.StoreAt(controller.recommendations.SnapshotGen(), recommendation.Key("zh-CN", userA.ID), []recommendation.Item{{
 		SeriesID: 1, Title: "alice pick",
 	}})
 
-	if got := controller.cachedRecommendations(recommendationCacheKey("zh-CN", userA.ID)); len(got) != 1 {
+	if got := controller.recommendations.Cached(recommendation.Key("zh-CN", userA.ID)); len(got) != 1 {
 		t.Fatalf("A should hit its own cache, got %+v", got)
 	}
-	if got := controller.cachedRecommendations(recommendationCacheKey("zh-CN", userB.ID)); got != nil {
+	if got := controller.recommendations.Cached(recommendation.Key("zh-CN", userB.ID)); got != nil {
 		t.Fatalf("B must not read A's recommendations, got %+v", got)
 	}
 	// 同一用户不同语言仍是独立分区。
-	if got := controller.cachedRecommendations(recommendationCacheKey("en-US", userA.ID)); got != nil {
+	if got := controller.recommendations.Cached(recommendation.Key("en-US", userA.ID)); got != nil {
 		t.Fatalf("locale partition leaked, got %+v", got)
 	}
 }

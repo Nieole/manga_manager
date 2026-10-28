@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"manga-manager/internal/recommendation"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -26,10 +27,10 @@ func TestDeleteLibraryInvalidatesCaches(t *testing.T) {
 
 	// 预热三份缓存。
 	const locale = "zh-CN"
-	cacheKey := recommendationCacheKey(locale, 0)
-	controller.recommendations.storeAt(controller.recommendations.snapshotGen(), cacheKey,
-		[]AIRecommendationResponse{{SeriesID: 1, Title: "stale pick"}})
-	if got := controller.cachedRecommendations(cacheKey); len(got) != 1 {
+	cacheKey := recommendation.Key(locale, 0)
+	controller.recommendations.StoreAt(controller.recommendations.SnapshotGen(), cacheKey,
+		[]recommendation.Item{{SeriesID: 1, Title: "stale pick"}})
+	if got := controller.recommendations.Cached(cacheKey); len(got) != 1 {
 		t.Fatalf("推荐缓存预热失败，got %+v", got)
 	}
 
@@ -40,7 +41,7 @@ func TestDeleteLibraryInvalidatesCaches(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deleteLibrary = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if got := controller.cachedRecommendations(cacheKey); got != nil {
+	if got := controller.recommendations.Cached(cacheKey); got != nil {
 		t.Fatalf("删库后 AI 推荐缓存仍在（TTL 24h，不清就是一整天的陈旧推荐）: %+v", got)
 	}
 }
