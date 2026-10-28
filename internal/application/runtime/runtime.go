@@ -8,6 +8,7 @@ import (
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/diskjobs"
 	"manga-manager/internal/application/intelligence"
+	"manga-manager/internal/application/libraries"
 	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/application/relocating"
 	"manga-manager/internal/application/scanning"
@@ -32,16 +33,17 @@ import (
 
 // Effects supplies transport and derived-state leaf operations; lifecycle recipes stay here.
 type Effects struct {
-	Publish           func(string)
-	PurgeReadingPaths func()
-	InvalidateStats   func(string)
-	WarmStats         func(string)
-	InvalidateReading func()
-	RunEvents         func(<-chan struct{})
-	StopEvents        func()
-	TrimPageCache     func()
-	ObserveIdentity   func(context.Context, task.Identity) error
-	Sources           intelligence.Sources
+	Publish                   func(string)
+	PurgeReadingPaths         func()
+	InvalidateStats           func(string)
+	WarmStats                 func(string)
+	InvalidateReading         func()
+	InvalidateRecommendations func()
+	RunEvents                 func(<-chan struct{})
+	StopEvents                func()
+	TrimPageCache             func()
+	ObserveIdentity           func(context.Context, task.Identity) error
+	Sources                   intelligence.Sources
 }
 
 // ConfigWatch is the operating-system configuration subscription owned by this process.
@@ -59,34 +61,35 @@ type Options struct {
 
 // Runtime holds assembled capabilities. Their modules retain rules, transactions and execution bodies.
 type Runtime struct {
-	Engine        *task.Engine
-	Runs          *application.Runs
-	Tasks         task.Store
-	Registry      *Registry
-	Scans         *scanning.Service
-	Maintenance   *maintenance.Service
-	Disk          *diskjobs.Service
-	Intelligence  *intelligence.Service
-	Moves         *relocating.Service
-	KOReader      *koreader.Service
-	External      *external.Manager
-	Proposals     *proposal.Service
-	Relocation    *relocation.Service
-	Relations     *organize.Relations
-	Scanner       *scanner.Scanner
-	Watcher       *scanner.FileWatcher
-	WatcherError  error
-	DiskWork      *diskwork.Runner
-	cfg           *config.Manager
-	store         database.Store
-	options       Options
-	group         *background
-	stateMu       sync.Mutex
-	recovered     bool
-	started       bool
-	closing       bool
-	configWatcher ConfigWatch
-	stopOnce      sync.Once
+	Engine            *task.Engine
+	Runs              *application.Runs
+	Tasks             task.Store
+	Registry          *Registry
+	Scans             *scanning.Service
+	Maintenance       *maintenance.Service
+	Disk              *diskjobs.Service
+	Intelligence      *intelligence.Service
+	Moves             *relocating.Service
+	KOReader          *koreader.Service
+	External          *external.Manager
+	Proposals         *proposal.Service
+	Relocation        *relocation.Service
+	Relations         *organize.Relations
+	LibraryManagement *libraries.Service
+	Scanner           *scanner.Scanner
+	Watcher           *scanner.FileWatcher
+	WatcherError      error
+	DiskWork          *diskwork.Runner
+	cfg               *config.Manager
+	store             database.Store
+	options           Options
+	group             *background
+	stateMu           sync.Mutex
+	recovered         bool
+	started           bool
+	closing           bool
+	configWatcher     ConfigWatch
+	stopOnce          sync.Once
 }
 type proposalStore struct{ database.Store }
 
@@ -163,6 +166,20 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	}
 	r.Intelligence = intelligence.New(r.Runs, store, r.Proposals, organize.NewAIGrouping(store, nil), sources, e.Publish)
 	r.Watcher, r.WatcherError = scanner.NewFileWatcher(scanner.WatcherHooks{ScanLibrary: func(ctx context.Context, id int64) error { return r.Scans.WatchLibrary(ctx, id) }, CleanupLibrary: func(ctx context.Context, id int64) error { return r.Scans.WatchCleanup(ctx, id) }, LibraryScanRunning: r.Scanner.LibraryScanActive})
+	var libraryWatcher libraries.Watcher
+	if r.Watcher != nil {
+		libraryWatcher = r.Watcher
+	}
+	r.LibraryManagement = libraries.New(store, r.Engine, libraries.Effects{Watcher: libraryWatcher, AfterDelete: func(id int64) {
+		r.Scans.DiscardCoverBatches(id)
+		e.InvalidateStats("library_deleted")
+		e.PurgeReadingPaths()
+		r.External.InvalidateLibrary(id)
+		if e.InvalidateRecommendations != nil {
+			e.InvalidateRecommendations()
+		}
+		e.Publish("refresh")
+	}})
 	r.Moves = relocating.New(r.Relocation, r.Runs, r.Engine, r.Tasks, store, relocating.Effects{PurgeReadingPaths: e.PurgeReadingPaths, InvalidateStats: e.InvalidateStats, InvalidateExternal: r.External.InvalidateLibrary, Watcher: func() (relocating.Watcher, error) {
 		if r.Watcher == nil {
 			return nil, r.WatcherError

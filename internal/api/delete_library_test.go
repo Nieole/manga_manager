@@ -1,6 +1,5 @@
-// 守删库的收尾动作：三份进程内缓存（看板统计、阅读路径的归档来源/页清单、AI 推荐）必须
-// 随之失效，跑在该库上的任务必须先被请求取消，缩短往已删库继续写入的窗口。
-// 缓存不清，用户删库后看到的还是旧数字与旧推荐，而推荐缓存的 TTL 是 24 小时，没有更快的自愈路径。
+// 守删库成功后的缓存交接，以及占用拒绝时保留资料库与运行。
+// 缓存不清会继续显示旧统计和推荐；占用期间不能提前删除或取消工作。
 
 package api
 
@@ -46,8 +45,8 @@ func TestDeleteLibraryInvalidatesCaches(t *testing.T) {
 	}
 }
 
-// TestDeleteLibraryCancelsScopedTask 覆盖「删库前取消该库在跑的扫描任务」。
-func TestDeleteLibraryCancelsScopedTask(t *testing.T) {
+// TestDeleteLibraryDeclinesScopedTask keeps the immediate deletion command non-destructive.
+func TestDeleteLibraryDeclinesScopedTask(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	ctx := context.Background()
 
@@ -65,13 +64,13 @@ func TestDeleteLibraryCancelsScopedTask(t *testing.T) {
 	rec := httptest.NewRecorder()
 	controller.deleteLibrary(rec, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("deleteLibrary = %d, body=%s", rec.Code, rec.Body.String())
 	}
 
 	task := currentTask(t, controller.taskEngine, taskKey)
-	if task.Status != "cancelling" {
-		t.Fatalf("该库的扫描任务状态 = %q, want cancelling（删库应先请求取消，缩短往已删库写入的窗口）", task.Status)
+	if task.Status != "running" {
+		t.Fatalf("occupied deletion changed run status to %q, want running", task.Status)
 	}
 }
 

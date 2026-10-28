@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
@@ -21,58 +23,21 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	release, ok := c.guardLibraryRead(w, libraryID)
-	if !ok {
-		return
-	}
-	defer release()
-
-	if lib, err := c.store.GetLibrary(ctx, libraryID); err == nil && c.watcher != nil {
-		c.watcher.UnwatchLibrary(lib.Path)
-	}
-
-	// 先取消该库的在跑任务再删行。取消是异步的（任务转入 cancelling，手上那批事务仍会刷完），
-	// 所以这里的收益不是「彻底避免写冲突」——FK 会挡住对已删库的回写——而是缩短
-	// 「扫描还在往一个马上要消失的库里写」的窗口，少一批注定失败的事务与错误日志。
-	// 代价是 DeleteLibrary 万一失败，一个合法扫描已被取消；用户重新触发即可，
-	// 比留下一个对着不存在的库空转的扫描要好。
-	c.cancelLibraryScopedTasks(libraryID)
-
-	err = c.store.DeleteLibrary(ctx, libraryID)
+	result, err := c.libraryManagement.Delete(ctx, libraryID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to delete library")
+		status, code, message := http.StatusInternalServerError, "library_delete_failed", "Failed to delete library"
+		switch {
+		case errors.Is(err, task.ErrLibraryUnavailable):
+			status, code, message = http.StatusConflict, "library_busy", "Library is in use"
+		case errors.Is(err, sql.ErrNoRows):
+			status, code, message = http.StatusNotFound, "library_not_found", "Library not found"
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			status, code, message = http.StatusRequestTimeout, "library_delete_cancelled", "Library deletion was cancelled"
+		}
+		jsonResponse(w, status, map[string]any{"error": message, "code": code, "deleted": result.Deleted, "conflicts": result.Conflicts, "warnings": result.Warnings})
 		return
 	}
-
-	// 三份缓存都以「库里有哪些书」为前提，删库后必须一起失效，且只在删除确实成功之后做
-	// ——删除失败时缓存仍然是对的，白清一次只会让下一批请求平白多打一次库。
-	c.invalidateDashboardStatsCache("library_deleted")
-	c.purgeReadingPathCaches()
-	c.purgeRecommendationCache()
-
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
-}
-
-// cancelLibraryScopedTasks 取消挂在这个库上、仍会变化的每一条运行。
-//
-// 判据是**作用域**而不是任务键前缀：库级的工作种类会随功能增加（扫描、清理、刮削、AI 分组、
-// 封面生成……），而一份前缀清单漏补不会有编译错误，只会表现成删库几分钟后队列里那条运行
-// 自己开跑。逃出去的只剩「重建索引 / 重建缩略图」那趟逐库强扫——它挂在系统作用域上，
-// 删掉一个库不该把整趟重建停掉。
-//
-// 取消不掉的（不可取消、进程里没有句柄）一律不阻塞删库：库行删掉之后，外键约束会挡住任何回写。
-func (c *Controller) cancelLibraryScopedTasks(libraryID int64) {
-	// 还没被任何一条运行认领的封面批也要丢掉：库都没了，那些封面不必再生成，
-	// 而挂着的批不会有人来认领——取消运行带不走它们。
-	c.discardCoverBatches(libraryID)
-	cancelled, err := c.taskEngine.cancelRunsForScope(task.ScopeLibrary, libraryID)
-	if err != nil {
-		slog.Warn("Failed to cancel runs for deleted library", "library_id", libraryID, "error", err)
-		return
-	}
-	if cancelled > 0 {
-		slog.Info("Cancelled runs for deleted library", "library_id", libraryID, "count", cancelled)
-	}
+	jsonResponse(w, http.StatusOK, map[string]any{"status": "deleted", "deleted": result.Deleted, "warnings": result.Warnings})
 }
 
 type CreateLibraryRequest struct {

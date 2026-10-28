@@ -437,6 +437,9 @@ func (e *Engine) markInterrupted(ctx context.Context) (marked int, candidates []
 	now := e.clock()
 	candidates = make([]Run, 0, len(runs))
 	for _, run := range runs {
+		if e.runtimes[run.ID] == nil {
+			delete(e.libraryRuns, run.ID)
+		}
 		heartbeat := run.UpdatedAt
 		stopped := run.Status == StatusPaused || run.Status == StatusCancelling
 		run.Status = StatusInterrupted

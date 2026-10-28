@@ -1,6 +1,16 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'libraryDelete.busy': 'The library is still in use and was not deleted. Finish the listed work and retry.',
+    'libraryDelete.readers': 'Reading or content access is still open.',
+    'libraryDelete.reserved': 'Another library management operation is in progress. Retry later.',
+    'libraryDelete.finishing': 'Run #{{id}} is still releasing its resources. Retry later.',
+    'libraryDelete.sharedWork': 'Run #{{id}}: work is shared with another library and cannot be cancelled by this deletion.',
+    'libraryDelete.queuedWork': 'Library run #{{id}} is still queued. Resolve it before retrying.',
+    'libraryDelete.localWork': 'Library run #{{id}} has not finished.',
+    'libraryDelete.restoreFailed': 'Deletion did not finish and file watching could not be restored. Check the library watch settings.',
+    'libraryDelete.deletedWarning': 'The library was deleted, but the remaining handoff did not finish. Refresh the page.',
+
     'franchise.unavailableFailed': 'Franchise update failed and no successful results are available yet. Automatic retries will continue.',
     'franchise.unavailable': 'Franchises are unavailable until the first successful rebuild. Automatic retries will continue.',
     'franchise.failedStale': 'Franchise update failed. Showing the last successful results while automatic retries continue.',
