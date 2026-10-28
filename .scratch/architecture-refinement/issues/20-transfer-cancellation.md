@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 108、109、110、111、112、113、118、119、120、121。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -28,3 +28,8 @@
 - Frontend full suite passed 100 files / 938 tests in `.tmp/ticket20-ui-full.log`; the 13 transfer/dialog consumers passed after merge in `.tmp/ticket20-after-merge-ui.log`. Frontend lint/build passed before and after merge. Go 1.26.10 lint returned `0 issues.` after merge in `.tmp/ticket20-after-merge-lint.log`; gofmt and diff whitespace checks were empty.
 - Linux and Darwin external test binaries cross-compiled successfully with `CGO_ENABLED=0` in `.tmp/ticket20-cross-linux-nocgo.log` and `.tmp/ticket20-cross-darwin-nocgo.log`; these are build checks, not other-OS runtime evidence. The initial Linux attempt inherited the Windows CGO compiler and failed; the corrected environment is the passing build. Existing Unix-only symlink/FIFO tests do not execute on Windows.
 - Pause/resume offset and IO-quota release are reserved for ticket 21. No forced interruption of a blocked operating-system IO call or cross-process auto-resume is claimed. Pending merger verification and closure; status remains ready-for-agent.
+
+### Integration verification (2026-10-28)
+
+- Merged through ba5393d00f48f1253fbafd7aea6c26dfd4554656 without conflicts. Main-tree full diskjobs race actually passed 16.903s and External HTTP race passed 24.134s, including partial-commit/coverage/session-result consumers. Transfer consumers passed 3 files / 13 tests. Go 1.26.10 lint reported 0 issues, gofmt emitted no files, and diff whitespace checks passed. Logs: .tmp/merge-wave11-transfer-owner.log, merge-wave11-transfer-api.log, merge-wave11-transfer-web.log and merge-wave11-transfer-lint.log.
+- Main-tree external full race launches were blocked twice by Application Control and ordinary full external once; these are not passes (.tmp/merge-wave11-external-retry.log and merge-wave11-external-ordinary.log). Actual full external execution remains the implementer post-merge ordinary 3.803s and strengthened full race 14.845s above. Other-platform evidence remains cross-compilation only, not execution.
