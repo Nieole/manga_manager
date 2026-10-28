@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"manga-manager/internal/accounts"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 )
@@ -31,7 +32,7 @@ const (
 	// 浏览器 Cookie 同一节奏一起推后（见 authGate），二者分叉就等于续期对客户端是哑的。
 	sessionTTL        = 30 * 24 * time.Hour
 	sessionTouchAfter = time.Hour
-	minPasswordLen    = 8
+	minPasswordLen    = accounts.MinimumPasswordBytes
 )
 
 // authCtxKey 是鉴权中间件写入请求上下文的键类型（独立类型避免与其他包的 context key 冲突）。
@@ -119,21 +120,7 @@ func verifyPassword(hash, pw string) bool {
 // 走完同一次 bcrypt。空哈希格式非法，bcrypt 会在做任何 KDF 之前就返回，两条分支的耗时因此差
 // 一个数量级——bcrypt 慢是故意的，正因为慢，这个缺口才明显。
 func (c *Controller) authenticateUser(ctx context.Context, username, password string) (database.User, bool) {
-	user, err := c.store.GetUserByUsername(ctx, username)
-	if err != nil {
-		user = database.User{}
-	}
-	hash := user.PasswordHash
-	if hash == "" {
-		hash = dummyPasswordHash
-	}
-	// 比对必须先于错误判断：写成 `err != nil || !verifyPassword(...)` 的话，|| 的短路会让
-	// 「用户名不存在」这条分支一次 KDF 都不跑，缺口原样长回来。
-	matched := verifyPassword(hash, password)
-	if err != nil || !matched {
-		return database.User{}, false
-	}
-	return user, true
+	return accounts.Authenticate(ctx, c.store, accounts.Credentials{Username: username, Password: password}, dummyPasswordHash, verifyPassword)
 }
 
 // sessionCookieSecure 决定会话 Cookie 是否带 Secure 标志。
@@ -573,18 +560,9 @@ func (c *Controller) authStatus(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, resp)
 }
 
-// setupAdmin 在站点尚无账户时创建首个管理员并立即登录，同时把旧的全局阅读进度/活动与孤儿 KOReader 账户并入该管理员。
+// setupAdmin maps initialization outcomes and establishes the separate HTTP session.
 func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	count, err := c.store.CountUsers(ctx)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to read users")
-		return
-	}
-	if count > 0 {
-		jsonError(w, http.StatusConflict, apiText(requestLocale(r), "auth.setup_done"))
-		return
-	}
 	var req struct {
 		Username    string `json:"username"`
 		Password    string `json:"password"`
@@ -593,53 +571,35 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	username := strings.TrimSpace(req.Username)
-	if username == "" {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.username_required"))
-		return
-	}
-	if len(req.Password) < minPasswordLen {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_too_short"))
-		return
-	}
-	hash, err := hashPassword(req.Password)
+	result, err := accounts.NewInitialization(c.store, hashPassword).Setup(ctx, accounts.SetupInput{Username: req.Username, Password: req.Password, DisplayName: req.DisplayName})
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to hash password")
-		return
-	}
-	user, err := c.store.CreateUser(ctx, database.CreateUserParams{
-		Username:     username,
-		PasswordHash: hash,
-		Role:         database.RoleAdmin,
-		DisplayName:  strings.TrimSpace(req.DisplayName),
-	})
-	if err != nil {
-		if errors.Is(err, database.ErrUsernameTaken) {
+		switch {
+		case errors.Is(err, accounts.ErrInitialized):
+			jsonError(w, http.StatusConflict, apiText(requestLocale(r), "auth.setup_done"))
+		case errors.Is(err, accounts.ErrUsername):
+			jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.username_required"))
+		case errors.Is(err, accounts.ErrPassword):
+			jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_too_short"))
+		case errors.Is(err, database.ErrUsernameTaken):
 			jsonError(w, http.StatusConflict, apiText(requestLocale(r), "auth.username_taken"))
-			return
+		default:
+			jsonError(w, http.StatusInternalServerError, "failed to create admin")
 		}
-		jsonError(w, http.StatusInternalServerError, "failed to create admin")
 		return
 	}
+	user := result.User
 	c.auth.markUsersExist()
-	// 把旧的全局阅读进度迁移到首个管理员名下（幂等）。失败不阻断建号，仅记录。
-	if err := c.store.MigrateGlobalProgressToUser(ctx, user.ID); err != nil {
-		slog.Warn("migrate global progress to first admin failed", "user_id", user.ID, "error", err)
-	}
-	// 现有 KOReader 账户并入首个管理员。
-	if err := c.store.AssignOrphanKOReaderAccountsToUser(ctx, user.ID); err != nil {
-		slog.Warn("assign KOReader accounts to first admin failed", "user_id", user.ID, "error", err)
-	}
-	// 旧的全局阅读活动（热力图数据）迁入首个管理员。
-	if err := c.store.MigrateGlobalActivityToUser(ctx, user.ID); err != nil {
-		slog.Warn("migrate global reading activity to first admin failed", "user_id", user.ID, "error", err)
+	warnings := make([]string, 0, len(result.Warnings))
+	for _, warning := range result.Warnings {
+		warnings = append(warnings, warning.Step)
+		slog.WarnContext(ctx, "First admin legacy claim failed", "user_id", user.ID, "step", warning.Step, "error", warning.Err)
 	}
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to start session")
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": "Administrator was created; sign in to continue", "account_committed": true, "warnings": warnings})
 		return
 	}
-	jsonResponse(w, http.StatusOK, authSessionResponse{User: user, CSRFToken: csrf})
+	jsonResponse(w, http.StatusOK, map[string]any{"user": user, "csrf_token": csrf, "account_committed": true, "warnings": warnings})
 }
 
 // login 校验用户名口令，成功则建会话下发 cookie。带按 IP + 用户名的失败暴破限流。
@@ -667,7 +627,7 @@ func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	username := strings.TrimSpace(req.Username)
+	username := req.Username
 	// 失败计数按**精确**用户名分桶，与账户身份同一把尺子（users.username 按字节判重）。
 	// 桶键折叠大小写会把两个独立账户算作一个：对着其中一个连续失败，另一个跟着被锁在门外。
 	userKey := "user:" + username

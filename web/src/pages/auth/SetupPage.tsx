@@ -1,6 +1,6 @@
 /**
  * 本文件是首次运行的「创建首个管理员」引导页。仅当站点尚无任何账户时由 AuthGate 展示。
- * 创建的账户为管理员角色，将承接旧的全局阅读进度与 KOReader 账户（迁移逻辑在后端阶段2/3 挂接）。
+ * 账户认领旧阅读数据和未归属的设备账户；会话失败与历史数据认领告警分别显示。
  * 维护要点：密码至少 8 位并二次确认；成功后自动登录进入应用。
  */
 
@@ -36,7 +36,7 @@ export default function SetupPage() {
     }
     setSubmitting(true);
     try {
-      await setup(username.trim(), password, displayName.trim());
+      await setup(username, password, displayName.trim());
     } catch (err) {
       setError(err instanceof Error ? err.message : t('auth.error.generic'));
       setSubmitting(false);

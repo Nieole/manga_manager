@@ -30,11 +30,13 @@ interface AuthStatusResponse {
 }
 
 interface SessionResponse {
+  warnings?: string[];
   user: AuthUser;
   csrf_token: string;
 }
 
 interface AuthContextValue {
+  setupNotice?: 'session' | 'claims' | null;
   loading: boolean;
   setupRequired: boolean;
   user: AuthUser | null;
@@ -53,6 +55,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
+  const [setupNotice, setSetupNotice] = useState<'session' | 'claims' | null>(null);
   const [setupRequired, setSetupRequired] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [backendUnreachable, setBackendUnreachable] = useState(false);
@@ -128,7 +131,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         display_name: displayName,
       });
       applySession(data);
+      setSetupNotice(data.warnings?.length ? 'claims' : null);
     } catch (error) {
+      if (isAxiosError(error) && error.response?.data?.account_committed === true) {
+        setSetupRequired(false);
+        setUser(null);
+        setCsrfToken('');
+        setSetupNotice('session');
+      }
       // 原始错误挂到 cause 上：getApiErrorMessage 只取出给用户看的那句话，
       // 而状态码、响应体这些排查要用的信息都在原始的 axios 错误里。
       throw new Error(getApiErrorMessage(error, 'setup failed'), { cause: error });
@@ -139,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data } = await apiClient.post<SessionResponse>('/api/auth/login', { username, password });
       applySession(data);
+      setSetupNotice(null);
     } catch (error) {
       // 原始错误挂到 cause 上：getApiErrorMessage 只取出给用户看的那句话，
       // 而状态码、响应体这些排查要用的信息都在原始的 axios 错误里。
@@ -187,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const value = useMemo<AuthContextValue>(() => ({
+    setupNotice,
     loading,
     setupRequired,
     user,
@@ -197,7 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     logout,
     changePassword,
-  }), [loading, setupRequired, user, backendUnreachable, refresh, setup, login, logout, changePassword]);
+  }), [setupNotice, loading, setupRequired, user, backendUnreachable, refresh, setup, login, logout, changePassword]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

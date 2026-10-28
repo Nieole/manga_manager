@@ -1,6 +1,8 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'auth.setup.sessionFailed': 'The administrator was created, but the session could not start. Sign in with that account; do not repeat setup.',
+    'auth.setup.claimWarning': 'The administrator was created and signed in, but some historical data could not be claimed. Keep this account and check the server logs.',
     'librarySave.unavailable': 'The library is in use or its root is reserved. Wait for access to close and retry; your form has been kept.',
     'librarySave.refreshFailed': 'Library saved, but navigation could not refresh. Retry the library list; saving again is unnecessary.',
     'librarySave.savedWarning': 'Library saved. Watching or the initial scan could not start. Check Tasks and library settings; scan admission is not scan completion.',
