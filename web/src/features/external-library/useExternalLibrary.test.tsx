@@ -53,7 +53,7 @@ it('discards a scan start response after switching library and keeps device inpu
   expect(view.result.current.external.externalSession).toBeNull();
   expect(view.result.current.external.externalPath).toBe('/device/input');
 });
-it('uses the session to refresh coverage and catalog after transfer termination', async () => {
+it.each(['cancelled', 'failed'])('uses the session to refresh coverage and catalog after partial transfer %s', async status => {
   const requests: string[] = [];
   apiClient.defaults.adapter = async config => {
     const url = config.url ?? ''; requests.push(url);
@@ -67,7 +67,7 @@ it('uses the session to refresh coverage and catalog after transfer termination'
   await act(async () => view.result.current.external.startExternalLibraryScan());
   await act(async () => view.result.current.external.startExternalTransfer([7], () => {}));
   const before = requests.length;
-  await act(async () => Source.current.onmessage?.({ data: 'run_snapshot:' + JSON.stringify({ sequence: 1, prev: 0, run: { type: 'transfer_external_library', status: 'cancelled', params: { session_id: 's1' } } }) }));
+  await act(async () => Source.current.onmessage?.({ data: 'run_snapshot:' + JSON.stringify({ sequence: 1, prev: 0, run: { type: 'transfer_external_library', status, params: { session_id: 's1' }, message_params: { added: '1', committed_book_ids: '21' } } }) }));
   expect(requests.slice(before).some(url => url.endsWith('/s1'))).toBe(true);
   expect(view.result.current.refresh).toBe(1);
   expect(view.result.current.external.externalTransferTaskKey).toBeNull();

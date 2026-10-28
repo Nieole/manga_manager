@@ -340,12 +340,13 @@ func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *h
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
 		return
 	}
-	created, err := c.aiGroupingActions().ApplyCollection(r.Context(), reviewID, id)
+	result, err := c.aiGroupingActions().ApplyCollection(r.Context(), reviewID, id)
 	if err != nil {
 		aiGroupingActionError(w, r, err, "Failed to apply AI grouping review collection")
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": reviewID, "collection_id": id, "created_collection_id": created})
+	view := aiGroupingOutcomeView(result.Snapshot)
+	jsonResponse(w, http.StatusOK, map[string]any{"review": view, "success": true, "review_id": reviewID, "collection_id": id, "created_collection_id": result.CreatedCollectionID})
 }
 func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "reviewId")
@@ -358,7 +359,8 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 		aiGroupingActionError(w, r, err, "Failed to apply AI grouping review")
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": id, "collections": result.Applied, "skipped": result.Skipped})
+	view := aiGroupingOutcomeView(result.Snapshot)
+	jsonResponse(w, http.StatusOK, map[string]any{"review": view, "success": true, "review_id": id, "collections": result.Applied, "skipped": result.Skipped})
 }
 func (c *Controller) rejectAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
 	reviewID, id, ok := aiGroupingActionIDs(r)
@@ -366,11 +368,13 @@ func (c *Controller) rejectAIGroupingReviewCollection(w http.ResponseWriter, r *
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
 		return
 	}
-	if err := c.aiGroupingActions().RejectCollection(r.Context(), reviewID, id); err != nil {
+	result, err := c.aiGroupingActions().RejectCollection(r.Context(), reviewID, id)
+	if err != nil {
 		aiGroupingActionError(w, r, err, "Failed to reject AI grouping review collection")
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": reviewID, "collection_id": id})
+	view := aiGroupingOutcomeView(result.Snapshot)
+	jsonResponse(w, http.StatusOK, map[string]any{"review": view, "success": true, "review_id": reviewID, "collection_id": id})
 }
 func (c *Controller) rejectAIGroupingReview(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "reviewId")
@@ -378,9 +382,19 @@ func (c *Controller) rejectAIGroupingReview(w http.ResponseWriter, r *http.Reque
 		jsonError(w, http.StatusBadRequest, "Invalid AI grouping review ID")
 		return
 	}
-	if err := c.aiGroupingActions().RejectReview(r.Context(), id); err != nil {
+	result, err := c.aiGroupingActions().RejectReview(r.Context(), id)
+	if err != nil {
 		aiGroupingActionError(w, r, err, "Failed to reject AI grouping review")
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"success": true, "review_id": id})
+	view := aiGroupingOutcomeView(result.Snapshot)
+	jsonResponse(w, http.StatusOK, map[string]any{"review": view, "success": true, "review_id": id})
+}
+
+func aiGroupingOutcomeView(snapshot organize.AIGroupingReview) aiGroupingReviewView {
+	data := aiGroupingViewData{collectionsByReview: map[int64][]database.AiGroupingReviewCollection{snapshot.Review.ID: snapshot.Collections}, seriesByID: map[int64]database.GetSeriesNamesByIDsRow{}}
+	for _, row := range snapshot.Series {
+		data.seriesByID[row.ID] = row
+	}
+	return aiGroupingReviewToView(data, snapshot.Review, snapshot.LibraryName)
 }

@@ -29,7 +29,10 @@ var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 type Store interface {
 	LibraryHasRecords(context.Context, int64) (bool, error)
 	WithCollectionWrite(context.Context, func(CollectionWrite) error) error
+	WithReadingListWrite(context.Context, func(ReadingListWrite) error) error
 	WithSmartSnapshot(context.Context, func(SmartSnapshotWrite) error) error
+	WithAIGroupingWrite(context.Context, func(AIGroupingWrite) error) error
+	WithAIGroupingGenerationWrite(context.Context, func(AIGroupingGenerationWrite) error) error
 	AccumulateReadingTimeForBook(context.Context, int64, int64, int64, string) error
 	ResolveReadingOperationTime(context.Context, int64, string, time.Time) (time.Time, error)
 	MutateReadingPositions(context.Context, int64, []int64, string, func(int64, ReadingPositionState) ReadingPositionMutation) (map[int64]ReadingPositionMutation, error)

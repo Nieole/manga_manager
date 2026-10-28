@@ -1,10 +1,3 @@
-// 本文件是任务子域的**模型层**：领域的 task.Snapshot 与对外 RunSnapshot 之间的翻译、列表谓词的翻译、
-// 身份四要素在两侧的互转，以及进度派生字段（percent/rate/eta）的计算。
-//
-// 这里的函数不碰可变状态、不加锁、不做 IO。唯一的例外是 runSnapshotFrom 这个方法：它要问一句
-// 「这个（类型，**变体**）注册了**重启函数**吗」，而那张注册表是装配期填好、此后只读的。
-// 一旦某个函数需要读写 taskEngine 受锁保护的字段，它就该搬到 task_engine.go 去。
-
 package api
 
 import (
@@ -18,18 +11,6 @@ import (
 // cancelling 也算活动态：取消已请求但任务体尚未收尾，此时不应允许同一个任务再次发起。
 func taskIsActive(status string) bool {
 	return task.RunStatus(status).IsActive()
-}
-
-// runLiveSummaryFrom 把领域的**实况汇总**搬成对外形状。序号不搬：它属于推送信封（见 RunPush），
-// 而整份实况帧是拉回来的，链上没有它的位置。
-func runLiveSummaryFrom(live task.Live) RunLiveSummary {
-	return RunLiveSummary{
-		Active:    live.Active,
-		Queued:    live.Queued,
-		Slots:     live.Slots,
-		Paused:    live.Paused,
-		PausedAll: live.PausedAll,
-	}
 }
 
 // ---- 身份四要素在两侧的互转 ----
@@ -127,93 +108,6 @@ func taskListFilterFrom(filters taskFilters) task.TaskFilter {
 }
 
 // ---- 快照翻译 ----
-
-// runSnapshotFrom 把一帧领域快照翻成对外的运行快照。
-//
-// 三处来源各司其职：运行行给展示态与计数，控制能力由引擎按运行的活性**派生**（不是库里的列——
-// 落成列的话重启后那几个布尔值会集体说谎），侧数据给指标、标签、重启入参与并发上限。
-func (e *taskEngine) runSnapshotFrom(snapshot task.Snapshot, identity TaskIdentity) RunSnapshot {
-	run := snapshot.Run
-	snap := RunSnapshot{
-		RunID:               run.ID,
-		TaskID:              run.TaskID,
-		Type:                identity.taskType,
-		Scope:               identity.scope,
-		ScopeID:             identity.scopeID,
-		Variant:             identity.variant,
-		ScopeName:           run.ScopeName,
-		Trigger:             string(run.Trigger),
-		Status:              string(run.Status),
-		MessageCode:         run.MessageCode,
-		MessageParams:       run.MessageParams,
-		Error:               run.Error,
-		Current:             run.Current,
-		Total:               run.Total,
-		CanCancel:           snapshot.Capabilities.CanCancel,
-		CanPause:            snapshot.Capabilities.CanPause,
-		CanResume:           snapshot.Capabilities.CanResume,
-		Retryable:           e.isRetryableTask(identity.taskType, identity.variant),
-		PausedAt:            run.PausedAt,
-		PauseReason:         string(run.PauseReason),
-		ControlPausedMillis: run.ControlPausedMillis,
-		CoalescedCount:      run.CoalescedCount,
-		Phase:               run.Phase,
-		CurrentItem:         run.CurrentItem,
-		Metrics:             snapshot.Side.Metrics,
-		Labels:              snapshot.Side.Labels,
-		Params:              snapshot.Side.Args,
-		UpdatedAt:           run.UpdatedAt,
-		FinishedAt:          run.FinishedAt,
-		Sequence:            run.Sequence,
-	}
-	// 零值时刻在契约里是「还没开跑」，不是公元 1 年：领域侧把**排队中**运行的开始时刻留作零值，
-	// 等它真的进入运行中才补写（那一段排队不属于速率的分母）。翻译只在这一处做。
-	if !run.StartedAt.IsZero() {
-		startedAt := run.StartedAt
-		snap.StartedAt = &startedAt
-	}
-	if snapshot.Side.Limits != nil {
-		snap.EffectiveLimit = runLimitsFromDomain(*snapshot.Side.Limits)
-	}
-	enrichRunProgress(&snap)
-	return snap
-}
-
-// runLimitsFromDomain 与 domain 是一对：并发上限在两侧是同一组真列，逐个搬。
-func runLimitsFromDomain(limits task.Limits) *RunLimits {
-	return &RunLimits{
-		ScanProfile:                limits.ScanProfile,
-		ScannerWorkersConfigured:   limits.ScannerWorkersConfigured,
-		ScannerWorkersEffective:    limits.ScannerWorkersEffective,
-		StorageProfile:             limits.StorageProfile,
-		VolumeKey:                  limits.VolumeKey,
-		ScanConcurrency:            limits.ScanConcurrency,
-		ArchiveOpenConcurrency:     limits.ArchiveOpenConcurrency,
-		CoverConcurrency:           limits.CoverConcurrency,
-		HashConcurrency:            limits.HashConcurrency,
-		PauseBackgroundWhenReading: limits.PauseBackgroundWhenReading,
-		IdleOnlyHeavyTasks:         limits.IdleOnlyHeavyTasks,
-		DisableSameDiskPageCache:   limits.DisableSameDiskPageCache,
-	}
-}
-
-// domain 把 api 侧的并发上限翻成领域侧的。
-func (limits RunLimits) domain() task.Limits {
-	return task.Limits{
-		ScanProfile:                limits.ScanProfile,
-		ScannerWorkersConfigured:   limits.ScannerWorkersConfigured,
-		ScannerWorkersEffective:    limits.ScannerWorkersEffective,
-		StorageProfile:             limits.StorageProfile,
-		VolumeKey:                  limits.VolumeKey,
-		ScanConcurrency:            limits.ScanConcurrency,
-		ArchiveOpenConcurrency:     limits.ArchiveOpenConcurrency,
-		CoverConcurrency:           limits.CoverConcurrency,
-		HashConcurrency:            limits.HashConcurrency,
-		PauseBackgroundWhenReading: limits.PauseBackgroundWhenReading,
-		IdleOnlyHeavyTasks:         limits.IdleOnlyHeavyTasks,
-		DisableSameDiskPageCache:   limits.DisableSameDiskPageCache,
-	}
-}
 
 func firstNonEmptyTaskValue(preferred, fallback string) string {
 	if strings.TrimSpace(preferred) != "" {

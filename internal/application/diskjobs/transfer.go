@@ -81,6 +81,7 @@ func (c *Service) TransferPrepared(ctx context.Context, libraryID int64, session
 	}
 
 	return c.runs.Start(ctx, spec, func(ctx context.Context, handle *runhandle.Handle) (task.Result, error) {
+		defer c.publish()
 		if err := ctx.Err(); err != nil {
 			return task.Result{}, err
 		}
@@ -88,71 +89,49 @@ func (c *Service) TransferPrepared(ctx context.Context, libraryID int64, session
 			return task.Result{}, err
 		}
 		if total == 0 {
-			c.publish()
 			return task.Result{Code: "task.msg.transfer_external_library.all_exist"}, nil
 		}
-
-		failures := make([]string, 0)
-		skipped := 0
-		createdDirs := make(map[string]struct{})
-		for index, op := range plan.Operations {
-			// 非取消错误一律视为失败：**暂停闸门**今天只返回 nil 或 ctx.Err()，而任务上下文无
-			// deadline，因此这与「只认取消」等价。给任务上下文加超时会让这条等价失效。
-			if err := handle.Checkpoint(ctx); err != nil {
-				return task.Result{}, err
-			}
-			// 帧报的是**已完成**数，因此在拷贝之前报：单本几百 MB 要拷几分钟，
-			// 这段时间里用户要看到的是正在传的那本书，而不是上一本传完时的旧帧。
-			done := index
+		lastCommitted := 0
+		result, transferErr := c.external.Transfer(ctx, libraryID, sessionID, plan, func(p external.TransferProgress) {
+			done := len(p.Result.CommittedBookIDs) + len(p.Result.ExistingBookIDs)
 			handle.Report(runhandle.Frame{
-				Current: &done,
-				Total:   &total,
-				Phase:   "transferring_files",
-				Item:    op.RelativePath,
-				Code:    "task.msg.transfer_external_library.transferring",
-				Params:  map[string]string{"path": op.RelativePath},
-				Metrics: map[string]int64{"transferred_files": int64(done)},
+				Current: &done, Total: &total, Phase: "transferring_files", Item: p.Operation.RelativePath,
+				Code: "task.msg.transfer_external_library.transferring", Params: map[string]string{"path": p.Operation.RelativePath},
+				Metrics: map[string]int64{"transferred_files": int64(len(p.Result.CommittedBookIDs)), "transfer_bytes_staged": p.CopiedBytes, "transfer_current_bytes": p.TotalBytes},
 			})
-			if err := c.external.ValidateOperation(ctx, libraryID, sessionID, op); err != nil {
-				return task.Result{}, err
+			if len(p.Result.CommittedBookIDs) > lastCommitted {
+				handle.MergeParams(map[string]string{"committed_book_ids": transferBookIDs(p.Result.CommittedBookIDs)})
+				lastCommitted = len(p.Result.CommittedBookIDs)
 			}
-			skippedCopy, err := external.CopyFile(op.SourcePath, op.Destination, createdDirs)
-			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", op.RelativePath, err))
-				continue
-			}
-			if err := c.external.MarkTransferred(libraryID, sessionID, op); err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", op.RelativePath, err))
-				continue
-			}
-			if skippedCopy {
-				skipped++
-			}
-		}
-		// 收尾这一帧的计数与指标回答的是两个问题：Current 是「走完了几本」（失败的也走过了），
-		// transferred_files 是「传成了几本」。
-		transferred := total - len(failures)
-		handle.Report(runhandle.Frame{
-			Current: &total,
-			Total:   &total,
-			Code:    "task.msg.transfer_external_library.progress",
-			Params:  map[string]string{"done": strconv.Itoa(transferred), "total": strconv.Itoa(total)},
-			Metrics: map[string]int64{"transferred_files": int64(transferred)},
 		})
-		c.publish()
-
-		if len(failures) > 0 {
-			return task.Result{
-				Code: "task.msg.transfer_external_library.complete_with_failures",
-				Params: map[string]string{
-					"success": strconv.Itoa(total - len(failures)),
-					"failed":  strconv.Itoa(len(failures)),
-				},
-			}, errors.New(strings.Join(failures, "\n"))
+		for _, failure := range result.Failures {
+			handle.ItemFailed(failure.Operation.RelativePath, failure.Err.Error())
 		}
-		return task.Result{Params: map[string]string{
-			"added":    strconv.Itoa(total),
-			"existing": strconv.Itoa(plan.ExistingBooks + skipped),
-		}}, nil
+		done := len(result.CommittedBookIDs) + len(result.ExistingBookIDs)
+		handle.Report(runhandle.Frame{
+			Current: &done, Total: &total,
+			Code: "task.msg.transfer_external_library.progress", Params: map[string]string{"done": strconv.Itoa(done), "total": strconv.Itoa(total)},
+			Metrics: map[string]int64{"transferred_files": int64(len(result.CommittedBookIDs)), "failed": int64(len(result.Failures)), "transfer_bytes_staged": 0},
+		})
+		message := task.Result{Params: map[string]string{
+			"added":    strconv.Itoa(len(result.CommittedBookIDs)),
+			"existing": strconv.Itoa(plan.ExistingBooks + len(result.ExistingBookIDs)),
+			"success":  strconv.Itoa(done), "failed": strconv.Itoa(len(result.Failures)),
+			"committed_book_ids": transferBookIDs(result.CommittedBookIDs),
+		}}
+		if errors.Is(transferErr, context.Canceled) {
+			message.Code = "task.msg.transfer_external_library.cancelled_with_results"
+		} else if len(result.Failures) > 0 {
+			message.Code = "task.msg.transfer_external_library.complete_with_failures"
+		}
+		return message, transferErr
 	})
+}
+
+func transferBookIDs(ids []int64) string {
+	values := make([]string, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(values, ",")
 }

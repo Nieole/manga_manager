@@ -147,14 +147,10 @@ func (r *externalRig) plan(t *testing.T, sessionID string) external.TransferPlan
 
 const transferItemCode = "task.msg.transfer_external_library.transferring"
 
-// TestExternalTransferProgressObeysEngineWaterLevelOnly 的核心断言：这条路径上的投递
-// 节奏只由引擎水位决定，任务体里没有第二层节流。
-//
-// 两个时钟跑同一段传输：不动的时钟只放行首帧（其余帧展示态一字不差，该被吞掉），每读一次就跨过
-// 一个窗口的时钟放行全部三帧。任务体里若还留着按墙上时钟计时的那层 500ms 节流，后者仍然只有
-// 一帧出得去——三本书的拷贝在真实时间里连 1ms 都用不到。
+// 守引擎独占投递节流：冻结时钟只展示首本，跨过窗口的时钟展示每本。
+// 当前书可有多个字节进度帧，因此按被观察到的书判断，不能把帧数当成已复制本数。
 func TestExternalTransferProgressObeysEngineWaterLevelOnly(t *testing.T) {
-	itemFramesPublished := func(t *testing.T, now func() time.Time) int {
+	itemsPublished := func(t *testing.T, now func() time.Time) int {
 		t.Helper()
 		rig := newExternalRig(t, 3, now, runTaskBodySynchronously)
 		sessionID := rig.readySession(t)
@@ -166,13 +162,17 @@ func TestExternalTransferProgressObeysEngineWaterLevelOnly(t *testing.T) {
 			t.Fatalf("启动传输失败: %v", err)
 		}
 		key := externalTransferKey(rig.libraryID, sessionID)
-		return len(publishedTasksWithCode(t, rig.snapshots(), key, transferItemCode))
+		items := make(map[string]struct{})
+		for _, frame := range publishedTasksWithCode(t, rig.snapshots(), key, transferItemCode) {
+			items[frame.CurrentItem] = struct{}{}
+		}
+		return len(items)
 	}
 
-	if got := itemFramesPublished(t, frozenClock()); got != 1 {
+	if got := itemsPublished(t, frozenClock()); got != 1 {
 		t.Fatalf("时钟不动时逐条目帧投递了 %d 条, want 1 —— 后两条与首帧展示态一字不差，必须被水位吞掉", got)
 	}
-	if got := itemFramesPublished(t, windowSteppingClock()); got != 3 {
+	if got := itemsPublished(t, windowSteppingClock()); got != 3 {
 		t.Fatalf("每帧都跨过窗口时只投递了 %d 条, want 3 —— 说明还有一层不认注入时钟的节流", got)
 	}
 }

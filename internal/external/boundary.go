@@ -108,7 +108,7 @@ func (m *Manager) ValidateSession(ctx context.Context, libraryID int64, sessionI
 	if err == nil && !sameBoundary(owner, snapshot.LibraryResolved) {
 		err = ErrSessionNotFound
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		m.ClearSession(libraryID, sessionID)
 	}
 	return err

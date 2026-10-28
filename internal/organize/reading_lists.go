@@ -27,13 +27,9 @@ var (
 // ReadingListStore supplies ordered catalogue facts and transaction-bound writes.
 type ReadingListStore interface {
 	reading.BookQueryStore
-	ExecTx(context.Context, func(*database.Queries) error) error
+	WithReadingListWrite(context.Context, func(database.ReadingListWrite) error) error
 	ListReadingLists(context.Context) ([]database.ListReadingListsRow, error)
 	GetReadingList(context.Context, int64) (database.ReadingList, error)
-	CreateReadingList(context.Context, database.CreateReadingListParams) (database.ReadingList, error)
-	UpdateReadingList(context.Context, database.UpdateReadingListParams) (database.ReadingList, error)
-	DeleteReadingList(context.Context, int64) (int64, error)
-	RemoveReadingListItem(context.Context, database.RemoveReadingListItemParams) (int64, error)
 	ListReadingListItems(context.Context, int64) ([]database.ListReadingListItemsRow, error)
 	CountReadingListSeries(context.Context, int64) (int64, error)
 	ListReadingListSeriesPage(context.Context, database.ListReadingListSeriesPageParams) ([]database.ListReadingListSeriesPageRow, error)
@@ -64,29 +60,42 @@ func (s *ReadingLists) Create(ctx context.Context, name, description string) (da
 	if name == "" {
 		return database.ReadingList{}, ErrReadingListNameRequired
 	}
-	return s.store.CreateReadingList(ctx, database.CreateReadingListParams{Name: name, Description: strings.TrimSpace(description)})
+	var row database.ReadingList
+	err := s.store.WithReadingListWrite(ctx, func(q database.ReadingListWrite) error {
+		var err error
+		row, err = q.CreateReadingList(ctx, database.CreateReadingListParams{Name: name, Description: strings.TrimSpace(description)})
+		return err
+	})
+	return row, err
 }
 func (s *ReadingLists) Update(ctx context.Context, id int64, name, description string) (database.ReadingList, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return database.ReadingList{}, ErrReadingListNameRequired
 	}
-	row, err := s.store.UpdateReadingList(ctx, database.UpdateReadingListParams{ID: id, Name: name, Description: strings.TrimSpace(description)})
+	var row database.ReadingList
+	err := s.store.WithReadingListWrite(ctx, func(q database.ReadingListWrite) error {
+		var err error
+		row, err = q.UpdateReadingList(ctx, database.UpdateReadingListParams{ID: id, Name: name, Description: strings.TrimSpace(description)})
+		return err
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrReadingListMissing
 	}
 	return row, err
 }
 func (s *ReadingLists) Delete(ctx context.Context, id int64) error {
-	n, err := s.store.DeleteReadingList(ctx, id)
-	if err == nil && n == 0 {
-		return ErrReadingListMissing
-	}
-	return err
+	return s.store.WithReadingListWrite(ctx, func(q database.ReadingListWrite) error {
+		n, err := q.DeleteReadingList(ctx, id)
+		if err == nil && n == 0 {
+			return ErrReadingListMissing
+		}
+		return err
+	})
 }
 func (s *ReadingLists) Add(ctx context.Context, id, seriesID int64, note string) (database.ReadingListItem, error) {
 	var item database.ReadingListItem
-	err := s.store.ExecTx(ctx, func(q *database.Queries) error {
+	err := s.store.WithReadingListWrite(ctx, func(q database.ReadingListWrite) error {
 		if _, err := q.GetReadingList(ctx, id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrReadingListMissing
@@ -106,11 +115,13 @@ func (s *ReadingLists) Add(ctx context.Context, id, seriesID int64, note string)
 	return item, err
 }
 func (s *ReadingLists) Remove(ctx context.Context, id, itemID int64) error {
-	n, err := s.store.RemoveReadingListItem(ctx, database.RemoveReadingListItemParams{ReadingListID: id, ID: itemID})
-	if err == nil && n == 0 {
-		return ErrReadingListItemMissing
-	}
-	return err
+	return s.store.WithReadingListWrite(ctx, func(q database.ReadingListWrite) error {
+		n, err := q.RemoveReadingListItem(ctx, database.RemoveReadingListItemParams{ReadingListID: id, ID: itemID})
+		if err == nil && n == 0 {
+			return ErrReadingListItemMissing
+		}
+		return err
+	})
 }
 
 // Reorder commits a submitted ordering atomically; omitted concurrent members retain their position.
@@ -121,7 +132,7 @@ func (s *ReadingLists) Reorder(ctx context.Context, id int64, itemIDs []int64) e
 	if len(itemIDs) > MaxReadingListReorderItems {
 		return ErrReadingListTooManyItems
 	}
-	return s.store.ExecTx(ctx, func(q *database.Queries) error {
+	return s.store.WithReadingListWrite(ctx, func(q database.ReadingListWrite) error {
 		if _, err := q.GetReadingList(ctx, id); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrReadingListMissing

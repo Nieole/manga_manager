@@ -31,4 +31,8 @@
 
 11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
 
-当前完成 19/48：01、02、03、04、05、06、07、08、09、10、11、13、14、16、17、18、19、22、23。12、20 在独立工作树实施，24 将继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+当前完成 22/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、22、23。24、36 在独立工作树实施，21 将继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+
+12 已合入并关闭：主树 AI 分组 owner race 13.910s、数据库窄能力 race 7.706s、集成后全前端 99 文件 / 937 测试及 lint/build 通过，Go lint 0 issues、格式和 diff 检查通过。主树 API 多次被 Application Control 拦截，稳定二进制启动也未确认执行，已停止精确启动器并保留限制；API 实际通过依据为实现树完整 104.921s、focused race 17.835s 和合并集成后 focused 普通 7.710s。日志位于 .tmp/merge-wave10-*.log。
+
+20 已合入并关闭：主树 diskjobs 全量 race 16.903s、外部传输 HTTP race 24.134s、13 项前端消费者及 Go lint/格式通过。主树 external 全量普通/race 启动仍被 Application Control 拦截，未计为通过；实现树合并当前集成后的完整普通 3.803s、完整 race 14.845s 已实际通过。其他平台仅 cross-compile，不计运行验证。15 已合入并关闭：主树 organize/reading 相关 race 12.167s/11.937s、数据库窄能力 race 7.067s、阅读清单 HTTP race 19.770s、3 项页面消费者通过；最终 Go lint 0 issues、gofmt 和 diff 检查通过。数据库/API 首次启动被拦截后，记录的重跑实际执行通过。日志为 .tmp/merge-wave11-*.log。

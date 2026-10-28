@@ -1983,6 +1983,8 @@ export const messages: MessageCatalog = {
     'task.msg.scan_external_library.complete': 'External library scan complete',
     'task.msg.scan_external_library.complete_empty': 'External library scan complete (no processable files found)',
     'task.msg.transfer_external_library.cancelled': 'External library transfer cancelled',
+    'task.msg.transfer_external_library.cancelled_with_results': 'External library transfer cancelled: {{added}} added, {{existing}} already existed; completed files kept',
+    'home.transfer.cancellationNote': 'Cancel stops further copying once the current read or write returns. Files already transferred are kept.',
     'task.msg.transfer_external_library.failed': 'External library transfer failed',
     'task.msg.transfer_external_library.all_exist': 'All selected series already exist in the external library',
     'task.msg.transfer_external_library.transferring': 'Transferring {{path}}',

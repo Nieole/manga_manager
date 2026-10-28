@@ -68,6 +68,7 @@ export function TransferConfirmModal({
             {t('home.transfer.summary', { count: selectedCount })}
           </p>
           <p className="mt-2 break-all text-xs text-gray-500">{externalPath}</p>
+          <p className="mt-2 text-xs leading-5 text-gray-400">{t('home.transfer.cancellationNote')}</p>
         </div>
         {summary && (
           <div className="grid grid-cols-3 gap-3 text-xs">
