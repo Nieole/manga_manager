@@ -995,6 +995,10 @@ func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {
 	defer release()
 	manifest, err := c.content.List(ctx, bookID)
 	if err != nil {
+		if errors.Is(err, bookcontent.ErrBusy) {
+			jsonError(w, http.StatusServiceUnavailable, "Storage is busy")
+			return
+		}
 		if errors.Is(err, bookcontent.ErrSourceMissing) {
 			jsonError(w, http.StatusNotFound, "Book not found")
 			return

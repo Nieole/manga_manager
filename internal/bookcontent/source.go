@@ -3,6 +3,7 @@ package bookcontent
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"manga-manager/internal/config"
@@ -37,6 +38,10 @@ func (s *Service) AcquireRead(ctx context.Context, id int64, access LibraryAcces
 		return nil, err
 	}
 	if !ok && version == access.LibraryAccessVersion() {
+		if stat, err := os.Stat(source.Path); err == nil {
+			source.Size = stat.Size()
+			source.FileModifiedAt = stat.ModTime()
+		}
 		s.sources.Add(id, cachedSource{source: source, at: now})
 	}
 	return release, nil
@@ -96,6 +101,11 @@ func (s *Service) Source(ctx context.Context, id int64) (Source, error) {
 	source, err := s.lookup(ctx, id)
 	if err != nil {
 		return Source{}, err
+	}
+	// The archive may have committed even if its subsequent fact-store update failed.
+	if stat, err := os.Stat(source.Path); err == nil {
+		source.Size = stat.Size()
+		source.FileModifiedAt = stat.ModTime()
 	}
 	s.sources.Add(id, cachedSource{source: source, at: now})
 	return source, nil

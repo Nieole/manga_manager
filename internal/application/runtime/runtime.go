@@ -153,7 +153,7 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	r.Maintenance = maintenance.New(r.Runs, store, r.Scans, r.KOReader, cfg.Snapshot, maintenance.Effects{Publish: e.Publish, WarmStats: e.WarmStats})
 	r.Scanner.SetBatchCallback(func(action string) { r.Scans.BatchEvent(action) })
 	r.Scanner.SetCoverRunLauncher(func(ctx context.Context, batch *scanner.CoverBatch) { r.Scans.DispatchCoverBatch(ctx, batch) })
-	r.Disk = diskjobs.New(r.Runs, store, r.External, diskjobs.Effects{Publish: e.Publish})
+	r.Disk = diskjobs.New(r.Runs, store, r.External, diskjobs.Effects{Publish: e.Publish, PurgeReadingPaths: e.PurgeReadingPaths})
 	sources := e.Sources
 	if sources.Metadata == nil {
 		sources.Metadata = func(name string) metadata.Provider { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }

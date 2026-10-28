@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/database"
 	"manga-manager/internal/organize"
 	"manga-manager/internal/reading"
@@ -543,6 +544,10 @@ func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 
 	manifest, err := c.content.List(r.Context(), bookID)
 	if err != nil {
+		if errors.Is(err, bookcontent.ErrBusy) {
+			jsonError(w, http.StatusServiceUnavailable, "Storage is busy")
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, "Failed to read pages")
 		return
 	}
