@@ -147,7 +147,17 @@ func TestTransferPausesWithinCurrentBookAndResumesSameStaging(t *testing.T) {
 		})
 		done <- transferErr
 	}()
-	first := <-chunks
+	var first int64
+	select {
+	case first = <-chunks:
+	case err := <-done:
+		t.Fatalf("copy exited before reaching pause: %v", err)
+	case <-time.After(3 * time.Second):
+		cancel()
+		gate.Resume()
+		<-done
+		t.Fatal("copy did not reach pause boundary")
+	}
 	select {
 	case second := <-chunks:
 		cancel()
