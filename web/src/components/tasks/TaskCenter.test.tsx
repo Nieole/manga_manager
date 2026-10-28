@@ -9,7 +9,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { TaskCenter, type RunEventsResponse, type RunLive, type RunSample, type RunSamplesResponse, type RunSnapshot, type TaskSummary } from './TaskCenter';
+import { TaskCenter } from './TaskCenter';
+import type { RunEventsResponse, RunLive, RunSample, RunSamplesResponse, RunSnapshot, TaskSummary } from '../../features/task-observation/types';
 import { runCardId } from '../../utils/runCard';
 
 // 词条只要能渲染出来即可：本文件断言的是某一格在不在、按钮调了谁，与译文无关。

@@ -4,7 +4,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -162,47 +161,6 @@ func (e *taskEngine) clock() time.Time {
 // 读回来的。取运行行上的话，排过队的那些任务体日志会静静地少掉任务键那一格。
 func decorateRunContext(ctx context.Context, run task.Run, spec task.RunSpec) context.Context {
 	return application.DecorateRunContext(ctx, run, spec)
-}
-
-// publisher 把领域快照翻成对外的任务快照并交给 SSE。publish 为 nil 时整条通道不接。
-//
-// 序列化在这里做而不是在领域里：事件名与 JSON 形状属于传输层。
-func (e *taskEngine) publisher(publish func(string)) func(task.Snapshot) {
-	if publish == nil {
-		return nil
-	}
-	return func(snapshot task.Snapshot) {
-		snap := e.runSnapshotFrom(snapshot, e.cachedIdentity(snapshot.Run.TaskID))
-		e.push(publish, runSnapshotEventPrefix, RunPush{Sequence: snap.Sequence, Run: &snap})
-	}
-}
-
-// livePublisher 把一帧领域的**实况汇总**翻成对外形状并交给 SSE。publish 为 nil 时整条通道不接。
-func (e *taskEngine) livePublisher(publish func(string)) func(task.Live) {
-	if publish == nil {
-		return nil
-	}
-	return func(live task.Live) {
-		summary := runLiveSummaryFrom(live)
-		e.push(publish, runLiveEventPrefix, RunPush{Sequence: live.Sequence, Live: &summary})
-	}
-}
-
-// push 把一帧接到**投递链**上再交给 SSE：补齐 Prev、序列化、带上事件名投出去。
-//
-// 统一经 sseBroker 投递（非阻塞、buffer 满则丢弃并告警）——丢帧靠序号链让前端自己发现，
-// 不在这里改成阻塞：投递方此刻在引擎的临界区里，堵在这里等于把整个任务子域堵住。
-//
-// 接链在序列化**之前**：序列化炸了这一帧就没了，而链已经往前走，于是下一帧接不上、
-// 前端整份重拉一次——那正是对的。反过来（炸了就不接链）会让这次丢帧无声无息。
-func (e *taskEngine) push(publish func(string), event string, frame RunPush) {
-	frame.Prev = e.linkPush(frame.Sequence)
-	payload, err := json.Marshal(frame)
-	if err != nil {
-		slog.Warn("Failed to marshal a task push frame", "event", event, "error", err)
-		return
-	}
-	publish(event + string(payload))
 }
 
 // linkPush 记下这一帧的序号，交回上一帧的。首帧交回 0。

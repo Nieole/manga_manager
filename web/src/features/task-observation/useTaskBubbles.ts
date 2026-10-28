@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { TaskBubbleEntry } from '../../components/SidebarTaskBubble';
+import type { TaskBubbleEntry } from './types';
 import { useSessionRecovery, useSessionRunPush } from '../../session/ApplicationSessionProvider';
 import { apiClient } from '../../api/client';
 import type { RunSnapshot } from '../../api/generated';

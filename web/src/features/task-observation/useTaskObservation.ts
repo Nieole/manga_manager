@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../../api/client';
 import type { RunEventsResponse, RunSamplesResponse, RunLive, RunSnapshot, TaskSummary } from '../../api/generated';
-import type { TaskAction, TaskCenterFilters, TaskRunHistory, RunDetailView } from '../../components/tasks/TaskCenter';
+import type { TaskAction, TaskCenterFilters, TaskRunHistory, RunDetailView } from './types';
 import { useI18n } from '../../i18n/LocaleProvider';
 import { useToast } from '../../components/ToastProvider';
 import { applyLiveSummary, applyRunToLive } from '../../utils/runLive';

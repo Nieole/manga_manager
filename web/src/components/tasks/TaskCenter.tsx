@@ -1,3 +1,4 @@
+import type { TaskAction, TaskCenterFilters, TaskTarget, TaskRunHistory, RunDetailView } from '../../features/task-observation/types';
 /**
  * 任务中心的两层结构：上半**实况区**是仍会变化的那些**运行**，常驻置顶、不受筛选影响；
  * 下半**任务清单**一个**任务**一行，写着上次结果，展开才按需取它的历次运行。
@@ -11,13 +12,7 @@ import { getTaskActionHint, getTaskMessage, getTaskTypeLabel } from '../../i18n/
 import { runCardId } from '../../utils/runCard';
 import { isActiveRunStatus, isLiveRunStatus } from '../../utils/runStatus';
 
-// RunLimits / RunSnapshot / RunLive / TaskSummary 由 cmd/tsgen 从 Go 后端响应结构体生成
-// （单一事实源，见 api/generated.ts），此处再导出以保持既有 import 路径不变。
-export type { RunLimits, RunSnapshot, RunLive, TaskSummary, RunEvent, RunPhaseSpan, RunEventsResponse, RunSample, RunSamplesResponse } from '../../api/generated';
-import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunSample, RunSamplesResponse, RunSnapshot, TaskSummary } from '../../api/generated';
-
-// 运行上的动作作用在**运行**上，重试作用在**任务**上（它重新发起一次，不改动被重试的那一条）。
-export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
+import type { RunEvent, RunEventsResponse, RunLive, RunPhaseSpan, RunSample, RunSamplesResponse, RunSnapshot, TaskSummary } from '../../features/task-observation/types';
 
 // **停发**的三条原因各画各的，因为用户要做的事不同：连败到阈值是「去修那块盘」，标红；
 // 人工禁用是他自己按下的，画中性色即可；退避会自己走完，只写「还要等到什么时候」。
@@ -25,50 +20,6 @@ export type TaskAction = 'pause' | 'resume' | 'cancel' | 'retry';
 const STALL_FAIL_LIMIT = 'fail_limit';
 const STALL_DISABLED = 'disabled';
 const STALL_BACKOFF = 'backoff';
-
-export interface TaskCenterFilters {
-  status: string;
-  scope: string;
-  type: string;
-  scopeId: string;
-  query: string;
-}
-
-/** TaskTarget 是「打开这个任务对着的那个页面」要的最小形状：作用域与它的 id。 */
-export interface TaskTarget {
-  scope: string;
-  scope_id?: number;
-}
-
-/**
- * TaskRunHistory 是展开着的那一行与它的**历次运行**：三样总是一起出现、一起消失，
- * 因此收成一个类型而不是三个各自可空的 prop——只给其中两个不是一种有意义的状态。
- */
-export interface TaskRunHistory {
-  taskId: number;
-  /** runs 为 undefined 表示还没取回来；空数组表示这个任务确实没留下运行记录。 */
-  runs?: RunSnapshot[];
-  loading?: boolean;
-}
-
-/**
- * RunDetailView 是**打开着详情面板的那一张运行卡片**与它按需拉回来的两份东西：
- * **运行事件**与**采样**。
- *
- * 两份收在一份视图里而不是两个各自可空的 prop：它们一起打开、一起关掉，只给其中一个不是一种
- * 有意义的状态。各自仍可缺席——取失败的那一份为 undefined，另一份照画。
- *
- * 认的是卡片而不是运行：同一条运行会同时出现在实况区与展开着的历次运行里，按运行认的话
- * 两张卡片下面各画一份，用户会以为那是两条运行各自的失败。cardId 由 runCardId 拼出。
- *
- * 一次只留一张：两份都按需拉（它们不进推送通道），留着上一张的话再点开会先闪一眼别人的东西。
- */
-export interface RunDetailView {
-  cardId: string;
-  events?: RunEventsResponse;
-  samples?: RunSamplesResponse;
-  loading?: boolean;
-}
 
 interface TaskCenterProps {
   // live 是实况区那一帧：在跑的与**排队中**的运行，加上槽位占用与全局暂停。
