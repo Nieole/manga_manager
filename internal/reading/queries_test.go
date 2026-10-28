@@ -21,15 +21,15 @@ func TestReaderViewsIsolateSubjectAndReflectBackwardPositionAndClear(t *testing.
 		t.Fatal(err)
 	}
 	view := reading.NewQueries(store)
-	isolated, err := view.Book(ctx, uid, bid)
+	isolated, err := view.BookView(ctx, commandSubject(uid), bid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if isolated.IsRead || isolated.LastReadPage.Valid || isolated.LastReadAt.Valid {
+	if isolated.State.IsRead || isolated.State.LastReadPage.Valid || isolated.State.LastReadAt.Valid {
 		t.Fatalf("reader inherited global state: %+v", isolated)
 	}
-	legacy, err := view.Book(ctx, 0, bid)
-	if err != nil || !reading.InspectBook(legacy).Completed {
+	legacy, err := view.BookView(ctx, commandSubject(0), bid)
+	if err != nil || !legacy.Inspect().Completed {
 		t.Fatalf("legacy=%+v err=%v", legacy, err)
 	}
 	if _, err = reading.New(store, nil).RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: 12, OccurredAt: &at}); err != nil {
@@ -39,21 +39,21 @@ func TestReaderViewsIsolateSubjectAndReflectBackwardPositionAndClear(t *testing.
 	if _, err = reading.New(store, nil).RecordPosition(ctx, reading.Position{UserID: uid, BookID: bid, Page: 3, OccurredAt: &later}); err != nil {
 		t.Fatal(err)
 	}
-	series, err := view.Series(ctx, uid, book.SeriesID)
+	series, err := view.SeriesBooks(ctx, commandSubject(uid), book.SeriesID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if series.Continue.ReadPages != 3 || series.Continue.LastReadPage != 3 || series.Continue.NextUnreadBookID != bid {
 		t.Fatalf("backward series=%+v", series)
 	}
-	isolated, err = view.Book(ctx, uid, bid)
-	if err != nil || isolated.LastReadPage.Int64 != 3 || !isolated.LastReadAt.Time.Equal(later) {
+	isolated, err = view.BookView(ctx, commandSubject(uid), bid)
+	if err != nil || isolated.State.LastReadPage.Int64 != 3 || !isolated.State.LastReadAt.Time.Equal(later) {
 		t.Fatalf("detail=%+v err=%v", isolated, err)
 	}
 	if _, err = reading.New(store, nil).MarkBooks(ctx, reading.MarkBooksInput{UserID: uid, BookIDs: []int64{bid}, IsRead: false, OccurredAt: timePointer(later.Add(time.Hour))}); err != nil {
 		t.Fatal(err)
 	}
-	series, err = view.Series(ctx, uid, book.SeriesID)
+	series, err = view.SeriesBooks(ctx, commandSubject(uid), book.SeriesID)
 	if err != nil || series.Continue.LastReadBookID != 0 || series.Continue.ReadPages != 0 {
 		t.Fatalf("cleared=%+v err=%v", series, err)
 	}
@@ -81,31 +81,31 @@ func TestSeriesQueriesKeepNaturalOrderUnknownCompletionAndReadOnlyTimes(t *testi
 		t.Fatal(err)
 	}
 	queries := reading.NewQueries(store)
-	before, err := reading.RecentReads(ctx, store, uid, 10)
+	before, err := reading.RecentBooks(ctx, store, commandSubject(uid), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := queries.Series(ctx, uid, first.SeriesID)
+	view, err := queries.SeriesBooks(ctx, commandSubject(uid), first.SeriesID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if view.Continue.ReadBooks != 3 || view.Continue.TotalPages != 30 || view.Continue.ReadPages != 30 || view.Continue.NextUnreadBookID != 0 {
 		t.Fatalf("all read summary=%+v", view.Continue)
 	}
-	detail, err := queries.Book(ctx, uid, unknown.ID)
-	if err != nil || !detail.IsRead || detail.LastReadPage.Valid || !reading.InspectBook(detail).Completed {
+	detail, err := queries.BookView(ctx, commandSubject(uid), unknown.ID)
+	if err != nil || !detail.State.IsRead || detail.State.LastReadPage.Valid || !detail.Inspect().Completed {
 		t.Fatalf("unknown=%+v err=%v", detail, err)
 	}
-	next, err := queries.Adjacent(ctx, uid, unknown.ID, true)
-	if err != nil || next.ID != third.ID {
+	next, err := queries.AdjacentView(ctx, commandSubject(uid), unknown.ID, true)
+	if err != nil || next.Facts.ID != third.ID {
 		t.Fatalf("next=%+v err=%v", next, err)
 	}
-	prev, err := queries.Adjacent(ctx, uid, third.ID, false)
-	if err != nil || prev.ID != unknown.ID {
+	prev, err := queries.AdjacentView(ctx, commandSubject(uid), third.ID, false)
+	if err != nil || prev.Facts.ID != unknown.ID {
 		t.Fatalf("previous=%+v err=%v", prev, err)
 	}
-	after, err := reading.RecentReads(ctx, store, uid, 10)
-	if err != nil || len(before) != 1 || len(after) != 1 || !after[0].LastReadAt.Time.Equal(at) || before[0].LastReadAt != after[0].LastReadAt {
+	after, err := reading.RecentBooks(ctx, store, commandSubject(uid), 10)
+	if err != nil || len(before.Items) != 1 || len(after.Items) != 1 || !after.Items[0].LastReadAt.Time.Equal(at) || before.Items[0].LastReadAt != after.Items[0].LastReadAt {
 		t.Fatalf("read modified time: before=%+v after=%+v err=%v", before, after, err)
 	}
 }

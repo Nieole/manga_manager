@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"time"
 
+	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
 )
 
@@ -83,14 +85,14 @@ func (q *Queries) BookView(ctx context.Context, subject Subject, bid int64) (Boo
 	if err != nil {
 		return BookView{}, err
 	}
-	books := []database.Book{book}
-	if err := q.ProjectBooks(ctx, subject.userID, books); err != nil {
+	views, err := q.bindBooks(ctx, subject, []database.Book{book})
+	if err != nil {
 		return BookView{}, err
 	}
-	return bookView(subject, books[0]), nil
+	return views[0], nil
 }
 
-func bookView(subject Subject, book database.Book) BookView {
+func bookView(subject Subject, book database.Book, state ReaderState) BookView {
 	return BookView{
 		Subject: subject,
 		Facts: BookFacts{
@@ -102,7 +104,7 @@ func bookView(subject Subject, book database.Book) BookView {
 			PathFingerprint: book.PathFingerprint, PathFingerprintNoExt: book.PathFingerprintNoExt,
 			FilenameFingerprint: book.FilenameFingerprint, CreatedAt: book.CreatedAt, UpdatedAt: book.UpdatedAt,
 		},
-		State: ReaderState{LastReadPage: book.LastReadPage, LastReadAt: book.LastReadAt, IsRead: book.IsRead},
+		State: state,
 	}
 }
 
@@ -116,26 +118,70 @@ func (q *Queries) SeriesBooks(ctx context.Context, subject Subject, sid int64) (
 	if err := subject.validate(); err != nil {
 		return BookSeriesView{}, err
 	}
-	series, err := q.Series(ctx, subject.userID, sid)
+	books, err := q.store.ListBooksBySeries(ctx, sid)
 	if err != nil {
 		return BookSeriesView{}, err
 	}
-	views := make([]BookView, len(series.Books))
-	for i, book := range series.Books {
-		views[i] = bookView(subject, book)
+	sort.SliceStable(books, func(i, j int) bool { return booksort.CompareBooks(books[i], books[j]) < 0 })
+	views, err := q.bindBooks(ctx, subject, books)
+	if err != nil {
+		return BookSeriesView{}, err
 	}
-	return BookSeriesView{Books: views, Continue: series.Continue}, nil
+	return BookSeriesView{Books: views, Continue: summarize(views)}, nil
 }
 
 func (q *Queries) AdjacentView(ctx context.Context, subject Subject, bid int64, next bool) (BookView, error) {
 	if err := subject.validate(); err != nil {
 		return BookView{}, err
 	}
-	book, err := q.Adjacent(ctx, subject.userID, bid, next)
+	book, err := q.store.GetBook(ctx, bid)
 	if err != nil {
 		return BookView{}, err
 	}
-	return bookView(subject, book), nil
+	series, err := q.SeriesBooks(ctx, subject, book.SeriesID)
+	if err != nil {
+		return BookView{}, err
+	}
+	for i, item := range series.Books {
+		if item.Facts.ID != bid {
+			continue
+		}
+		target := i - 1
+		if next {
+			target = i + 1
+		}
+		if target >= 0 && target < len(series.Books) {
+			return series.Books[target], nil
+		}
+		break
+	}
+	return BookView{}, sql.ErrNoRows
+}
+
+// bindBooks separates reader state without mutating catalogue rows. The lookup remains batched.
+func (q *Queries) bindBooks(ctx context.Context, subject Subject, books []database.Book) ([]BookView, error) {
+	var positions map[int64]database.UserBookProgress
+	if subject.userID > 0 && len(books) > 0 {
+		ids := make([]int64, len(books))
+		for i, book := range books {
+			ids[i] = book.ID
+		}
+		var err error
+		positions, err = q.store.GetUserBookProgressMap(ctx, subject.userID, ids)
+		if err != nil {
+			return nil, err
+		}
+	}
+	views := make([]BookView, len(books))
+	for i, book := range books {
+		state := ReaderState{LastReadPage: book.LastReadPage, LastReadAt: book.LastReadAt, IsRead: book.IsRead}
+		if subject.userID > 0 {
+			p := positions[book.ID]
+			state = ReaderState{LastReadPage: p.LastReadPage, LastReadAt: p.LastReadAt, IsRead: p.IsRead}
+		}
+		views[i] = bookView(subject, book, state)
+	}
+	return views, nil
 }
 
 // UserID returns the SQL binding for this subject. Zero is valid only for explicit anonymous compatibility.

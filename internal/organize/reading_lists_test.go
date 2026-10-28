@@ -110,8 +110,12 @@ func TestReadingListProgressFollowsReaderFactsAndNeverCreatesActivity(t *testing
 	}
 	assertProgress(1, 2, 2, 1)
 	assertProgress(2, 0, 0, 1)
-	unknown, err := reading.NewQueries(store).Book(ctx, 1, 2)
-	if err != nil || !unknown.IsRead || unknown.LastReadPage.Valid {
+	subject, err := reading.UserSubject(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := reading.NewQueries(store).BookView(ctx, subject, 2)
+	if err != nil || !unknown.State.IsRead || unknown.State.LastReadPage.Valid {
 		t.Fatalf("unknown=%+v err=%v", unknown, err)
 	}
 	later := at.Add(time.Hour)

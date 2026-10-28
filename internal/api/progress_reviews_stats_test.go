@@ -644,7 +644,7 @@ func TestReadingStatsDualPathPerUser(t *testing.T) {
 	if err := store.LogReadingActivity(ctx, database.LogReadingActivityParams{BookID: book.ID, PagesRead: 5, Date: database.ActivityDayKey(time.Now())}); err != nil {
 		t.Fatalf("log global activity: %v", err)
 	}
-	if err := store.LogUserReadingActivity(ctx, userA.ID, book.ID, 3); err != nil {
+	if err := store.LogUserReadingActivityAt(ctx, userA.ID, book.ID, 3, time.Now()); err != nil {
 		t.Fatalf("log user activity: %v", err)
 	}
 

@@ -1,21 +1,12 @@
 package reading
 
-import (
-	"database/sql"
-
-	"manga-manager/internal/database"
-)
+import "database/sql"
 
 // BookState separates an explicit completion mark from a proven absolute page position.
 type BookState struct {
 	Completed bool
 	Started   bool
 	ReadPages int64
-}
-
-// InspectBook interprets projected reader state without turning a completion mark into page evidence.
-func InspectBook(book database.Book) BookState {
-	return inspectState(book.PageCount, book.LastReadPage, book.IsRead)
 }
 
 func inspectState(pageCount int64, lastReadPage sql.NullInt64, isRead bool) BookState {

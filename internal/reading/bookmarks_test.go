@@ -69,7 +69,7 @@ func TestBookmarksScopeEveryOperationToReaderAndBookWithoutReadingEffects(t *tes
 		t.Fatal(err)
 	}
 	queries := reading.NewQueries(store)
-	before, err := queries.Book(ctx, uid, bid)
+	before, err := queries.BookView(ctx, commandSubject(uid), bid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestBookmarksScopeEveryOperationToReaderAndBookWithoutReadingEffects(t *tes
 	if err := bookmarks.Delete(ctx, commandSubject(uid), bid, owner.ID); err != nil {
 		t.Fatal(err)
 	}
-	after, err := queries.Book(ctx, uid, bid)
+	after, err := queries.BookView(ctx, commandSubject(uid), bid)
 	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatalf("book changed before=%+v after=%+v err=%v", before, after, err)
 	}
