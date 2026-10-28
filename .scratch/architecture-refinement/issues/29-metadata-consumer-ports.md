@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 146、147、148、149、150。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -26,3 +26,8 @@
 - Red evidence: `.tmp/ticket29-connection-red.log` and `.tmp/ticket29-search-red.log`. The search-only HTTP consumer actually passed with pagination clamp and unchanged results; connection conversion also executed successfully (`ticket29-capability-green.log`, config 2.881s/API 9.134s).
 - Full metadata race executed 7.188s (`ticket29-race.log`); full config executed 3.020s (`ticket29-consumer-retry.log`). The full intelligence suite actually ran from its package cwd using the saved test executable and ended PASS (`ticket29-intelligence-binary.log`). Full API/runtime suites executed 120.109s/7.688s (`ticket29-full-api.log`). Intermediate test launches blocked by Windows Application Control are preserved in the logs and not counted as passes.
 - Go lint reported `0 issues.` (`ticket29-lint.log`); gofmt, whole-baseline whitespace checks and tracked conflict-marker scans were clean. Integration closure remains pending.
+
+### Integration verification (2026-10-28)
+
+- Merged without conflicts through 67d7467a710888fe3515ac2df4dc1ee84625bc87. Main-tree full config race passed 6.398s, metadata race passed 6.628s and intelligence race passed 10.949s. Search-only metadata, scraping, connection configuration and outbound-validation HTTP race consumers actually passed 35.510s.
+- Go 1.26.10 lint reported 0 issues; gofmt emitted no files. Whole-baseline git diff --check and all tracked conflict-marker scans passed. No frontend, SQL or generated target changed. Raw evidence: .tmp/merge-wave13-owner.log, merge-wave13-api.log and merge-wave13-lint.log.
