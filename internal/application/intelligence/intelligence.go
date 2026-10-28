@@ -24,7 +24,7 @@ type GroupingProvider = organize.GroupingGenerator
 
 // Sources creates external clients from current configuration and supports controlled sources in tests.
 type Sources struct {
-	Metadata func(string) metadata.Provider
+	Metadata func(string) metadata.Fetcher
 	Grouping func() GroupingProvider
 }
 

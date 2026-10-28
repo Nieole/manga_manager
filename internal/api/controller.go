@@ -82,7 +82,8 @@ type Controller struct {
 	taskEngine *taskEngine
 
 	openPath        func(string) error
-	providerFactory func(string) metadata.Provider
+	fetcherFactory  func(string) metadata.Fetcher
+	searcherFactory func(string) metadata.Searcher
 
 	// 鉴权链路的进程内状态（账户存在性、Basic 凭据缓存、两个失败限流器）
 	// 已抽成独立组件（auth_state.go）。

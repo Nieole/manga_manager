@@ -49,10 +49,10 @@ func scrapeResultSourceURL(providerName string, result *metadata.SeriesMetadata)
 	return ""
 }
 
-// getProvider 根据名称返回对应的 Provider 实例
-func (c *Controller) getProvider(name string) metadata.Provider {
-	if c.providerFactory != nil {
-		return c.providerFactory(name)
+// getMetadataFetcher 根据名称返回对应的 Provider 实例
+func (c *Controller) getMetadataFetcher(name string) metadata.Fetcher {
+	if c.fetcherFactory != nil {
+		return c.fetcherFactory(name)
 	}
 	return metadata.NewConfiguredProvider(c.currentConfig(), name)
 }
@@ -84,7 +84,7 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 
 	providerName := r.URL.Query().Get("provider")
-	provider := c.getProvider(providerName)
+	provider := c.getMetadataFetcher(providerName)
 
 	result, err := provider.FetchSeriesMetadata(requestContextWithLocale(r), query)
 	if err != nil {
@@ -120,7 +120,7 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 	}
 
 	providerName := r.URL.Query().Get("provider")
-	provider := c.getProvider(providerName)
+	provider := c.getMetadataSearcher(providerName)
 
 	// 优先从查询参数获取 q，若无则按系列标题搜索
 	searchTitle := r.URL.Query().Get("q")
@@ -257,7 +257,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 	}
 	_ = json.NewDecoder(r.Body).Decode(&reqBody)
 
-	provider := c.getProvider(reqBody.Provider)
+	provider := c.getMetadataFetcher(reqBody.Provider)
 
 	series, err := c.store.GetSeries(r.Context(), seriesID)
 	if err != nil {
@@ -330,7 +330,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	provider := c.getProvider(reqBody.Provider)
+	provider := c.getMetadataFetcher(reqBody.Provider)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"message":  fmt.Sprintf("批量刮削(%s)已异步启动，任务已加入后台队列", provider.Name()),
@@ -356,10 +356,17 @@ func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider := c.getProvider(reqBody.Provider)
+	provider := c.getMetadataFetcher(reqBody.Provider)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"message":  fmt.Sprintf("资源库批量刮削(%s)已异步启动，任务已加入后台队列", provider.Name()),
 		"provider": provider.Name(),
 	})
+}
+
+func (c *Controller) getMetadataSearcher(name string) metadata.Searcher {
+	if c.searcherFactory != nil {
+		return c.searcherFactory(name)
+	}
+	return metadata.NewConfiguredProvider(c.currentConfig(), name)
 }
