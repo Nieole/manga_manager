@@ -27,7 +27,10 @@ func (c *Controller) getRecommendations(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusInternalServerError, "AI inference failed: "+err.Error())
 		return
 	}
-	out := make([]AIRecommendationResponse, 0, len(items))
+	var out []AIRecommendationResponse
+	if items != nil {
+		out = make([]AIRecommendationResponse, 0, len(items))
+	}
 	for _, item := range items {
 		out = append(out, AIRecommendationResponse{SeriesID: item.SeriesID, Reason: item.Reason, Title: item.Title, CoverPath: item.CoverPath})
 	}

@@ -24,9 +24,9 @@ type Result struct {
 	MaxScore float64
 }
 type Hit struct {
-	ID     string
-	Score  float64
-	Fields map[string]interface{}
+	ID                                 string
+	Score                              float64
+	Title, SeriesName, Kind, CoverPath string
 }
 
 var ErrTarget = errors.New("invalid search target")
@@ -105,13 +105,7 @@ func (c *Search) mergeBookHits(ctx context.Context, res *Result, query string, l
 		res.Hits = append(res.Hits, &Hit{
 			ID:    docID,
 			Score: score,
-			Fields: map[string]interface{}{
-				"id":          docID,
-				"title":       title,
-				"series_name": seriesName,
-				"type":        "book",
-				"cover_path":  coverPath,
-			},
+			Title: title, SeriesName: seriesName, Kind: "book", CoverPath: coverPath,
 		})
 		if score > res.MaxScore {
 			res.MaxScore = score
@@ -163,13 +157,7 @@ func (c *Search) mergeSeriesSearchFallback(ctx context.Context, res *Result, que
 		res.Hits = append(res.Hits, &Hit{
 			ID:    docID,
 			Score: score,
-			Fields: map[string]interface{}{
-				"id":          docID,
-				"title":       title,
-				"series_name": row.Name,
-				"type":        "series",
-				"cover_path":  coverPath,
-			},
+			Title: title, SeriesName: row.Name, Kind: "series", CoverPath: coverPath,
 		})
 		if score > res.MaxScore {
 			res.MaxScore = score
