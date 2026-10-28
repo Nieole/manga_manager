@@ -141,7 +141,8 @@ func (e *Engine) libraryConflictsLocked(ctx context.Context, libraryID, excludeR
 					local = false
 				}
 			}
-			conflict.CanCancelForLibrary = conflict.CanCancel && local && owner.Identity.Scope == ScopeLibrary && owner.Identity.ScopeID == libraryID
+			identityLocal := owner.Identity.Scope == ScopeSeries || owner.Identity.Scope == ScopeLibrary && owner.Identity.ScopeID == libraryID
+			conflict.CanCancelForLibrary = conflict.CanCancel && local && identityLocal
 		}
 	}
 	sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].RunID < conflicts[j].RunID })

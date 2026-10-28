@@ -2,10 +2,17 @@ import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
     'libraryDelete.busy': 'The library is still in use and was not deleted. Finish the listed work and retry.',
+    'libraryDelete.timedOut': 'The wait limit was reached. The library was not deleted. Retry after access closes.',
+    'libraryDelete.cancelled': 'The deletion request was cancelled. The library was not deleted.',
+    'libraryDelete.cancellationRequested': 'Run #{{id}}: cancellation was requested; access may still be open.',
+    'libraryDelete.exited': 'Run #{{id}}: access has closed.',
+    'libraryDelete.cancellationFailed': 'Run #{{id}}: cancellation could not be requested. Check its state.',
+    'libraryDelete.notRestarted': 'Cancelled work will not restart automatically. Start it manually from Tasks when needed.',
     'libraryDelete.readers': 'Reading or content access is still open.',
     'libraryDelete.reserved': 'Another library management operation is in progress. Retry later.',
     'libraryDelete.finishing': 'Run #{{id}} is still releasing its resources. Retry later.',
     'libraryDelete.sharedWork': 'Run #{{id}}: work is shared with another library and cannot be cancelled by this deletion.',
+    'libraryDelete.systemWork': 'Run #{{id}}: system work cannot be cancelled by this deletion.',
     'libraryDelete.queuedWork': 'Library run #{{id}} is still queued. Resolve it before retrying.',
     'libraryDelete.localWork': 'Library run #{{id}} has not finished.',
     'libraryDelete.restoreFailed': 'Deletion did not finish and file watching could not be restored. Check the library watch settings.',

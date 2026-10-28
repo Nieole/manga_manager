@@ -1,5 +1,5 @@
 // 守删库成功后的缓存交接，以及占用拒绝时保留资料库与运行。
-// 缓存不清会继续显示旧统计和推荐；占用期间不能提前删除或取消工作。
+// 缓存不清会继续显示旧统计和推荐；访问未退出时不能提前删除。
 
 package api
 
@@ -45,8 +45,8 @@ func TestDeleteLibraryInvalidatesCaches(t *testing.T) {
 	}
 }
 
-// TestDeleteLibraryDeclinesScopedTask keeps the immediate deletion command non-destructive.
-func TestDeleteLibraryDeclinesScopedTask(t *testing.T) {
+// TestDeleteLibraryWaitsForScopedTask keeps records while cancelled work holds access.
+func TestDeleteLibraryWaitsForScopedTask(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	ctx := context.Background()
 
@@ -69,8 +69,8 @@ func TestDeleteLibraryDeclinesScopedTask(t *testing.T) {
 	}
 
 	task := currentTask(t, controller.taskEngine, taskKey)
-	if task.Status != "running" {
-		t.Fatalf("occupied deletion changed run status to %q, want running", task.Status)
+	if task.Status != "cancelling" {
+		t.Fatalf("occupied deletion run status = %q, want cancelling", task.Status)
 	}
 }
 

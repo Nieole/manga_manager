@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"manga-manager/internal/application/libraries"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/task"
@@ -14,6 +15,13 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+type deleteLibraryResponse struct {
+	libraries.DeleteResult
+	Error  string `json:"error,omitempty"`
+	Code   string `json:"code,omitempty"`
+	Status string `json:"status,omitempty"`
+}
 
 func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -34,10 +42,10 @@ func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			status, code, message = http.StatusRequestTimeout, "library_delete_cancelled", "Library deletion was cancelled"
 		}
-		jsonResponse(w, status, map[string]any{"error": message, "code": code, "deleted": result.Deleted, "conflicts": result.Conflicts, "warnings": result.Warnings})
+		jsonResponse(w, status, deleteLibraryResponse{DeleteResult: result, Error: message, Code: code})
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"status": "deleted", "deleted": result.Deleted, "warnings": result.Warnings})
+	jsonResponse(w, http.StatusOK, deleteLibraryResponse{DeleteResult: result, Status: "deleted"})
 }
 
 type CreateLibraryRequest struct {
