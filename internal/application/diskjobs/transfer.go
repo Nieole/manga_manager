@@ -49,7 +49,7 @@ func ExternalTransferKey(libraryID int64, sessionID string) string {
 func (c *Service) TransferPrepared(ctx context.Context, libraryID int64, sessionID string, plan external.TransferPlan) (task.Launched, error) {
 	total := len(plan.Operations)
 	spec := task.RunSpec{
-		ValidateAccess: func() error { _, err := c.external.GetSession(libraryID, sessionID); return err },
+		ValidateAccess: func() error { return c.external.ValidateSession(context.WithoutCancel(ctx), libraryID, sessionID) },
 		Key:            ExternalTransferKey(libraryID, sessionID),
 		StartCode:      "task.msg.transfer_external_library.start",
 		Total:          total,
@@ -84,7 +84,7 @@ func (c *Service) TransferPrepared(ctx context.Context, libraryID int64, session
 		if err := ctx.Err(); err != nil {
 			return task.Result{}, err
 		}
-		if _, err := c.external.GetSession(libraryID, sessionID); err != nil {
+		if err := c.external.ValidateSession(ctx, libraryID, sessionID); err != nil {
 			return task.Result{}, err
 		}
 		if total == 0 {
@@ -113,6 +113,9 @@ func (c *Service) TransferPrepared(ctx context.Context, libraryID int64, session
 				Params:  map[string]string{"path": op.RelativePath},
 				Metrics: map[string]int64{"transferred_files": int64(done)},
 			})
+			if err := c.external.ValidateOperation(ctx, libraryID, sessionID, op); err != nil {
+				return task.Result{}, err
+			}
 			skippedCopy, err := external.CopyFile(op.SourcePath, op.Destination, createdDirs)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", op.RelativePath, err))

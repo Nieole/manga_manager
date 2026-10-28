@@ -10,7 +10,7 @@ import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ExternalSeriesStatus, ExternalSession, Series } from '../types';
-import { useLibraryTransfer } from './useLibraryTransfer';
+import { useLibraryTransfer } from '../../../features/external-library/useLibraryTransfer';
 
 // 库内该系列有几本书 / 其中几本已经在外部库里，两者共同决定覆盖状态与「需复制」的数量。
 const BOOK_COUNT: Record<number, number> = { 1: 3, 2: 2, 3: 3, 4: 4, 5: 2 };

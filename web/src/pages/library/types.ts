@@ -77,33 +77,7 @@ export interface SeriesSearchResponse {
   has_more?: boolean;
 }
 
-export interface ExternalSession {
-  session_id: string;
-  library_id: number;
-  external_path: string;
-  ignore_extension: boolean;
-  status: 'scanning' | 'ready' | 'failed';
-  error?: string;
-  scanned_files: number;
-  matched_books: number;
-  unmatched_files: number;
-  total_books: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ExternalSeriesStatus {
-  series_id: number;
-  series_name?: string;
-  external_match_count: number;
-  external_total_count: number;
-  external_sync_status: 'missing' | 'partial' | 'complete';
-}
-
-export interface ExternalSessionCreateResponse {
-  session: ExternalSession;
-  task_key: string;
-}
+export type { ExternalSession, ExternalSeriesStatus, ExternalSessionCreateResponse } from '../../features/external-library/types';
 
 export const DEFAULT_PAGE_SIZE = 30;
 export const PAGINATION_MODE_KEY_PREFIX = 'lib_pagination_mode_';

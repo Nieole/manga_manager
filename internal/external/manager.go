@@ -16,16 +16,10 @@ import (
 	"manga-manager/internal/taskcontrol"
 )
 
-// Store 是本包真正需要的那三个查询。
-//
-// 刻意**不**用 database.Store：不是为了「解耦」——参数与返回值仍是 database 包里 sqlc
-// 生成的类型，import 边一分不减——而是让「逐 seriesID 一次 SELECT * 查系列书目」这类
-// N+1 性能回归在编译期就写不出来：窄接口里没有 ListBooksBySeries，想加回去得先改这个
-// 声明，这一步会被 code review 看见。
-//
-// 接口里也没有 ExecTx：交出 *Queries 就等于把它的全部方法一并交出去，收窄就成了纯粹的
-// 表演。本包不需要事务，正好可以名副其实。
+// Store supplies registered boundaries and batched source projections.
+// Series expansion remains one batch query so transfer planning cannot silently become N+1.
 type Store interface {
+	ListLibraries(context.Context) ([]database.Library, error)
 	GetLibrary(ctx context.Context, id int64) (database.Library, error)
 	ListExternalLibraryBooksByLibrary(ctx context.Context, libraryID int64) ([]database.ExternalLibraryBookRow, error)
 	ListExternalTransferBooksBySeries(ctx context.Context, seriesIDs []int64) ([]database.ListExternalTransferBooksBySeriesRow, error)
@@ -142,21 +136,23 @@ type seriesEntry struct {
 }
 
 type session struct {
-	ID              string
-	LibraryID       int64
-	LibraryPath     string
-	ExternalPath    string
-	IgnoreExtension bool
-	Status          string
-	Error           string
-	ScannedFiles    int
-	MatchedBooks    int
-	UnmatchedFiles  int
-	TotalBooks      int
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Series          map[int64]*seriesEntry
-	MatchedKeys     map[string]struct{}
+	LibraryResolved  string
+	ExternalResolved string
+	ID               string
+	LibraryID        int64
+	LibraryPath      string
+	ExternalPath     string
+	IgnoreExtension  bool
+	Status           string
+	Error            string
+	ScannedFiles     int
+	MatchedBooks     int
+	UnmatchedFiles   int
+	TotalBooks       int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Series           map[int64]*seriesEntry
+	MatchedKeys      map[string]struct{}
 }
 
 type Manager struct {
@@ -203,15 +199,18 @@ func (m *Manager) CreateSession(ctx context.Context, libraryID int64, externalPa
 		return SessionSnapshot{}, fmt.Errorf("external path is not a directory")
 	}
 
-	// 外部路径与库根重叠时，传输产生的副本会被下一次扫描收编成重复书籍，用户还得手动去重。
-	// 注意这里只挡**本库**：external_path 指向另一个资料库根时后果一模一样，但那需要
-	// 拉全部库列表，留作后续（此处不假装已经全堵住）。
-	if pathsOverlap(externalPath, filepath.Clean(lib.Path)) {
-		return SessionSnapshot{}, ErrExternalPathInsideLibrary
+	physical, err := m.validateExternalRoot(ctx, externalPath)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	owner, err := resolveBoundary(lib.Path)
+	if err != nil {
+		return SessionSnapshot{}, err
 	}
 
 	now := time.Now()
 	s := &session{
+		LibraryResolved: owner, ExternalResolved: physical,
 		ID:              fmt.Sprintf("%d-%d", libraryID, now.UnixNano()),
 		LibraryID:       libraryID,
 		LibraryPath:     lib.Path,
@@ -342,6 +341,9 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, task TaskHa
 	ignoreExtension := s.IgnoreExtension
 	m.mu.Unlock()
 
+	if err := m.ValidateSession(ctx, libraryID, sessionID); err != nil {
+		return SessionSnapshot{}, err
+	}
 	books, err := m.store.ListExternalLibraryBooksByLibrary(ctx, libraryID)
 	if err != nil {
 		m.setFailure(sessionID, err)
@@ -445,6 +447,9 @@ func (m *Manager) ScanSession(ctx context.Context, sessionID string, task TaskHa
 }
 
 func (m *Manager) PrepareTransfer(ctx context.Context, libraryID int64, sessionID string, seriesIDs []int64) (TransferPlan, error) {
+	if err := m.ValidateSession(ctx, libraryID, sessionID); err != nil {
+		return TransferPlan{}, err
+	}
 	m.mu.Lock()
 	m.pruneLocked(time.Now())
 	s, ok := m.sessions[sessionID]

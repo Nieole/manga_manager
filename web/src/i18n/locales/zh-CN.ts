@@ -718,6 +718,8 @@ export const messages: MessageCatalog = {
     'home.external.cardComplete': '外部已完整存在',
     'home.external.cardPartial': '外部部分存在',
     'home.external.cardMissing': '外部尚未同步',
+    'home.external.rootOverlap': '请选择与所有已登记资料库均不重叠的目录，也不能包含资料库。',
+    'home.external.rootUnresolvable': '无法安全确认目录边界，请检查路径和访问权限。',
     'home.external.pickPathFirst': '请先选择外部库',
     'home.external.scanStarted': '已开始扫描外部库',
     'home.external.scanStartFailed': '外部库扫描启动失败',

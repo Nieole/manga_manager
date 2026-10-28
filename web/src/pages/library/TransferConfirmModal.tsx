@@ -4,11 +4,7 @@ import { ModalShell } from '../../components/ui/ModalShell';
 import { modalGhostButtonClass, modalPrimaryButtonClass } from '../../components/ui/modalStyles';
 import { useI18n } from '../../i18n/LocaleProvider';
 
-export interface TransferSummary {
-  total: number;
-  matched: number;
-  missing: number;
-}
+import type { TransferSummary } from '../../features/external-library/types';
 
 interface TransferConfirmModalProps {
   open: boolean;

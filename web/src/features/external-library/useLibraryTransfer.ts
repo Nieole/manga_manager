@@ -1,17 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
 
-import type { ExternalSeriesStatus, ExternalSession, Series } from '../types';
-
-export interface TransferSummary {
-  total: number;
-  matched: number;
-  missing: number;
-}
+import type { ExternalSeriesStatus, ExternalSession, SeriesTransferFacts, TransferSummary } from './types';
 
 interface UseLibraryTransferParams {
   externalSession: ExternalSession | null;
   externalSeriesMap: Record<number, ExternalSeriesStatus>;
-  allSeries: Series[];
+  allSeries: SeriesTransferFacts[];
   selectedSeries: number[];
   /** 按 id 补查外部库覆盖；问不到时必须抛错，不能拿空结果冒充「外部库里没有」。 */
   queryExternalSeriesStatus: (ids: number[]) => Promise<ExternalSeriesStatus[]>;

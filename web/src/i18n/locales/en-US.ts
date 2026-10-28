@@ -718,6 +718,8 @@ export const messages: MessageCatalog = {
     'home.external.cardComplete': 'Fully present externally',
     'home.external.cardPartial': 'Partially present externally',
     'home.external.cardMissing': 'Not synced externally',
+    'home.external.rootOverlap': 'Choose a directory outside every registered library. It must not contain a library either.',
+    'home.external.rootUnresolvable': 'The directory boundary could not be resolved safely. Check paths and permissions.',
     'home.external.pickPathFirst': 'Select an external library directory first',
     'home.external.scanStarted': 'External library scan started',
     'home.external.scanStartFailed': 'Failed to start external library scan',
