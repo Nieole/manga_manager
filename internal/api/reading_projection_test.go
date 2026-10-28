@@ -132,7 +132,7 @@ func readingProjectionMatrix(t *testing.T, pageCount int64) {
 				if err = json.Unmarshal(run(c.getSeriesContinueEndpoint, user, "seriesId", series.ID, "/"), &summary); err != nil {
 					t.Fatal(err)
 				}
-				if len(books) != 1 || books[0].LastReadPage != detail.LastReadPage || books[0].IsRead != detail.IsRead || detail.LastReadPage.Int64 != wantPage || reading.InspectBook(detail).Completed != wantCompleted || summary.ReadPages != wantPage || (summary.ReadBooks == 1) != wantCompleted {
+				if len(books) != 1 || books[0].LastReadPage != detail.LastReadPage || books[0].IsRead != detail.IsRead || detail.LastReadPage.Int64 != wantPage || detail.IsRead != (wantCompleted && pageCount == 0) || summary.ReadPages != wantPage || (summary.ReadBooks == 1) != wantCompleted {
 					t.Fatalf("subject=%d detail=%+v list=%+v summary=%+v", user.ID, detail, books, summary)
 				}
 				if wantCompleted && summary.NextUnreadBookID != 0 {
