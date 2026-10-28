@@ -40,4 +40,3 @@ export interface SeriesLink {
   name: string;
   url: string;
 }
-
