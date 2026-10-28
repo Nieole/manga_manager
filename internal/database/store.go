@@ -141,7 +141,6 @@ type Store interface {
 	SetKOReaderAccountUser(ctx context.Context, accountID, userID int64) error
 	AssignOrphanKOReaderAccountsToUser(ctx context.Context, userID int64) error
 	// 深度统计（第 6 项）——见 user_stats.go。
-	LogUserReadingActivity(ctx context.Context, userID, bookID, pages int64) error
 	GetUserActivityHeatmap(ctx context.Context, userID int64, offsetClause string) ([]ActivityDay, error)
 	GetUserActiveDays(ctx context.Context, userID int64, days int) (int, error)
 	GetUserReadingStreak(ctx context.Context, userID int64) (current, longest int, err error)

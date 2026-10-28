@@ -163,16 +163,16 @@ func TestCalibrationReplayUsesOriginalFactAndClearSurvivesReopen(t *testing.T) {
 			if err = service.Restart(ctx, task.Identity{Type: "refresh_koreader_matching", Scope: task.ScopeSystem}, args, task.TriggerResumed); err != nil {
 				t.Fatal(err)
 			}
-			after, err := reopened.GetBook(ctx, book.ID)
+			after, err := reading.NewQueries(reopened).BookView(ctx, reading.AnonymousSubject(), book.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if clear {
-				if reading.InspectBook(after).Started || after.LastReadAt.Valid {
+				if after.Inspect().Started || after.State.LastReadAt.Valid {
 					t.Fatalf("cleared position revived: %+v", after)
 				}
-			} else if after.LastReadPage.Int64 != 24 || !after.LastReadAt.Time.Equal(occurred) {
-				t.Fatalf("original fact changed: page=%+v at=%v", after.LastReadPage, after.LastReadAt)
+			} else if after.State.LastReadPage.Int64 != 24 || !after.State.LastReadAt.Time.Equal(occurred) {
+				t.Fatalf("original fact changed: page=%+v at=%v", after.State.LastReadPage, after.State.LastReadAt)
 			}
 			snapshots, err := engine.ListSnapshots(ctx, task.RunFilter{Types: []task.Type{"refresh_koreader_matching"}})
 			if err != nil || len(snapshots) != 1 || snapshots[0].Run.Status != task.StatusCompleted || snapshots[0].Run.Total != 2 {

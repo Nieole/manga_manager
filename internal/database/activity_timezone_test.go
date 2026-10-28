@@ -82,8 +82,8 @@ func TestReadingActivityDateMatchesLastReadAt(t *testing.T) {
 	if err := seedLegacyUserBookProgress(ctx, store, user.ID, bookID, 5, now); err != nil {
 		t.Fatalf("seed legacy user progress: %v", err)
 	}
-	if err := store.LogUserReadingActivity(ctx, user.ID, bookID, 5); err != nil {
-		t.Fatalf("LogUserReadingActivity: %v", err)
+	if err := store.LogUserReadingActivityAt(ctx, user.ID, bookID, 5, now); err != nil {
+		t.Fatalf("LogUserReadingActivityAt: %v", err)
 	}
 
 	var activityDate string

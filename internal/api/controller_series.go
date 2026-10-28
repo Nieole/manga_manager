@@ -473,7 +473,7 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		Tags:              tags,
 		Authors:           authors,
 		Links:             links,
-		Volumes:           buildSeriesVolumeSummaries(books, false),
+		Volumes:           buildSeriesVolumeSummaries(view.Books, false),
 		Relations:         relations,
 		MetadataReview:    metadataReview,
 		MetadataSummary:   summarizeSeriesMetadata(metadataReview),
@@ -511,13 +511,14 @@ func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Re
 	jsonResponse(w, http.StatusOK, view.Continue)
 }
 
-func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []SeriesVolumeSummary {
+func buildSeriesVolumeSummaries(books []reading.BookView, includeBooks bool) []SeriesVolumeSummary {
 	type volumeAccumulator struct {
 		summary SeriesVolumeSummary
 		books   []database.Book
 	}
 	volumeMap := make(map[string]*volumeAccumulator)
-	for _, book := range books {
+	for _, view := range books {
+		book := readerBookResponse(view)
 		volumeName := strings.TrimSpace(book.Volume)
 		if volumeName == "" {
 			continue
@@ -529,7 +530,7 @@ func buildSeriesVolumeSummaries(books []database.Book, includeBooks bool) []Seri
 		}
 		acc.summary.BookCount++
 		acc.summary.TotalPages += book.PageCount
-		acc.summary.ReadPages += reading.InspectBook(book).ReadPages
+		acc.summary.ReadPages += view.Inspect().ReadPages
 		if acc.summary.CoverBookID == 0 && book.CoverPath.Valid && strings.TrimSpace(book.CoverPath.String) != "" {
 			acc.summary.CoverBookID = book.ID
 			acc.summary.CoverPath = book.CoverPath

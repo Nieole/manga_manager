@@ -17,7 +17,13 @@ func RecentBooks(ctx context.Context, store RecentStore, subject Subject, limit 
 	if err := subject.validate(); err != nil {
 		return RecentBooksView{}, err
 	}
-	items, err := RecentReads(ctx, store, subject.userID, limit)
+	var items []database.GetRecentReadAllRow
+	var err error
+	if subject.userID > 0 {
+		items, err = store.GetUserRecentReadAll(ctx, subject.userID, limit)
+	} else {
+		items, err = store.GetRecentReadAll(ctx, limit)
+	}
 	if err != nil {
 		return RecentBooksView{}, err
 	}
