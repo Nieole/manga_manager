@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"manga-manager/internal/application/maintenance"
+	"manga-manager/internal/bookidentity"
 	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
@@ -497,15 +498,15 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 		t.Fatalf("write book file failed: %v", err)
 	}
 
-	fileHash, err := koreader.FingerprintFile(book.Path)
+	fileHash, err := bookidentity.FingerprintFile(book.Path)
 	if err != nil {
 		t.Fatalf("FingerprintFile failed: %v", err)
 	}
 	if err := store.UpdateBookIdentity(context.Background(), database.UpdateBookIdentityParams{
 		ID:                   book.ID,
-		FileHash:             fileHash,
-		PathFingerprint:      koreader.FingerprintRelativePath(lib.Path, book.Path, false),
-		PathFingerprintNoExt: koreader.FingerprintRelativePath(lib.Path, book.Path, true),
+		FileHash:             string(fileHash),
+		PathFingerprint:      string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, false)),
+		PathFingerprintNoExt: string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, true)),
 	}); err != nil {
 		t.Fatalf("UpdateBookIdentity failed: %v", err)
 	}
@@ -546,7 +547,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 		t.Fatalf("expected projected page 60, got %+v", updatedBook.LastReadPage)
 	}
 
-	getReq := requestWithRouteParam(http.MethodGet, "/koreader/syncs/progress/doc", nil, "document", fileHash)
+	getReq := requestWithRouteParam(http.MethodGet, "/koreader/syncs/progress/doc", nil, "document", string(fileHash))
 	getReq.Header.Set("x-auth-user", account.Username)
 	getReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	getRec := httptest.NewRecorder()
@@ -559,7 +560,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	if err := json.NewDecoder(getRec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode progress response failed: %v", err)
 	}
-	if got["document"] != fileHash {
+	if got["document"] != string(fileHash) {
 		t.Fatalf("unexpected document payload: %+v", got)
 	}
 }
@@ -630,15 +631,15 @@ func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 		t.Fatalf("write book file failed: %v", err)
 	}
 
-	fileHash, err := koreader.FingerprintFile(book.Path)
+	fileHash, err := bookidentity.FingerprintFile(book.Path)
 	if err != nil {
 		t.Fatalf("FingerprintFile failed: %v", err)
 	}
 	if err := store.UpdateBookIdentity(context.Background(), database.UpdateBookIdentityParams{
 		ID:                   book.ID,
-		FileHash:             fileHash,
-		PathFingerprint:      koreader.FingerprintRelativePath(lib.Path, book.Path, false),
-		PathFingerprintNoExt: koreader.FingerprintRelativePath(lib.Path, book.Path, true),
+		FileHash:             string(fileHash),
+		PathFingerprint:      string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, false)),
+		PathFingerprintNoExt: string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, true)),
 	}); err != nil {
 		t.Fatalf("UpdateBookIdentity failed: %v", err)
 	}
@@ -693,15 +694,15 @@ func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
 		t.Fatalf("write book file failed: %v", err)
 	}
 
-	fileHash, err := koreader.FingerprintFile(book.Path)
+	fileHash, err := bookidentity.FingerprintFile(book.Path)
 	if err != nil {
 		t.Fatalf("FingerprintFile failed: %v", err)
 	}
 	if err := store.UpdateBookIdentity(context.Background(), database.UpdateBookIdentityParams{
 		ID:                   book.ID,
-		FileHash:             fileHash,
-		PathFingerprint:      koreader.FingerprintRelativePath(lib.Path, book.Path, false),
-		PathFingerprintNoExt: koreader.FingerprintRelativePath(lib.Path, book.Path, true),
+		FileHash:             string(fileHash),
+		PathFingerprint:      string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, false)),
+		PathFingerprintNoExt: string(bookidentity.FingerprintRelativePath(lib.Path, book.Path, true)),
 	}); err != nil {
 		t.Fatalf("UpdateBookIdentity failed: %v", err)
 	}

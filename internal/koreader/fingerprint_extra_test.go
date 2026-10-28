@@ -6,6 +6,7 @@ package koreader
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"manga-manager/internal/bookidentity"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,28 +60,28 @@ func TestIsValidSyncKeyBoundaries(t *testing.T) {
 // TestFingerprintDocumentPathNormalization 覆盖文档路径归一化：分隔符/大小写/末3段/去扩展名/空值。
 func TestFingerprintDocumentPathNormalization(t *testing.T) {
 	// 反斜杠与正斜杠等价。
-	if FingerprintDocumentPath(`a\b\c.cbz`, false) != FingerprintDocumentPath("a/b/c.cbz", false) {
+	if bookidentity.FingerprintPath(`a\b\c.cbz`, false) != bookidentity.FingerprintPath("a/b/c.cbz", false) {
 		t.Fatalf("backslash and slash paths should fingerprint identically")
 	}
 	// 大小写不敏感。
-	if FingerprintDocumentPath("A/B/C.CBZ", false) != FingerprintDocumentPath("a/b/c.cbz", false) {
+	if bookidentity.FingerprintPath("A/B/C.CBZ", false) != bookidentity.FingerprintPath("a/b/c.cbz", false) {
 		t.Fatalf("path fingerprint should be case-insensitive")
 	}
 	// 仅取末尾 3 段。
-	if FingerprintDocumentPath("root/extra/a/b/c.cbz", false) != FingerprintDocumentPath("a/b/c.cbz", false) {
+	if bookidentity.FingerprintPath("root/extra/a/b/c.cbz", false) != bookidentity.FingerprintPath("a/b/c.cbz", false) {
 		t.Fatalf("only last 3 path segments should matter")
 	}
 	// 去扩展名后不同扩展等价，且与保留扩展名不同。
-	if FingerprintDocumentPath("a/b/c.cbz", true) != FingerprintDocumentPath("a/b/c.epub", true) {
+	if bookidentity.FingerprintPath("a/b/c.cbz", true) != bookidentity.FingerprintPath("a/b/c.epub", true) {
 		t.Fatalf("ignoreExtension should drop differing extensions")
 	}
-	if FingerprintDocumentPath("a/b/c.cbz", true) == FingerprintDocumentPath("a/b/c.cbz", false) {
+	if bookidentity.FingerprintPath("a/b/c.cbz", true) == bookidentity.FingerprintPath("a/b/c.cbz", false) {
 		t.Fatalf("ignoreExtension=true should differ from keeping the extension")
 	}
 	// 空/纯空白/根/点 都归一化为空指纹。
 	for _, empty := range []string{"", "   ", "/", "."} {
-		if got := FingerprintDocumentPath(empty, false); got != "" {
-			t.Fatalf("FingerprintDocumentPath(%q) = %q, want empty", empty, got)
+		if got := bookidentity.FingerprintPath(empty, false); got != "" {
+			t.Fatalf("bookidentity.FingerprintPath(%q) = %q, want empty", empty, got)
 		}
 	}
 }
@@ -89,10 +90,10 @@ func TestFingerprintDocumentPathNormalization(t *testing.T) {
 func TestFingerprintRelativePathMatchesDocumentPath(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "lib")
 	book := filepath.Join(root, "Series", "Vol01.cbz")
-	if FingerprintRelativePath(root, book, false) != FingerprintDocumentPath("Series/Vol01.cbz", false) {
+	if bookidentity.FingerprintRelativePath(root, book, false) != bookidentity.FingerprintPath("Series/Vol01.cbz", false) {
 		t.Fatalf("relative-path fingerprint should match document-path fingerprint")
 	}
-	if FingerprintRelativePath(root, book, true) != FingerprintDocumentPath("Series/Vol01", true) {
+	if bookidentity.FingerprintRelativePath(root, book, true) != bookidentity.FingerprintPath("Series/Vol01", true) {
 		t.Fatalf("relative-path fingerprint (ignoreExt) mismatch")
 	}
 }
@@ -100,7 +101,7 @@ func TestFingerprintRelativePathMatchesDocumentPath(t *testing.T) {
 // TestNormalizeDocumentForMatchModes 覆盖匹配模式分支：file_path 走路径指纹，其余走小写原文。
 func TestNormalizeDocumentForMatchModes(t *testing.T) {
 	// file_path 模式 == 路径指纹。
-	if NormalizeDocumentForMatch("A/B.cbz", config.KOReaderMatchModeFilePath, false) != FingerprintDocumentPath("A/B.cbz", false) {
+	if NormalizeDocumentForMatch("A/B.cbz", config.KOReaderMatchModeFilePath, false) != DocumentKey(bookidentity.FingerprintPath("A/B.cbz", false)) {
 		t.Fatalf("file_path mode should use document-path fingerprint")
 	}
 	// file_path 模式下 ignoreExtension 影响结果。
@@ -154,7 +155,7 @@ func TestFingerprintFileMatchesMD5AndErrors(t *testing.T) {
 	}
 	// md5("hello") 的已知常量。
 	const wantHelloMD5 = "5d41402abc4b2a76b9719d911017c592"
-	got, err := FingerprintFile(p)
+	got, err := bookidentity.FingerprintFile(p)
 	if err != nil {
 		t.Fatalf("FingerprintFile: %v", err)
 	}
@@ -162,14 +163,14 @@ func TestFingerprintFileMatchesMD5AndErrors(t *testing.T) {
 		t.Fatalf("FingerprintFile = %q, want %q", got, wantHelloMD5)
 	}
 	// 全量指纹（md5）与快速指纹（sha1+size）算法不同，结果必然不同。
-	quick, err := FingerprintQuickFile(p)
+	quick, err := bookidentity.FingerprintQuickFile(p)
 	if err != nil {
 		t.Fatalf("FingerprintQuickFile: %v", err)
 	}
-	if quick == got {
+	if string(quick) == string(got) {
 		t.Fatalf("quick and full fingerprints should differ")
 	}
-	if _, err := FingerprintFile(filepath.Join(dir, "does-not-exist.bin")); err == nil {
+	if _, err := bookidentity.FingerprintFile(filepath.Join(dir, "does-not-exist.bin")); err == nil {
 		t.Fatalf("expected error fingerprinting a missing file")
 	}
 }
@@ -192,7 +193,7 @@ func TestFingerprintQuickFileHeadTailSampling(t *testing.T) {
 	}
 
 	origPath := write("orig.bin", base)
-	origQuick, err := FingerprintQuickFile(origPath)
+	origQuick, err := bookidentity.FingerprintQuickFile(origPath)
 	if err != nil {
 		t.Fatalf("quick orig: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestFingerprintQuickFileHeadTailSampling(t *testing.T) {
 	copy(mid, base)
 	mid[midOffset] ^= 0xFF
 	midPath := write("mid.bin", mid)
-	midQuick, err := FingerprintQuickFile(midPath)
+	midQuick, err := bookidentity.FingerprintQuickFile(midPath)
 	if err != nil {
 		t.Fatalf("quick mid: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestFingerprintQuickFileHeadTailSampling(t *testing.T) {
 	copy(tail, base)
 	tail[size-1] ^= 0xFF
 	tailPath := write("tail.bin", tail)
-	tailQuick, err := FingerprintQuickFile(tailPath)
+	tailQuick, err := bookidentity.FingerprintQuickFile(tailPath)
 	if err != nil {
 		t.Fatalf("quick tail: %v", err)
 	}
@@ -228,11 +229,11 @@ func TestFingerprintQuickFileHeadTailSampling(t *testing.T) {
 	}
 
 	// 全量指纹对中间改动敏感（与快速指纹形成对比）。
-	origFull, err := FingerprintFile(origPath)
+	origFull, err := bookidentity.FingerprintFile(origPath)
 	if err != nil {
 		t.Fatalf("full orig: %v", err)
 	}
-	midFull, err := FingerprintFile(midPath)
+	midFull, err := bookidentity.FingerprintFile(midPath)
 	if err != nil {
 		t.Fatalf("full mid: %v", err)
 	}

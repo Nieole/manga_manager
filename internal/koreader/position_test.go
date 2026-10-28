@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"manga-manager/internal/bookidentity"
 	"manga-manager/internal/testfixture"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func matchedPositionFixture(t *testing.T) (*Service, database.Store, Credentials
 	t.Helper()
 	service, store, root := newTestService(t, config.KOReaderMatchModeFilePath)
 	_, book := seedServiceBook(t, store, root, "Library", "Series", "Book.cbz")
-	if _, _, err := service.RebuildBookIdentities(context.Background(), RebuildOptions{BatchSize: 10}, &fakeTaskHandle{}); err != nil {
+	if _, _, err := bookidentity.New(service.store).Rebuild(context.Background(), bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 10}, &fakeTaskHandle{}); err != nil {
 		t.Fatal(err)
 	}
 	user := createServiceTestUser(t, store, "reader", database.RoleRegular)
@@ -64,7 +65,7 @@ func TestMatchedPullUsesOriginalPreciseDeviceOccurrence(t *testing.T) {
 	if err != nil || saved.Matched {
 		t.Fatalf("unmatched result=%+v err=%v", saved, err)
 	}
-	if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, &fakeTaskHandle{}); err != nil {
+	if _, _, err := bookidentity.New(service.store).Rebuild(ctx, bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 10}, &fakeTaskHandle{}); err != nil {
 		t.Fatal(err)
 	}
 	pulled, err := service.GetProgress(ctx, creds, devicePosition(.25).Document)
@@ -149,7 +150,7 @@ func TestDeviceReplayAfterClearAndRestartCannotRestoreOldPosition(t *testing.T) 
 				}
 				t.Cleanup(func() { _ = reopened.Close() })
 				service = NewService(reopened, cfg)
-				if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, &fakeTaskHandle{}); err != nil {
+				if _, _, err := bookidentity.New(service.store).Rebuild(ctx, bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 10}, &fakeTaskHandle{}); err != nil {
 					t.Fatal(err)
 				}
 				if reconcile {
@@ -270,7 +271,7 @@ func TestLegacyDeviceRecordsKeepTheirOriginalTimestampAfterUpgrade(t *testing.T)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
 	service = NewService(reopened, cfg)
-	if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, &fakeTaskHandle{}); err != nil {
+	if _, _, err := bookidentity.New(service.store).Rebuild(ctx, bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 10}, &fakeTaskHandle{}); err != nil {
 		t.Fatal(err)
 	}
 	record, err := service.GetProgress(ctx, creds, devicePosition(.25).Document)
@@ -337,7 +338,7 @@ func TestFreshDeviceReportsInSameReceiveTickDoNotBecomeHistoricalReplays(t *test
 	if _, err := reading.New(store, nil, reading.WithClock(func() time.Time { return tick })).MarkBooks(ctx, reading.MarkBooksInput{UserID: uid, BookIDs: []int64{book.ID}, IsRead: false}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := service.RebuildBookIdentities(ctx, RebuildOptions{BatchSize: 10}, &fakeTaskHandle{}); err != nil {
+	if _, _, err := bookidentity.New(service.store).Rebuild(ctx, bookidentity.RebuildOptions{MatchMode: service.currentMatchConfig().MatchMode, BatchSize: 10}, &fakeTaskHandle{}); err != nil {
 		t.Fatal(err)
 	}
 	replayed, err := service.GetProgress(ctx, creds, devicePosition(.75).Document)
