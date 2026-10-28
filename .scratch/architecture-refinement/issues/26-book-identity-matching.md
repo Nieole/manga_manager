@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 130、131、132、133、134、191。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -30,3 +30,8 @@
 - Scanner rename/identity race regressions also executed and passed 9.756s (ticket26-scanner-identity-race.log), including size+mtime ambiguity, content-hash preference, one-row claiming and preservation through cleanup. Full API retry is recorded separately; scanner watcher-stop behavior belongs to ticket 28 and is not claimed repaired here.
 
 - Full API retry actually passed 115.324s (ticket26-api-full-fixed.log). Merged integration ff58410 in 4f5ef14 without conflicts. After-merge actual executions passed: bookidentity 2.584s, maintenance 3.373s, runtime 6.481s and the complete KOReader race suite 32.035s (ticket26-merged-packages.log, ticket26-koreader-merged-race.log). The ordinary KOReader executable in that combined command was blocked, so only its actual race retry counts. Merged lint reported 0 issues and gofmt output was empty. The complete baseline diff check and tracked conflict-marker scan are clean.
+
+### Integration verification (2026-10-28)
+
+- Merged through 3782d81f53fd382a123b79629c0be96f7ff13d38 without conflicts. Main-tree full race suites actually passed: bookidentity 4.845s, KOReader 46.562s, maintenance 16.574s and runtime 20.573s. Scanner rehome/identity/rename race passed 15.011s; KOReader device HTTP race passed 21.118s.
+- Go 1.26.10 lint reported 0 issues and gofmt emitted no files. Whole-baseline git diff --check and tracked conflict-marker scans passed. Logs: .tmp/merge-wave14-owner.log, merge-wave14-scanner.log, merge-wave14-api.log and merge-wave14-lint.log. No frontend or generated contract target changed.
