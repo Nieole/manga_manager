@@ -14,7 +14,8 @@ func TestAIGroupingApplyCollectionOwnsIdentityAndAdjudication(t *testing.T) {
 	ctx := context.Background()
 	review, candidates := seedGrouping(t, store, "Picks")
 	service := organize.NewAIGrouping(store, func() {})
-	id, err := service.ApplyCollection(ctx, review.ID, candidates[0].ID)
+	outcome, err := service.ApplyCollection(ctx, review.ID, candidates[0].ID)
+	id := outcome.CreatedCollectionID
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +103,12 @@ func TestAIGroupingBatchSkipsGoneSeriesAndLeavesThemForDecision(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].Name != "Alive" {
 		t.Fatalf("list=%+v err=%v", list, err)
 	}
-	if err := service.RejectReview(ctx, review.ID); err != nil {
+	rejected, err := service.RejectReview(ctx, review.ID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if rejected.Snapshot.Review.Status != "applied" || rejected.Snapshot.Collections[0].Status != "rejected" || rejected.Snapshot.Collections[1].Status != "applied" || !rejected.Snapshot.Collections[1].CreatedCollectionID.Valid {
+		t.Fatalf("mixed authoritative result=%+v", rejected)
 	}
 	state, err = service.Review(ctx, review.ID)
 	if err != nil || state.Review.Status != "applied" || state.Collections[0].Status != "rejected" {
@@ -142,7 +147,8 @@ func TestAIGroupingLateFailureRollsBackIdentityAndDecision(t *testing.T) {
 	}
 	refresh := 0
 	service := organize.NewAIGrouping(store, func() { refresh++ })
-	id, err := service.ApplyCollection(ctx, review.ID, rows[0].ID)
+	outcome, err := service.ApplyCollection(ctx, review.ID, rows[0].ID)
+	id := outcome.CreatedCollectionID
 	if err == nil || id != 0 || refresh != 0 {
 		t.Fatalf("id=%d refresh=%d err=%v", id, refresh, err)
 	}
@@ -230,7 +236,8 @@ func TestAIGroupingCASLossRollsBackNewCollection(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := organize.NewAIGrouping(store, func() { t.Error("failed CAS published refresh") })
-	id, err := service.ApplyCollection(ctx, review.ID, rows[0].ID)
+	outcome, err := service.ApplyCollection(ctx, review.ID, rows[0].ID)
+	id := outcome.CreatedCollectionID
 	if !errors.Is(err, organize.ErrAIGroupingNotPending) || id != 0 {
 		t.Fatalf("id=%d err=%v", id, err)
 	}

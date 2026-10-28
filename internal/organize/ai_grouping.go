@@ -22,7 +22,8 @@ func (e *InvalidAIGroupingEdit) Error() string { return e.Message }
 
 type AIGroupingStore interface {
 	GetSeriesWithoutCollection(context.Context, int64) ([]database.GetSeriesWithoutCollectionRow, error)
-	ExecTx(context.Context, func(*database.Queries) error) error
+	WithAIGroupingWrite(context.Context, func(database.AIGroupingWrite) error) error
+	WithAIGroupingGenerationWrite(context.Context, func(database.AIGroupingGenerationWrite) error) error
 	GetAIGroupingReview(context.Context, int64) (database.AiGroupingReview, error)
 	ListAIGroupingReviewCollections(context.Context, int64) ([]database.AiGroupingReviewCollection, error)
 }
@@ -41,6 +42,8 @@ func NewAIGrouping(store AIGroupingStore, refresh func()) *AIGrouping {
 type AIGroupingReview struct {
 	Review      database.AiGroupingReview
 	Collections []database.AiGroupingReviewCollection
+	Series      []database.GetSeriesNamesByIDsRow
+	LibraryName string
 }
 
 func (s *AIGrouping) Review(ctx context.Context, id int64) (AIGroupingReview, error) {
@@ -51,7 +54,7 @@ func (s *AIGrouping) Review(ctx context.Context, id int64) (AIGroupingReview, er
 	rows, err := s.store.ListAIGroupingReviewCollections(ctx, id)
 	return AIGroupingReview{Review: review, Collections: rows}, err
 }
-func pendingAIGrouping(ctx context.Context, q *database.Queries, reviewID int64) (database.AiGroupingReview, error) {
+func pendingAIGrouping(ctx context.Context, q database.AIGroupingWrite, reviewID int64) (database.AiGroupingReview, error) {
 	review, err := q.GetAIGroupingReview(ctx, reviewID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return review, ErrAIGroupingNotFound
@@ -64,7 +67,7 @@ func pendingAIGrouping(ctx context.Context, q *database.Queries, reviewID int64)
 	}
 	return review, nil
 }
-func pendingAICollection(ctx context.Context, q *database.Queries, reviewID, collectionID int64) (database.AiGroupingReview, database.AiGroupingReviewCollection, error) {
+func pendingAICollection(ctx context.Context, q database.AIGroupingWrite, reviewID, collectionID int64) (database.AiGroupingReview, database.AiGroupingReviewCollection, error) {
 	review, err := pendingAIGrouping(ctx, q, reviewID)
 	if err != nil {
 		return review, database.AiGroupingReviewCollection{}, err
@@ -81,7 +84,7 @@ func pendingAICollection(ctx context.Context, q *database.Queries, reviewID, col
 	}
 	return review, row, nil
 }
-func finishAIGroupingIfReady(ctx context.Context, q *database.Queries, reviewID int64) error {
+func finishAIGroupingIfReady(ctx context.Context, q database.AIGroupingWrite, reviewID int64) error {
 	pending, err := q.CountPendingAIGroupingReviewCollections(ctx, reviewID)
 	if err != nil {
 		return err
@@ -92,19 +95,21 @@ func finishAIGroupingIfReady(ctx context.Context, q *database.Queries, reviewID 
 	return finalizeAIGroupingReviewStatus(ctx, q, reviewID)
 }
 
-// ApplyCollection creates a manually owned collection and adjudicates its candidate atomically.
-func (s *AIGrouping) ApplyCollection(ctx context.Context, reviewID, collectionID int64) (int64, error) {
+func (s *AIGrouping) applyCollection(ctx context.Context, reviewID, collectionID int64, outcome *AIGroupingReview) (int64, error) {
 	var id int64
-	err := s.store.ExecTx(ctx, func(q *database.Queries) error {
+	err := s.store.WithAIGroupingWrite(ctx, func(q database.AIGroupingWrite) error {
 		review, row, err := pendingAICollection(ctx, q, reviewID, collectionID)
 		if err != nil {
 			return err
 		}
-		id, err = applyAIGroupingReviewCollectionWithQueries(ctx, q, review, row)
+		id, err = applyAIGroupingCollection(ctx, q, review, row)
 		if err != nil {
 			return err
 		}
-		return finishAIGroupingIfReady(ctx, q, reviewID)
+		if err := finishAIGroupingIfReady(ctx, q, reviewID); err != nil {
+			return err
+		}
+		return captureAIGroupingOutcome(ctx, q, reviewID, outcome)
 	})
 	if err != nil {
 		return 0, err
@@ -115,8 +120,7 @@ func (s *AIGrouping) ApplyCollection(ctx context.Context, reviewID, collectionID
 
 type AIGroupingApplyResult struct{ Applied, Skipped int }
 
-// ApplyReview observes a pending snapshot and rejects candidates adjudicated before its write transaction.
-func (s *AIGrouping) ApplyReview(ctx context.Context, reviewID int64) (AIGroupingApplyResult, error) {
+func (s *AIGrouping) applyReview(ctx context.Context, reviewID int64, outcome *AIGroupingReview) (AIGroupingApplyResult, error) {
 	snapshot, err := s.Review(ctx, reviewID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AIGroupingApplyResult{}, ErrAIGroupingNotFound
@@ -128,7 +132,7 @@ func (s *AIGrouping) ApplyReview(ctx context.Context, reviewID int64) (AIGroupin
 		return AIGroupingApplyResult{}, ErrAIGroupingNotPending
 	}
 	var result AIGroupingApplyResult
-	err = s.store.ExecTx(ctx, func(q *database.Queries) error {
+	err = s.store.WithAIGroupingWrite(ctx, func(q database.AIGroupingWrite) error {
 		if _, err := pendingAIGrouping(ctx, q, reviewID); err != nil {
 			return err
 		}
@@ -140,7 +144,7 @@ func (s *AIGrouping) ApplyReview(ctx context.Context, reviewID int64) (AIGroupin
 			if err != nil {
 				return err
 			}
-			_, err = applyAIGroupingReviewCollectionWithQueries(ctx, q, review, row)
+			_, err = applyAIGroupingCollection(ctx, q, review, row)
 			switch {
 			case errors.Is(err, ErrAIGroupingSeriesGone):
 				result.Skipped++
@@ -150,7 +154,10 @@ func (s *AIGrouping) ApplyReview(ctx context.Context, reviewID int64) (AIGroupin
 				result.Applied++
 			}
 		}
-		return finishAIGroupingIfReady(ctx, q, reviewID)
+		if err := finishAIGroupingIfReady(ctx, q, reviewID); err != nil {
+			return err
+		}
+		return captureAIGroupingOutcome(ctx, q, reviewID, outcome)
 	})
 	if err != nil {
 		return AIGroupingApplyResult{}, err
@@ -169,7 +176,7 @@ type EditAIGroupingCollection struct {
 
 func (s *AIGrouping) EditCollection(ctx context.Context, reviewID, collectionID int64, req EditAIGroupingCollection) (database.AiGroupingReviewCollection, error) {
 	var result database.AiGroupingReviewCollection
-	err := s.store.ExecTx(ctx, func(q *database.Queries) error {
+	err := s.store.WithAIGroupingWrite(ctx, func(q database.AIGroupingWrite) error {
 		_, _, err := pendingAICollection(ctx, q, reviewID, collectionID)
 		if err != nil {
 			return err
@@ -207,26 +214,34 @@ func (s *AIGrouping) EditCollection(ctx context.Context, reviewID, collectionID 
 	})
 	return result, err
 }
-func (s *AIGrouping) RejectCollection(ctx context.Context, reviewID, collectionID int64) error {
-	return s.store.ExecTx(ctx, func(q *database.Queries) error {
+
+func (s *AIGrouping) rejectCollection(ctx context.Context, reviewID, collectionID int64, outcome *AIGroupingReview) error {
+	return s.store.WithAIGroupingWrite(ctx, func(q database.AIGroupingWrite) error {
 		if _, _, err := pendingAICollection(ctx, q, reviewID, collectionID); err != nil {
 			return err
 		}
 		if err := q.MarkAIGroupingReviewCollectionRejected(ctx, collectionID); err != nil {
 			return err
 		}
-		return finishAIGroupingIfReady(ctx, q, reviewID)
+		if err := finishAIGroupingIfReady(ctx, q, reviewID); err != nil {
+			return err
+		}
+		return captureAIGroupingOutcome(ctx, q, reviewID, outcome)
 	})
 }
-func (s *AIGrouping) RejectReview(ctx context.Context, reviewID int64) error {
-	return s.store.ExecTx(ctx, func(q *database.Queries) error {
+
+func (s *AIGrouping) rejectReview(ctx context.Context, reviewID int64, outcome *AIGroupingReview) error {
+	return s.store.WithAIGroupingWrite(ctx, func(q database.AIGroupingWrite) error {
 		if _, err := pendingAIGrouping(ctx, q, reviewID); err != nil {
 			return err
 		}
 		if err := q.MarkAIGroupingReviewCollectionsRejected(ctx, reviewID); err != nil {
 			return err
 		}
-		return finalizeAIGroupingReviewStatus(ctx, q, reviewID)
+		if err := finalizeAIGroupingReviewStatus(ctx, q, reviewID); err != nil {
+			return err
+		}
+		return captureAIGroupingOutcome(ctx, q, reviewID, outcome)
 	})
 }
 func AIGroupingSeriesIDs(raw string) []int64 {
@@ -251,7 +266,7 @@ func AIGroupingSeriesIDs(raw string) []int64 {
 
 // aiGroupingLiveSeriesIDs 按给定顺序滤掉库里已不存在的系列。查询与写入必须在同一个事务里，
 // 否则中间被删掉的系列仍会撞上外键。
-func aiGroupingLiveSeriesIDs(ctx context.Context, q *database.Queries, ids []int64) ([]int64, error) {
+func aiGroupingLiveSeriesIDs(ctx context.Context, q database.AIGroupingWrite, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -272,7 +287,7 @@ func aiGroupingLiveSeriesIDs(ctx context.Context, q *database.Queries, ids []int
 	return live, nil
 }
 
-func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database.Queries, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
+func applyAIGroupingCollection(ctx context.Context, q database.AIGroupingWrite, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) (int64, error) {
 	seriesIDs := AIGroupingSeriesIDs(collection.SeriesIds)
 	name := strings.TrimSpace(collection.Name)
 	if name == "" || len(seriesIDs) == 0 {
@@ -330,7 +345,7 @@ func applyAIGroupingReviewCollectionWithQueries(ctx context.Context, q *database
 	return created.ID, nil
 }
 
-func finalizeAIGroupingReviewStatus(ctx context.Context, q *database.Queries, reviewID int64) error {
+func finalizeAIGroupingReviewStatus(ctx context.Context, q database.AIGroupingWrite, reviewID int64) error {
 	applied, err := q.CountAppliedAIGroupingReviewCollections(ctx, reviewID)
 	if err != nil {
 		return err
@@ -344,4 +359,63 @@ func finalizeAIGroupingReviewStatus(ctx context.Context, q *database.Queries, re
 		ID:     reviewID,
 	})
 	return err
+}
+
+// AIGroupingOutcome is the committed candidate set and whole review status for an action.
+type AIGroupingOutcome struct {
+	Snapshot            AIGroupingReview
+	CreatedCollectionID int64
+	Applied, Skipped    int
+}
+
+func captureAIGroupingOutcome(ctx context.Context, q database.AIGroupingWrite, id int64, outcome *AIGroupingReview) error {
+	review, err := q.GetAIGroupingReview(ctx, id)
+	if err != nil {
+		return err
+	}
+	rows, err := q.ListAIGroupingReviewCollections(ctx, id)
+	if err != nil {
+		return err
+	}
+	ids := []int64{}
+	for _, row := range rows {
+		ids = append(ids, AIGroupingSeriesIDs(row.SeriesIds)...)
+	}
+	series, err := q.GetSeriesNamesByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	library, err := q.GetLibrary(ctx, review.LibraryID)
+	if err != nil {
+		return err
+	}
+	*outcome = AIGroupingReview{Review: review, Collections: rows, Series: series, LibraryName: library.Name}
+	return nil
+}
+
+// ApplyCollection atomically creates manual membership and returns its committed adjudication.
+func (s *AIGrouping) ApplyCollection(ctx context.Context, reviewID, collectionID int64) (AIGroupingOutcome, error) {
+	var out AIGroupingOutcome
+	id, err := s.applyCollection(ctx, reviewID, collectionID, &out.Snapshot)
+	out.CreatedCollectionID = id
+	return out, err
+}
+
+// ApplyReview applies surviving pending candidates and returns the complete review result.
+func (s *AIGrouping) ApplyReview(ctx context.Context, reviewID int64) (AIGroupingOutcome, error) {
+	var out AIGroupingOutcome
+	result, err := s.applyReview(ctx, reviewID, &out.Snapshot)
+	out.Applied = result.Applied
+	out.Skipped = result.Skipped
+	return out, err
+}
+func (s *AIGrouping) RejectCollection(ctx context.Context, reviewID, collectionID int64) (AIGroupingOutcome, error) {
+	var out AIGroupingOutcome
+	err := s.rejectCollection(ctx, reviewID, collectionID, &out.Snapshot)
+	return out, err
+}
+func (s *AIGrouping) RejectReview(ctx context.Context, reviewID int64) (AIGroupingOutcome, error) {
+	var out AIGroupingOutcome
+	err := s.rejectReview(ctx, reviewID, &out.Snapshot)
+	return out, err
 }

@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 106、107、108、109、179。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -27,3 +27,8 @@
 - Final added HTTP failure-classification assertion passed in `.tmp/ticket19-resume-api.log` (`TestExternal`, 7.731s). Go 1.26.10 final lint returned `0 issues.` in `.tmp/ticket19-resume-lint.log`; `gofmt -l ./cmd ./internal` and `git diff --check` were empty.
 - `.tmp/ticket19-final-race.log` records diskjobs race passing (8.527s), while external/API race executables were blocked by Application Control; those blocked executions are not passing evidence. Existing Unix symlink tests skip on Windows; no other-OS runtime execution is claimed.
 - Pending integration merge and verification; status remains ready-for-agent until the merger closes the ticket.
+
+### Integration verification (2026-10-28)
+
+- Merged through acfe487bb974f3b7aaccfe54d4303917d08b3b0c after the collection and library-drain integrations. Main-tree full external race passed 15.517s, diskjobs full race passed 15.561s, and combined external/delete/download HTTP race passed 45.801s. Initial external and API race launches were blocked by Application Control; the recorded retries actually executed and passed.
+- External/transfer/delete frontend consumers passed 3 files / 16 tests, with real frontend lint and build passing. Final Go 1.26.10 lint reported 0 issues, gofmt emitted no files, and diff whitespace checks passed. Logs: .tmp/merge-wave9-external-owner.log, .tmp/merge-wave9-external-retry.log, .tmp/merge-wave9-external-api-retry.log, .tmp/merge-wave9-external-web.log, .tmp/merge-wave9-web-lint.log, .tmp/merge-wave9-web-build.log and .tmp/merge-wave9-final-lint.log. Platform-specific Unix symlink skips remain explicit; no other-OS execution is inferred.
