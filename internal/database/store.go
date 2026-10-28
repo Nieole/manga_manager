@@ -28,6 +28,7 @@ var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
 	WithCollectionWrite(context.Context, func(CollectionWrite) error) error
+	WithReadingListWrite(context.Context, func(ReadingListWrite) error) error
 	WithSmartSnapshot(context.Context, func(SmartSnapshotWrite) error) error
 	WithAIGroupingWrite(context.Context, func(AIGroupingWrite) error) error
 	WithAIGroupingGenerationWrite(context.Context, func(AIGroupingGenerationWrite) error) error

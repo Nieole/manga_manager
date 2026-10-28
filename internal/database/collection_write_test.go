@@ -60,4 +60,14 @@ func TestCollectionTransactionCapabilitiesDoNotExposeSQLOrUnrelatedEdits(t *test
 		t.Fatal(err)
 	}
 
+	if err := store.WithReadingListWrite(context.Background(), func(tx database.ReadingListWrite) error {
+		assertNoSQL(tx)
+		if _, ok := tx.(database.CollectionWrite); ok {
+			t.Fatal("list writer exposes unrelated collection edits")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 }
