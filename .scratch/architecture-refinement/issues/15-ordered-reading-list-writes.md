@@ -25,3 +25,5 @@
 - Capability test red: `.tmp/ticket15-capability-red.log` shows the unavailable narrow capability. Green capability/lifecycle/HTTP consumers actually executed database 4.278s, organize 4.757s and API 7.427s (`.tmp/ticket15-first-green.log`). Existing real SQLite and HTTP cases cover duplicate member identity, partial and invalid reorder rollback, request limits, reader isolation and continuation navigation.
 - Full database 15.751s and organize 4.466s passed (`.tmp/ticket15-full-go.log`). Related owner/API race regressions actually passed 8.943s / 19.355s (`.tmp/ticket15-race.log`). Existing reading-list page navigation, selection and response-generation regressions passed 3 tests (`.tmp/ticket15-page.log`). Frontend production code and public contracts were unchanged.
 - Go lint reported `0 issues.` (`.tmp/ticket15-lint.log`); gofmt and whitespace checks were clean. SQL and generated targets were unchanged. Integration closure remains pending.
+
+- Full API suite completed successfully in 130.249s (.tmp/ticket15-full-go.log); the full affected-package sweep exited 0.
