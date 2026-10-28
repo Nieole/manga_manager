@@ -4,7 +4,7 @@
 
 **Blocked by:** 22: 空闲删库与占用拒绝。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 72、73、74、75、76、180。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -30,3 +30,9 @@
 - Final delivery checks: frontend consumer tests 9/9, frontend lint/build, Go 1.26.10 lint 0 issues, gofmt empty output, and git diff whitespace validation all passed (ticket24-ui-final-consumers.log, ticket24-ui-lint-delivery.log, ticket24-ui-build-delivery.log, ticket24-lint-final.log, ticket24-format-final.log).
 
 - Merged integration c5c182c in 319962f. The CHANGELOG conflict resolution retained the library-management, external-transfer, reading-list and AI-review entries and removed inherited conflict markers. After-merge executions passed: complete libraries suite 7.453s, frontend form/navigation consumers 9/9, actual frontend build, Go 1.26.10 lint 0 issues, and empty gofmt output (.tmp/ticket24-owner-merged.log, ticket24-ui-merged.log, ticket24-ui-build-merged.log, ticket24-lint-merged.log, ticket24-format-merged.log).
+
+### Integration verification (2026-10-28)
+
+- Merged through db30546579ee8529c9fff87b7bd307fcf3c15be6. Main-tree complete libraries race passed 22.509s and runtime race passed 15.478s. Library form, management and deletion consumers passed 3 files / 14 tests. Final Go lint reported 0 issues; gofmt emitted no files (.tmp/merge-wave12-save-owner.log, merge-wave12-save-web.log and merge-wave12-final-lint.log).
+- Main-tree library HTTP race launches were blocked twice by Application Control, and the ordinary retry was also blocked; no main-tree library HTTP execution is claimed (.tmp/merge-wave12-save-api.log, merge-wave12-save-api-retry.log, merge-wave12-save-api-ordinary.log). The implementation full API stable executable actually passed as recorded above; its API race and full database race fixture timeout remain unpassed, not inferred from other gates.
+- The inherited changelog conflict markers were removed by this merge while retaining all behavior entries. Independent commit fbcc57c normalized the architecture queue and metadata type EOF. Whole-baseline git diff --check and tracked conflict-marker scan now pass; this corrects the earlier working-tree-only check gap.
