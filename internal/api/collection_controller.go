@@ -43,7 +43,7 @@ func collectionUseCaseError(w http.ResponseWriter, err error, fallback string) {
 	switch {
 	case errors.Is(err, organize.ErrCollectionNameTaken):
 		status = http.StatusConflict
-	case errors.Is(err, organize.ErrCollectionNotFound), errors.Is(err, organize.ErrCollectionMemberNotFound):
+	case errors.Is(err, organize.ErrCollectionNotFound), errors.Is(err, organize.ErrCollectionMemberNotFound), errors.Is(err, organize.ErrCollectionSeriesNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, organize.ErrCollectionReadOnly):
 		status = http.StatusForbidden

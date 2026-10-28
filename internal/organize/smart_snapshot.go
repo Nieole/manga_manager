@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/reading"
 )
 
 var ErrSmartSnapshotEmpty = errors.New("Smart collection has no members to snapshot")
@@ -49,7 +50,11 @@ func snapshotDetails(filter SmartFilter, req SmartSnapshotRequest) (string, stri
 }
 
 // PreviewSnapshot reports advisory safety signals; Snapshot rechecks against its transaction.
-func (s *SmartCollections) PreviewSnapshot(ctx context.Context, id, userID int64, req SmartSnapshotRequest, previewLimit int) (SmartSnapshotPreview, error) {
+func (s *SmartCollections) PreviewSnapshot(ctx context.Context, id int64, subject reading.Subject, req SmartSnapshotRequest, previewLimit int) (SmartSnapshotPreview, error) {
+	userID, err := subject.UserID()
+	if err != nil {
+		return SmartSnapshotPreview{}, err
+	}
 	filter, err := s.Get(ctx, id)
 	if err != nil {
 		return SmartSnapshotPreview{}, err
@@ -76,9 +81,13 @@ func (s *SmartCollections) PreviewSnapshot(ctx context.Context, id, userID int64
 
 // Snapshot reads conditions and members under the same write transaction as creation.
 // The resulting identity is owned by manual collection use cases and is never resynchronized.
-func (s *SmartCollections) Snapshot(ctx context.Context, id, userID int64, req SmartSnapshotRequest) (SmartSnapshotResult, error) {
+func (s *SmartCollections) Snapshot(ctx context.Context, id int64, subject reading.Subject, req SmartSnapshotRequest) (SmartSnapshotResult, error) {
+	userID, err := subject.UserID()
+	if err != nil {
+		return SmartSnapshotResult{}, err
+	}
 	var result SmartSnapshotResult
-	err := s.store.ExecTx(ctx, func(q *database.Queries) error {
+	err = s.store.WithSmartSnapshot(ctx, func(q database.SmartSnapshotWrite) error {
 		raw, err := q.GetSmartFilterByID(ctx, id)
 		if err != nil {
 			return err
@@ -100,7 +109,7 @@ func (s *SmartCollections) Snapshot(ctx context.Context, id, userID int64, req S
 			return err
 		}
 		for _, row := range rows {
-			if _, err := q.AddSeriesToCollection(ctx, database.AddSeriesToCollectionParams{CollectionID: created.ID, SeriesID: row.ID}); err != nil {
+			if _, err := addCollectionMember(ctx, q, created.ID, row.ID); err != nil {
 				return err
 			}
 		}
