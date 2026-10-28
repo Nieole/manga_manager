@@ -11,7 +11,8 @@ import { MemoryRouter } from 'react-router-dom';
 
 import { messages as enUS } from '../i18n/locales/en-US';
 import { messages as zhCN } from '../i18n/locales/zh-CN';
-import { SidebarTaskBubble, type TaskBubbleEntry } from './SidebarTaskBubble';
+import { SidebarTaskBubble } from './SidebarTaskBubble';
+import type { TaskBubbleEntry } from '../features/task-observation/types';
 
 // 复刻 fillTemplate 的占位符替换与 translateInLocale 的缺键行为：查不到就把 key 原样吐出来，
 // 裸 key 因此能被断言抓住。中文没有复数形态，这里不必复刻 selectPluralForm。
