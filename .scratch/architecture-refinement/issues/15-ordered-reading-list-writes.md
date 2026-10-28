@@ -4,7 +4,7 @@
 
 **Blocked by:** 03: 藏书编排的读者查询。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 27、31、39、56、58。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -27,3 +27,8 @@
 - Go lint reported `0 issues.` (`.tmp/ticket15-lint.log`); gofmt and whitespace checks were clean. SQL and generated targets were unchanged. Integration closure remains pending.
 
 - Full API suite completed successfully in 130.249s (.tmp/ticket15-full-go.log); the full affected-package sweep exited 0.
+
+### Integration verification (2026-10-28)
+
+- Merged through 5b205d58e699be39cc46a9179f38eb9019f17904. The only merge conflict was the changelog insertion point; both transfer and reading-list behavior entries were retained. Main-tree reading-list/subject owner race actually passed organize 12.167s and reading 11.937s; the private database-capability race passed 7.067s. Reading-list HTTP race passed 19.770s, covering permissions, subject isolation, ordering and continuation targets. Page regressions passed all 3 tests.
+- Initial database/API race launches were blocked by Application Control; the named retries actually ran and passed. Final Go 1.26.10 lint reported 0 issues, gofmt emitted no files, and diff whitespace checks passed. Raw logs: .tmp/merge-wave11-list-owner.log, merge-wave11-list-database-retry.log, merge-wave11-list-api-retry.log, merge-wave11-list-web.log and merge-wave11-final-lint.log.
