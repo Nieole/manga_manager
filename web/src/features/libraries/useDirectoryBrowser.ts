@@ -1,9 +1,3 @@
-/**
- * 本文件是应用外壳的目录浏览 hook，为「新增/编辑资料库」弹窗的服务器端目录选择器
- * 提供当前目录、父目录、子目录列表与驱动器列表状态，以及打开/导航目录的请求逻辑。
- * 维护时应保持与 /api/browse-dirs 响应形状一致。
- */
-
 import { useState } from 'react';
 import { apiClient } from '../../api/client';
 import type { BrowseDirEntry, BrowseDrive } from './types';

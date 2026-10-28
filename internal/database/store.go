@@ -27,6 +27,7 @@ var schemaHandwrittenSQL string
 var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
+	LibraryHasRecords(context.Context, int64) (bool, error)
 	WithCollectionWrite(context.Context, func(CollectionWrite) error) error
 	WithSmartSnapshot(context.Context, func(SmartSnapshotWrite) error) error
 	AccumulateReadingTimeForBook(context.Context, int64, int64, int64, string) error

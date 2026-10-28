@@ -1,11 +1,3 @@
-/**
- * 资料库表单（新增/编辑）的共享状态：逐字段更新与 reset/setPath/setScanFormats 都只精确改
- * 自己负责的字段，不做整份覆盖，避免清掉用户已填的其他内容。
- *
- * 只抽「表单状态」，不抽「提交」：两条路的提交在语义上确实不同（见 Layout 里的注释），
- * 硬合成一个带 mode 分支的函数只会把差异藏进 if 里，不会让它更清楚。
- */
-
 import { useCallback, useMemo, useState } from 'react';
 
 export interface LibraryFormValues {

@@ -4,8 +4,8 @@ import type { RelocationSourceRoots, RelocationOperation, RelocationDetail, Relo
 import { useI18n } from '../../i18n/LocaleProvider';
 import { ModalShell } from '../ui/ModalShell';
 import { modalGhostButtonClass, modalPrimaryButtonClass, modalSectionClass } from '../ui/modalStyles';
-import { DirectoryPicker } from './DirectoryPicker';
-import { useDirectoryBrowser } from './useDirectoryBrowser';
+import { DirectoryPicker } from '../../features/libraries/DirectoryPicker';
+import { useDirectoryBrowser } from '../../features/libraries/useDirectoryBrowser';
 import { useRelocationOperation } from './useRelocationOperation';
 
 interface Props {

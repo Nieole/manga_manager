@@ -1,6 +1,9 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'librarySave.unavailable': 'The library is in use or its root is reserved. Wait for access to close and retry; your form has been kept.',
+    'librarySave.refreshFailed': 'Library saved, but navigation could not refresh. Retry the library list; saving again is unnecessary.',
+    'librarySave.savedWarning': 'Library saved. Watching or the initial scan could not start. Check Tasks and library settings; scan admission is not scan completion.',
     'libraryDelete.busy': 'The library is still in use and was not deleted. Finish the listed work and retry.',
     'libraryDelete.timedOut': 'The wait limit was reached. The library was not deleted. Retry after access closes.',
     'libraryDelete.cancelled': 'The deletion request was cancelled. The library was not deleted.',
