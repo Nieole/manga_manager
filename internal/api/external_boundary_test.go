@@ -32,4 +32,19 @@ func TestExternalSessionHTTPRejectsOtherLibraryWithConflictCode(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || response.Code != "external_root_overlap" {
 		t.Fatalf("conflict: %d %s", rec.Code, rec.Body.String())
 	}
+	if _, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "Unresolvable", Path: "relative-root", ScanMode: "none", ScanFormats: "cbz", ScanInterval: 60}); err != nil {
+		t.Fatal(err)
+	}
+	payload, err = json.Marshal(map[string]string{"external_path": t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	c.createExternalLibrarySession(rec, requestWithRouteParam(http.MethodPost, "/external", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusBadRequest || response.Code != "external_root_unresolvable" {
+		t.Fatalf("unresolvable: %d %s", rec.Code, rec.Body.String())
+	}
 }
