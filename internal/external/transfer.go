@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/taskcontrol"
 )
 
@@ -29,10 +30,17 @@ type TransferProgress struct {
 	Result      TransferResult
 }
 
-// Transfer owns staging, cancellation, publication and session projection for one
-// prepared plan. Cancellation is observed between IO calls; it cannot interrupt
-// an operating-system call already blocked in a filesystem driver.
-func (m *Manager) Transfer(ctx context.Context, libraryID int64, sessionID string, plan TransferPlan, progress func(TransferProgress)) (TransferResult, error) {
+// TransferWork supplies short IO leases for actual reads and writes. Implementations
+// must release a lease before waiting for pause or acquiring a lease for another path.
+type TransferWork interface {
+	Disk(context.Context, diskwork.Work, func() error) error
+}
+
+// Transfer owns staging, pause/cancellation, publication and session projection for
+// one prepared plan. Blocks release IO leases before waiting for pause; resume
+// rechecks file facts and destination eligibility before continuing the same copy.
+// Control cannot interrupt an OS call already blocked in a filesystem driver.
+func (m *Manager) Transfer(ctx context.Context, libraryID int64, sessionID string, plan TransferPlan, work TransferWork, progress func(TransferProgress)) (TransferResult, error) {
 	var result TransferResult
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -54,7 +62,7 @@ func (m *Manager) Transfer(ctx context.Context, libraryID int64, sessionID strin
 			}
 		}
 		notify(0, 0)
-		existing, err := copyFile(ctx, op.SourcePath, op.Destination, createdDirs, notify, func() error {
+		existing, err := copyFile(ctx, op.SourcePath, op.Destination, createdDirs, work, notify, func() error {
 			return m.ValidateOperation(ctx, libraryID, sessionID, op)
 		})
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

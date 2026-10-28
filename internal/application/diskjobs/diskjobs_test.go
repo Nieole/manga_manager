@@ -41,7 +41,7 @@ func TestCreateExternalSessionCompletesEmptyScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	tasks := taskstore.New(store.(*database.SqlStore).DB())
-	engine := task.New(task.Config{Store: tasks, RunBackground: func(fn func()) { fn() }})
+	engine := task.New(task.Config{Store: tasks, DiskWork: diskwork.NewRunner(func() config.Config { return config.Config{} }, storageio.NewScheduler()), RunBackground: func(fn func()) { fn() }})
 	manager := external.NewManager(store, time.Hour)
 	service := diskjobs.New(application.NewRuns(engine, nil), store, manager, diskjobs.Effects{})
 	result, err := service.CreateExternalSession(ctx, lib.ID, t.TempDir(), false)
@@ -94,7 +94,7 @@ func TestTransferExternalCopiesAndRefreshesSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	tasks := taskstore.New(store.(*database.SqlStore).DB())
-	engine := task.New(task.Config{Store: tasks, RunBackground: func(fn func()) { fn() }})
+	engine := task.New(task.Config{Store: tasks, DiskWork: diskwork.NewRunner(func() config.Config { return config.Config{} }, storageio.NewScheduler()), RunBackground: func(fn func()) { fn() }})
 	manager := external.NewManager(store, time.Hour)
 	service := diskjobs.New(application.NewRuns(engine, nil), store, manager, diskjobs.Effects{})
 	session, err := service.CreateExternalSession(ctx, lib.ID, destination, false)

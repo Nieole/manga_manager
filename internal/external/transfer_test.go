@@ -28,7 +28,7 @@ func TestTransferCancellationKeepsCommittedBooksAndRemovesCurrentStaging(t *test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var staged []int64
-	result, err := m.Transfer(ctx, lib.ID, session, plan, func(p TransferProgress) {
+	result, err := m.Transfer(ctx, lib.ID, session, plan, nil, func(p TransferProgress) {
 		if p.Operation.BookID == plan.Operations[1].BookID && p.CopiedBytes > 0 {
 			staged = append(staged, p.CopiedBytes)
 			if p.CopiedBytes >= p.TotalBytes {
@@ -86,7 +86,7 @@ func TestTransferCancellationAfterPublicationRetainsCommitFacts(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	result, err := m.Transfer(ctx, lib.ID, session, plan, func(p TransferProgress) {
+	result, err := m.Transfer(ctx, lib.ID, session, plan, nil, func(p TransferProgress) {
 		if len(p.Result.CommittedBookIDs) == 1 {
 			cancel()
 		}
@@ -109,7 +109,7 @@ func TestTransferRechecksRegisteredRootsBeforePublishingCurrentBook(t *testing.T
 		t.Fatal(err)
 	}
 	registered := false
-	_, err = m.Transfer(context.Background(), lib.ID, session, plan, func(p TransferProgress) {
+	_, err = m.Transfer(context.Background(), lib.ID, session, plan, nil, func(p TransferProgress) {
 		if p.CopiedBytes == 0 || registered {
 			return
 		}
@@ -137,7 +137,7 @@ func TestTransferPreservesDestinationCreatedDuringCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	created := false
-	result, err := m.Transfer(context.Background(), lib.ID, session, plan, func(p TransferProgress) {
+	result, err := m.Transfer(context.Background(), lib.ID, session, plan, nil, func(p TransferProgress) {
 		if p.CopiedBytes > 0 && !created {
 			created = true
 			if err := os.WriteFile(p.Operation.Destination, []byte("other writer's complete book"), 0644); err != nil {
@@ -173,7 +173,7 @@ func TestTransferFailureKeepsSuccessfulRangeAndSessionProjection(t *testing.T) {
 	if err := os.Remove(plan.Operations[1].SourcePath); err != nil {
 		t.Fatal(err)
 	}
-	result, err := m.Transfer(context.Background(), lib.ID, session, plan, nil)
+	result, err := m.Transfer(context.Background(), lib.ID, session, plan, nil, nil)
 	if !errors.Is(err, os.ErrNotExist) || len(result.Failures) != 1 || len(result.CommittedBookIDs) != 2 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
