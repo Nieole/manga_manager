@@ -4,7 +4,7 @@
 
 **Blocked by:** 22: 空闲删库与占用拒绝。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 79、80、81、82、83、84、85、86、87、88、89。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -28,3 +28,8 @@
 - Execution limit: API race executable remains blocked by Windows Application Control, including the resumed focused retry (`ticket23-api-race-resume-retry.log`). No race result is inferred from that failure; integration should rerun the focused delete HTTP race tests. Ordinary full API and both relevant owner/engine race seams above actually executed.
 - Integration status remains ready-for-agent until merger validation and closure.
 - Merged integration 82c4e01 into this implementation (7c6f110); resolved only CHANGELOG overlap and retained both collection/publication entries. After-merge actual delete HTTP suite passed 18.812s, Go 1.26.10 lint reported 0 issues, gofmt output remained empty, and diff whitespace validation passed (.tmp/ticket23-api-after-merge.log, ticket23-lint-after-merge.log, ticket23-format-after-merge.log).
+
+### Integration verification (2026-10-28)
+
+- Merged through 49313af6d0dcbc85172e3ec36dc1f300587e457c. Main-tree delete HTTP race actually passed 30.846s, libraries owner full race passed 19.331s, and final drain/eligibility/released-reservation engine race passed 4.762s. The actual deletion dialog passed all 5 consumer tests.
+- Logs: .tmp/merge-wave9-delete-api.log, .tmp/merge-wave9-delete-owner.log, .tmp/merge-wave9-task-retry.log and .tmp/merge-wave9-delete-web.log. Initial full task race launch was blocked by Application Control; the focused retry actually ran and passed. This supplements the implementer full task suite and resolves the previously unexecuted delete HTTP race gate.
