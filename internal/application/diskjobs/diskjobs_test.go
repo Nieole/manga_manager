@@ -271,7 +271,7 @@ func (r *diskRig) ready(t *testing.T) external.SessionSnapshot {
 type discardProgress struct{}
 
 func (discardProgress) Advance(int, int) {}
-func TestExternalDestinationSharesMigrationAccess(t *testing.T) {
+func TestRegisteredExternalDestinationIsRejectedBeforeMigrationAdmission(t *testing.T) {
 	rig := newDiskRig(t, func(fn func()) { fn() })
 	ctx := context.Background()
 	session := rig.ready(t)
@@ -285,7 +285,7 @@ func TestExternalDestinationSharesMigrationAccess(t *testing.T) {
 	}
 	defer release()
 	_, err = rig.service.TransferExternal(ctx, rig.lib.ID, session.SessionID, []int64{rig.series.ID})
-	if !errors.Is(err, task.ErrLibraryUnavailable) {
+	if !errors.Is(err, external.ErrExternalPathInsideLibrary) {
 		t.Fatalf("transfer accessed protected destination: %v", err)
 	}
 	if _, err = os.Stat(filepath.Join(rig.destination, "Series", "book.cbz")); !errors.Is(err, os.ErrNotExist) {

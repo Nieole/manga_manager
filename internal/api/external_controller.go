@@ -56,6 +56,14 @@ func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http
 
 	launch, err := c.diskJobs.CreateExternalSession(r.Context(), libraryID, req.ExternalPath, req.IgnoreExtension)
 	if err != nil {
+		if errors.Is(err, external.ErrExternalPathInsideLibrary) {
+			jsonResponse(w, http.StatusBadRequest, map[string]string{"code": "external_root_overlap", "error": "External directory must be outside every registered library, and must not contain a library"})
+			return
+		}
+		if errors.Is(err, external.ErrPathUnresolvable) {
+			jsonResponse(w, http.StatusBadRequest, map[string]string{"code": "external_root_unresolvable", "error": "Cannot safely resolve the directory boundary; check paths and permissions"})
+			return
+		}
 		var launchErr *diskjobs.LaunchError
 		if errors.As(err, &launchErr) {
 			writeTaskLaunchError(w, err, "An external library scan is already running", "Failed to start external library scan")
@@ -192,6 +200,10 @@ func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Re
 			return
 		}
 		switch {
+		case errors.Is(err, external.ErrExternalPathInsideLibrary):
+			jsonResponse(w, http.StatusConflict, map[string]string{"code": "external_root_overlap", "error": "External directory overlaps a registered library; create a new session outside all libraries"})
+		case errors.Is(err, external.ErrPathUnresolvable):
+			jsonResponse(w, http.StatusConflict, map[string]string{"code": "external_root_unresolvable", "error": "Cannot safely resolve the external directory boundary"})
 		case errors.Is(err, external.ErrSessionNotFound):
 			jsonError(w, http.StatusNotFound, "External session not found")
 		case errors.Is(err, external.ErrSessionNotReady):

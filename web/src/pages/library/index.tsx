@@ -30,7 +30,7 @@ import { useSmartFilters } from './hooks/useSmartFilters';
 import { smartFilterToSnapshot } from './hooks/smartFilterNormalize';
 import { useLibraryFilterOptions } from './hooks/useLibraryFilterOptions';
 import { useLibraryCardActions } from './hooks/useLibraryCardActions';
-import { useLibraryTransfer } from './hooks/useLibraryTransfer';
+import { useLibraryTransfer } from '../../features/external-library/useLibraryTransfer';
 
 const ALL_STATUSES = ['completed', 'ongoing', 'cancelled', 'hiatus'];
 const PAGINATION_MODE_KEY = 'manga_manager_pagination_mode';
