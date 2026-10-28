@@ -4,7 +4,7 @@
 
 **Blocked by:** 11: 人工合集与智能快照完整用例。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 56、57、58、175、176、178。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -28,3 +28,8 @@
 - Frontend full suite: 99 files / 933 tests, lint and production build passed (`.tmp/ticket12-full-ui.log`, `ticket12-ui-lint.log`, `ticket12-ui-build.log`). Final Go lint: `0 issues.` (`.tmp/ticket12-final-lint.log`); gofmt and diff whitespace checks clean. SQL and generated contract targets were unchanged. Integration closure remains pending.
 
 - Merged integration f76b470 before handoff; retained both changelog entries. Post-merge focused database / organize / API regressions actually passed 5.718s / 5.248s / 7.710s (.tmp/ticket12-merged-consumers.log); page tests passed 4/4 (.tmp/ticket12-merged-ui.log). The 933-test full UI sweep predates merging tickets 19/23 and was based on 82c4e01; this ticket deletes no frontend test and adds one test to the existing three. It is not a post-merge full-suite count.
+
+### Integration verification (2026-10-28)
+
+- Merged through e2f769ae360e445554ba611c9e33a9884cf2732e. Main-tree AI grouping owner race passed 13.910s and the database narrow-capability race passed 7.706s (.tmp/merge-wave10-owner.log). Whole frontend suite on the integrated result passed 99 files / 937 tests, followed by real lint and production build (.tmp/merge-wave10-web.log, merge-wave10-web-lint.log, merge-wave10-web-build.log). Go 1.26.10 lint reported 0 issues; gofmt and diff whitespace checks were clean.
+- Main-tree API ordinary/race launches were blocked by Application Control. A compiled stable API race launcher then remained pending for over two minutes without a test process or output; the exact owned pending launcher was stopped (.tmp/merge-wave10-api-stable-limit.log). These attempts are unexecuted, not passes. Actual API execution remains the implementer full API 104.921s, focused race 17.835s, and post-merge focused ordinary 7.710s recorded above; the integrated owner/database race and complete frontend consumer gates passed as recorded here.
