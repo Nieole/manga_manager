@@ -1,5 +1,3 @@
-// 本文件由 controller.go 拆分而来，属于后端 API 层的看板统计子域，负责仪表盘结构/易变统计的缓存（失效/预热/分层加载）与看板、活跃热力图、最近阅读等只读接口。
-
 package api
 
 import (
@@ -13,28 +11,14 @@ import (
 	"time"
 )
 
-// dashboardActiveDaysWindow 是 active_days_7 的回看天数，全局与每用户两条路径共用，保证口径一致。
-const dashboardActiveDaysWindow = 7
-
-func cloneDashboardStats(stats *database.DashboardStats) *database.DashboardStats {
-	if stats == nil {
-		return nil
-	}
-	cloned := *stats
-	if stats.LibrarySizes != nil {
-		cloned.LibrarySizes = append([]database.LibrarySize(nil), stats.LibrarySizes...)
-	}
-	return &cloned
-}
-
 // invalidateDashboardStatsCache / invalidateVolatileStatsCache 是 statsCache 的薄委托（保留方法名以维持
 // 各处失效调用点不变）。缓存的状态与加载逻辑已抽入 stats_cache.go。
 func (c *Controller) invalidateDashboardStatsCache(reason string) {
-	c.stats.invalidateAll(reason)
+	c.stats.InvalidateAll(reason)
 }
 
 func (c *Controller) invalidateVolatileStatsCache(reason string) {
-	c.stats.invalidateVolatile(reason)
+	c.stats.InvalidateVolatile(reason)
 }
 
 // warmDashboardStatsCacheAsync 经受生命周期管理的后台 goroutine 预热仪表盘缓存（故留在 Controller）。
@@ -42,7 +26,7 @@ func (c *Controller) warmDashboardStatsCacheAsync(reason string) {
 	c.runBackground(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := c.stats.loadDashboard(ctx, c.store); err != nil {
+		if _, err := c.stats.LoadGlobal(ctx, c.store); err != nil {
 			slog.Debug("Failed to warm dashboard stats cache", "reason", reason, "error", err)
 		}
 	})
@@ -52,20 +36,15 @@ func (c *Controller) warmDashboardStatsCacheAsync(reason string) {
 // 阅读类统计（read_books / active_days_7）是每用户的，登录后按当前用户改写——共享缓存只存全局值，
 // 每用户值不能进那份缓存，否则会被别的用户读到。
 func (c *Controller) getDashboardStats(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	stats, err := c.stats.loadDashboard(ctx, c.store)
+	subject, err := c.currentReadingSubject(r)
 	if err != nil {
-		slog.Error("GetDashboardStats failed", "error", err)
-		jsonError(w, http.StatusInternalServerError, "Failed to get dashboard stats")
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	if uid := c.currentUserID(r); uid > 0 {
-		if n, e := c.store.GetUserReadBooksCount(ctx, uid); e == nil {
-			stats.ReadBooks = int(n)
-		}
-		if n, e := c.store.GetUserActiveDays(ctx, uid, dashboardActiveDaysWindow); e == nil {
-			stats.ActiveDays7 = n
-		}
+	stats, err := c.stats.Load(r.Context(), c.store, subject)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to get dashboard stats")
+		return
 	}
 	jsonResponse(w, http.StatusOK, stats)
 }

@@ -5,8 +5,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"manga-manager/internal/seriesreview"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -23,26 +24,17 @@ func (c *Controller) getSeriesReview(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
 		return
 	}
-	uid := c.currentUserID(r)
-	if uid == 0 {
-		jsonResponse(w, http.StatusOK, seriesReviewResponse{Exists: false})
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	rv, found, err := c.store.GetUserSeriesReview(r.Context(), uid, seriesID)
+	out, err := seriesreview.New(c.store).Get(r.Context(), subject, seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load review")
 		return
 	}
-	if !found {
-		jsonResponse(w, http.StatusOK, seriesReviewResponse{Exists: false})
-		return
-	}
-	resp := seriesReviewResponse{Exists: true, Review: rv.Review, UpdatedAt: &rv.UpdatedAt}
-	if rv.Rating.Valid {
-		v := rv.Rating.Float64
-		resp.Rating = &v
-	}
-	jsonResponse(w, http.StatusOK, resp)
+	jsonResponse(w, http.StatusOK, seriesReviewResponse(out))
 }
 
 func (c *Controller) putSeriesReview(w http.ResponseWriter, r *http.Request) {
@@ -59,33 +51,21 @@ func (c *Controller) putSeriesReview(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if req.Rating != nil && (*req.Rating < 0 || *req.Rating > 5) {
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	out, err := seriesreview.New(c.store).Save(r.Context(), subject, seriesID, req.Rating, req.Review)
+	if errors.Is(err, seriesreview.ErrRating) {
 		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "review.rating_range"))
 		return
 	}
-	uid := c.currentUserID(r)
-	if uid == 0 {
-		jsonResponse(w, http.StatusOK, seriesReviewResponse{Exists: false})
-		return
-	}
-	review := strings.TrimSpace(req.Review)
-	// 评分与短评都为空 = 清空该条短评。
-	if req.Rating == nil && review == "" {
-		if err := c.store.DeleteUserSeriesReview(r.Context(), uid, seriesID); err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to save review")
-			return
-		}
-		jsonResponse(w, http.StatusOK, seriesReviewResponse{Exists: false})
-		return
-	}
-	if err := c.store.UpsertUserSeriesReview(r.Context(), uid, seriesID, req.Rating, review); err != nil {
+	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to save review")
 		return
 	}
-	resp := seriesReviewResponse{Exists: true, Review: review, Rating: req.Rating}
-	now := time.Now()
-	resp.UpdatedAt = &now
-	jsonResponse(w, http.StatusOK, resp)
+	jsonResponse(w, http.StatusOK, seriesReviewResponse(out))
 }
 
 func (c *Controller) deleteSeriesReview(w http.ResponseWriter, r *http.Request) {
@@ -94,11 +74,14 @@ func (c *Controller) deleteSeriesReview(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
 		return
 	}
-	if uid := c.currentUserID(r); uid > 0 {
-		if err := c.store.DeleteUserSeriesReview(r.Context(), uid, seriesID); err != nil {
-			jsonError(w, http.StatusInternalServerError, "Failed to delete review")
-			return
-		}
+	subject, err := c.currentReadingSubject(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
+		return
+	}
+	if err := seriesreview.New(c.store).Delete(r.Context(), subject, seriesID); err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to delete review")
+		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
