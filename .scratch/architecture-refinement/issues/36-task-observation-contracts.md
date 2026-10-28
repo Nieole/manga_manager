@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 155、162、163、179。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -25,3 +25,8 @@
 - This is an ownership refactor with no new product behavior; existing consumer regressions verify unchanged behavior rather than mirrored static file-location tests. Focused task observation hooks, TaskCenter and bubbles passed 121 tests in 4 files (`.tmp/ticket36-consumers.log`). Full frontend passed 100 files / 939 tests, lint and production builds (`ticket36-full-ui.log`, `ticket36-lint-ui.log`, `ticket36-build-final.log`).
 - Full API executed successfully in 132.965s (`.tmp/ticket36-go.log`). Taskstore race executed successfully in 12.672s (`ticket36-race.log`). Final SSE/push/live/snapshot consumer regressions after the publish-adapter move actually passed 9.018s (`ticket36-final-transport-retry.log`). Task package executables and some intermediate API/tsgen launches were blocked by Windows Application Control and are not counted as passes.
 - The compiled generator actually executed successfully (`.tmp/ticket36-tsgen-final.log`, 24 types); `web/src/api/generated.ts` has no diff. Final Go lint reported `0 issues.` (`ticket36-lint-handoff.log`), gofmt and whitespace checks were clean. Integration closure remains pending.
+
+### Integration verification (2026-10-28)
+
+- Merged through c5c182c713dcb660b169c119667ab9e2093dd791. Main-tree full task race passed 2.301s, full taskstore race passed 10.198s, and combined Task/Run/Push/SSE HTTP race actually passed 148.976s. Core task-observation, TaskCenter, bubble and reconnect consumers passed 5 files / 124 tests.
+- Go lint reported 0 issues and gofmt emitted no files. The actual tsgen execution generated 24 types with no generated.ts drift. Logs: .tmp/merge-wave12-owner.log, merge-wave12-api.log, merge-wave12-web.log and merge-wave12-lint.log. Whole-baseline whitespace/conflict-marker verification is tracked separately in this integration wave; working-tree checks alone are not treated as that gate.
