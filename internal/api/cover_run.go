@@ -11,8 +11,6 @@ func (c *Controller) dispatchCoverBatch(ctx context.Context, batch *scanner.Cove
 	c.scans.DispatchCoverBatch(ctx, batch)
 }
 
-func (c *Controller) discardCoverBatches(libraryID int64) { c.scans.DiscardCoverBatches(libraryID) }
-
 // launchCoverRun preserves the existing restart adapter and trigger.
 func (c *Controller) launchCoverRun(libraryID int64, trigger task.Trigger, backfill bool) error {
 	_, err := c.startCoverRun(libraryID, trigger, backfill)

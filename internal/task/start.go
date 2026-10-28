@@ -418,6 +418,7 @@ func (e *Engine) discardRuntime(runID int64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.runtimes, runID)
+	delete(e.libraryRuns, runID)
 }
 
 // settle 是任务体裁决的那三条**终态**的**唯一**裁决处：**任务体返回的错误**决定进哪一条，
@@ -551,6 +552,9 @@ func (e *Engine) releaseQueuedLocked() func() {
 		}
 		entry, ok := e.queued[run.ID]
 		if !ok || claimed[run.TaskID] {
+			continue
+		}
+		if e.libraryAdmissionLocked(entry.spec.LibraryIDs) != nil {
 			continue
 		}
 		active, err := e.store.CountRuns(ctx, RunFilter{TaskID: run.TaskID, Statuses: activeStatuses})

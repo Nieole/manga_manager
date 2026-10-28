@@ -544,34 +544,6 @@ func (e *taskEngine) cancelRun(runID int64) error {
 	return taskControlError(e.engine.Cancel(runID))
 }
 
-// cancelRunsForScope 取消挂在这个**作用域**对象上、仍会变化的每一条运行，返回真正取消掉的条数。
-//
-// 判据是作用域列而不是一串**任务键**前缀：一份前缀清单说的是「今天有哪几类工作会挂在库上」，
-// 而那个答案每加一个库级任务类型就变一次，漏补不会有编译错误，只会表现成删库几分钟后
-// 队列里那条运行自己开跑。作用域是身份上的真列，这句话因此不必随类型清单一起维护。
-//
-// 单条取消不了（不可取消、进程里没有句柄）不阻断其余那些：删库不因为一条取消不掉就半途而废。
-func (e *taskEngine) cancelRunsForScope(scope task.Scope, scopeID int64) (int, error) {
-	runs, err := e.runStore.ListRuns(context.Background(), task.RunFilter{
-		Scope:    scope,
-		ScopeID:  &scopeID,
-		Statuses: task.LiveStatuses(),
-		Order:    task.OrderSequenceAsc,
-	})
-	if err != nil {
-		return 0, err
-	}
-	cancelled := 0
-	for _, run := range runs {
-		if err := e.cancelRun(run.ID); err != nil {
-			slog.Debug("Skipped cancelling a live run", "run_id", run.ID, "error", err)
-			continue
-		}
-		cancelled++
-	}
-	return cancelled, nil
-}
-
 // pauseAll 与 resumeAll 是「全部暂停 / 全部恢复」：领域引擎把每条运行逐个按下或放行，
 // 返回真正动到的条数。本层不预筛「哪些能暂停」——那份判据在领域，抄第二遍就会与按钮对不上。
 func (e *taskEngine) pauseAll(ctx context.Context) (int, error) {

@@ -1,9 +1,11 @@
-// 守封面运行的 API 装配、独立控制与删除资料库时的作用域取消。
+// 守封面运行的 API 装配、独立控制与删库占用拒绝。
 
 package api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -139,34 +141,33 @@ func TestCoverRunIsControllableOnItsOwn(t *testing.T) {
 	}
 }
 
-// TestDeletingALibraryCancelsEveryRunOnIt 守删库按**作用域**取消而不是按一串**任务键**前缀：
-// 封面生成是新加的库级类型，前缀清单漏补它不会有编译错误，只会表现成删库之后
-// 队列里那条封面运行自己开跑。
-func TestDeletingALibraryCancelsEveryRunOnIt(t *testing.T) {
-	controller, _, _, _ := newTestController(t)
-	// 三条运行要同时活着才看得出「谁被取消、谁没有」，默认两个**运行槽位**装不下。
+// TestDeletingABusyLibraryPreservesEveryRun keeps the immediate deletion slice non-destructive.
+func TestDeletingABusyLibraryPreservesEveryRun(t *testing.T) {
+	controller, store, _, _ := newTestController(t)
 	controller.taskEngine.slots = func() int { return 8 }
 	const libraryID int64 = 9
-	keys := map[string]TaskIdentity{
-		"scan_library_9":       libraryTask("scan_library", libraryID, variantSole),
-		coverRunKey(libraryID): libraryTask("generate_covers", libraryID, variantSole),
+	if _, err := store.DB().Exec(`INSERT INTO libraries(id,name,path) VALUES(9,'Busy library',?)`, t.TempDir()); err != nil {
+		t.Fatal(err)
 	}
+	keys := map[string]TaskIdentity{"scan_library_9": libraryTask("scan_library", libraryID, variantSole), coverRunKey(libraryID): libraryTask("generate_covers", libraryID, variantSole)}
 	for key, identity := range keys {
 		seedTask(t, controller.taskEngine, taskSeed{Key: key, Identity: identity, CanCancel: true, CanPause: true})
 	}
-	// 另一个库上的封面运行不该被带走。
-	seedTask(t, controller.taskEngine, taskSeed{
-		Key: coverRunKey(10), Identity: libraryTask("generate_covers", 10, variantSole), CanCancel: true,
-	})
-
-	controller.cancelLibraryScopedTasks(libraryID)
-
+	seedTask(t, controller.taskEngine, taskSeed{Key: coverRunKey(10), Identity: libraryTask("generate_covers", 10, variantSole), CanCancel: true})
+	rec := httptest.NewRecorder()
+	controller.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/9", nil, "libraryId", "9"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("busy delete HTTP%d: %s", rec.Code, rec.Body.String())
+	}
 	for key := range keys {
-		if got := currentTask(t, controller.taskEngine, key).Status; got == "running" {
-			t.Fatalf("删库之后 %q 仍是 running —— 它逃出了取消", key)
+		if got := currentTask(t, controller.taskEngine, key).Status; got != "running" {
+			t.Fatalf("busy delete changed %s to %s", key, got)
 		}
 	}
 	if got := currentTask(t, controller.taskEngine, coverRunKey(10)).Status; got != "running" {
-		t.Fatalf("删库带走了另一个库的封面运行：状态 %q, want running", got)
+		t.Fatalf("other library run=%s", got)
+	}
+	if _, err := store.GetLibrary(context.Background(), libraryID); err != nil {
+		t.Fatalf("busy library removed: %v", err)
 	}
 }

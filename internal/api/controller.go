@@ -20,6 +20,7 @@ import (
 
 	"manga-manager/internal/application/diskjobs"
 	"manga-manager/internal/application/intelligence"
+	"manga-manager/internal/application/libraries"
 	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/application/relocating"
 	appruntime "manga-manager/internal/application/runtime"
@@ -92,7 +93,8 @@ type Controller struct {
 
 	runtime *appruntime.Runtime
 
-	relations *organize.Relations
+	relations         *organize.Relations
+	libraryManagement *libraries.Service
 }
 
 type RunSnapshot struct {
