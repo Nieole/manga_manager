@@ -65,7 +65,7 @@ func (c *AIGrouping) QueueGenerated(ctx context.Context, libraryID int64, provid
 		"proposals":   proposals,
 	})
 
-	err := c.store.ExecTx(ctx, func(q *database.Queries) error {
+	err := c.store.WithAIGroupingGenerationWrite(ctx, func(q database.AIGroupingGenerationWrite) error {
 		review, err := q.CreateAIGroupingReview(ctx, database.CreateAIGroupingReviewParams{
 			LibraryID:       libraryID,
 			Provider:        strings.TrimSpace(providerName),

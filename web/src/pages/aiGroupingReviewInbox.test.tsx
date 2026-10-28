@@ -126,7 +126,8 @@ function createServer() {
         collection.status = 'rejected';
       }
       finalize(review);
-      return Promise.resolve({ data: { success: true, created_collection_id: CREATED_COLLECTION_ID } });
+      collection.name = "权威候选结果";
+      return Promise.resolve({ data: { success: true, created_collection_id: CREATED_COLLECTION_ID, review: structuredClone(review) } });
     },
     put: (url: string, body: { name: string; description: string; series_ids: number[] }) => {
       const { collection } = find(url);
@@ -265,4 +266,10 @@ describe('AI 分组审阅：处置单个候选合集', () => {
       expect(activeReviewTitle(container)).toBe(`审核单 #${TARGET}`);
     });
   }
+  it('终态离开 pending 筛选后仍消费动作返回的权威候选内容', async () => {
+    await setup();
+    fireEvent.click(screen.getByText('应用此合集'));
+    await screen.findByText('权威候选结果');
+  });
+
 });
