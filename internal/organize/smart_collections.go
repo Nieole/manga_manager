@@ -67,7 +67,7 @@ type CollectionView struct {
 }
 
 type SmartCollectionStore interface {
-	ExecTx(context.Context, func(*database.Queries) error) error
+	WithSmartSnapshot(context.Context, func(database.SmartSnapshotWrite) error) error
 	GetLibrary(context.Context, int64) (database.Library, error)
 	GetSmartFilterByID(context.Context, int64) (database.SmartFilter, error)
 	ListSmartFilters(context.Context) ([]database.SmartFilter, error)

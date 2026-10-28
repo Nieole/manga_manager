@@ -46,7 +46,7 @@ func TestSmartSnapshotIsOneTimeAndManuallyOwned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Snapshot(ctx, filter.ID, 0, organize.SmartSnapshotRequest{Name: "Picks", Limit: 1})
+	result, err := service.Snapshot(ctx, filter.ID, readerSubject(t, 0), organize.SmartSnapshotRequest{Name: "Picks", Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +106,11 @@ func TestSmartShelfAdvancedConditionsAreUserScopedAndPageable(t *testing.T) {
 	if err != nil || views[0].SeriesCount != 0 {
 		t.Fatalf("bob views=%+v err=%v", views, err)
 	}
-	result, err := service.Snapshot(ctx, filter.ID, 1, organize.SmartSnapshotRequest{Name: "Alice Picks"})
+	result, err := service.Snapshot(ctx, filter.ID, readerSubject(t, 1), organize.SmartSnapshotRequest{Name: "Alice Picks"})
 	if err != nil || result.SeriesCount != 2 {
 		t.Fatalf("alice snapshot=%+v err=%v", result, err)
 	}
-	if _, err := service.Snapshot(ctx, filter.ID, 2, organize.SmartSnapshotRequest{Name: "Bob Picks"}); !errors.Is(err, organize.ErrSmartSnapshotEmpty) {
+	if _, err := service.Snapshot(ctx, filter.ID, readerSubject(t, 2), organize.SmartSnapshotRequest{Name: "Bob Picks"}); !errors.Is(err, organize.ErrSmartSnapshotEmpty) {
 		t.Fatalf("bob snapshot=%v", err)
 	}
 }
@@ -129,20 +129,20 @@ func TestSmartSnapshotPreviewConflictAndFailureRollback(t *testing.T) {
 	if _, err := manual.Create(ctx, "Taken", ""); err != nil {
 		t.Fatal(err)
 	}
-	preview, err := service.PreviewSnapshot(ctx, filter.ID, 0, organize.SmartSnapshotRequest{Name: " taken ", Limit: 1}, 1)
+	preview, err := service.PreviewSnapshot(ctx, filter.ID, readerSubject(t, 0), organize.SmartSnapshotRequest{Name: " taken ", Limit: 1}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !preview.NameConflict || !preview.Truncated || preview.SnapshotCount != 1 || preview.Total != 2 || len(preview.Items) != 1 {
 		t.Fatalf("preview=%+v", preview)
 	}
-	if _, err := service.Snapshot(ctx, filter.ID, 0, organize.SmartSnapshotRequest{Name: "taken"}); !errors.Is(err, organize.ErrCollectionNameTaken) {
+	if _, err := service.Snapshot(ctx, filter.ID, readerSubject(t, 0), organize.SmartSnapshotRequest{Name: "taken"}); !errors.Is(err, organize.ErrCollectionNameTaken) {
 		t.Fatalf("conflict=%v", err)
 	}
 	if _, err := db.Exec(`CREATE TRIGGER fail_member BEFORE INSERT ON collection_series WHEN NEW.series_id=2 BEGIN SELECT RAISE(ABORT,'second member failed'); END`); err != nil {
 		t.Fatal(err)
 	}
-	result, err := service.Snapshot(ctx, filter.ID, 0, organize.SmartSnapshotRequest{Name: "Rollback"})
+	result, err := service.Snapshot(ctx, filter.ID, readerSubject(t, 0), organize.SmartSnapshotRequest{Name: "Rollback"})
 	if err == nil || result.ID != 0 {
 		t.Fatalf("failed snapshot=%+v err=%v", result, err)
 	}
@@ -153,7 +153,7 @@ func TestSmartSnapshotPreviewConflictAndFailureRollback(t *testing.T) {
 	if _, err := db.Exec(`DROP TRIGGER fail_member`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Snapshot(ctx, filter.ID, 0, organize.SmartSnapshotRequest{Name: "Rollback"}); err != nil {
+	if _, err := service.Snapshot(ctx, filter.ID, readerSubject(t, 0), organize.SmartSnapshotRequest{Name: "Rollback"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -182,7 +182,7 @@ func TestSmartShelfValidationAndDelete(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].ID != filter.ID || list[0].SortByField != "rating" {
 		t.Fatalf("upsert=%+v err=%v", list, err)
 	}
-	if _, err := service.Snapshot(ctx, filter.ID, 0, organize.SmartSnapshotRequest{}); !errors.Is(err, organize.ErrSmartSnapshotEmpty) {
+	if _, err := service.Snapshot(ctx, filter.ID, readerSubject(t, 0), organize.SmartSnapshotRequest{}); !errors.Is(err, organize.ErrSmartSnapshotEmpty) {
 		t.Fatalf("empty=%v", err)
 	}
 	if err := service.Delete(ctx, filter.ID); err != nil {
