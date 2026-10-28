@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 77、78、80、81、82、83、84、88。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -28,6 +28,11 @@
 - 公共引擎 seam 验证旧队列冻结/其他库前进、恢复队列、32 个并发读者与原子升级、迁移互斥、身份/覆盖差异及真实 body 退出；真实 SQLite owner 验证空闲/占用、原文件保留、故障恢复、取消、当前监听设置与稳定 ID 退休；HTTP 使用实际任务和资料库，界面使用统一 client 的网络边界验证占用与重试。
 - Go 1.26.10：task、application/libraries、application/runtime、application/relocating 整包通过，api 整包最终通过；task/libraries/api 相关 race 通过；gofmt 输出为空，Go lint 为 `0 issues.`。旧“忙碌也先取消再删除”回归已按本票前置切片改为拒绝且保留运行。
 - 前端全量 99 文件、929 测试通过；统一 client fixture 修正后本票组件再验证通过，前端 lint/build 通过。无 SQL 或受管传输生成类型修改。原始输出在 `.tmp/ticket22-*.log`。
-- 以上为本票工作树基线门禁；合入更新的集成分支后复验另行记录。状态留 ready-for-agent，待集成关闭。
+- 以上为本票工作树基线门禁；合入更新的集成分支后复验另行记录。本票已通过集成验证并关闭。
 - 已合入集成 `cca0f0b`（本分支合并 `9f71ed1`），补充实际整书下载 HTTP 消费者：响应尚未关闭时删除返回冲突并保留记录，响应关闭后删除成功且文件字节保留；针对性 HTTP 复验及新增单测通过。界面补充目标切换后忽略旧删除响应，组件共 3 测试通过，合并后前端 lint/build 通过。
 - 合并后 race：task 相关保留/互斥测试通过，application/libraries 整包通过，API 删除/下载相关测试通过。首轮 libraries/API 测试程序被 Application Control 拦截，原始失败保留；重试实际执行通过，不将系统拦截算作通过。原始记录为 `.tmp/ticket22-merged-*.log`、`.tmp/ticket22-download-final.log` 与 `.tmp/ticket22-ui-merged*.log`；gofmt 与 diff 空白检查通过。
+### 集成验收
+
+- 已由合并提交 `f197115` 纳入 `codex/architecture-refinement`，无冲突。本票仍是空闲删除/占用拒绝切片，23 的主动取消和有界排空由后续票承接。
+- Go 1.26.10 的 task 保留/队列/真实 body 退出与 libraries 删除 owner 故障释放/恢复相关 `-race` 回归实际通过（5.118s/12.084s）；实际 HTTP 删除与 17 的整书下载/响应关闭/独占资格、协议及主体兼容回归通过（6.798s）。
+- 额外整书句柄普通测试程序两次遭 Application Control 拦截，未计通过；`-race` 变体实际执行通过（7.932s）。删除弹窗、路由及导航快捷键消费者 3 文件、11 测试通过；前端 lint/build 通过，Go gofmt 无输出、独立缓存 lint 为 `0 issues.`。原始输出保留在主工作树 `.tmp/merge-wave7-22-*.log`。
