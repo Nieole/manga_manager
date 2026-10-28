@@ -156,7 +156,7 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	r.Disk = diskjobs.New(r.Runs, store, r.External, diskjobs.Effects{Publish: e.Publish, PurgeReadingPaths: e.PurgeReadingPaths})
 	sources := e.Sources
 	if sources.Metadata == nil {
-		sources.Metadata = func(name string) metadata.Provider { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }
+		sources.Metadata = func(name string) metadata.Fetcher { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }
 	}
 	if sources.Grouping == nil {
 		sources.Grouping = func() intelligence.GroupingProvider {

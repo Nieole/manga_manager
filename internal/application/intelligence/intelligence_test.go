@@ -37,9 +37,7 @@ func (p *source) FetchSeriesMetadata(ctx context.Context, _ string) (*metadata.S
 	p.keys = append(p.keys, logger.TaskKeyFrom(ctx))
 	return &metadata.SeriesMetadata{Title: "Suggested", Summary: "Controlled summary", Confidence: 1}, nil
 }
-func (p *source) SearchMetadata(context.Context, string, int, int) ([]*metadata.SeriesMetadata, int, error) {
-	return nil, 0, nil
-}
+
 func TestScrapeLibraryQueuesProposalWithOriginalSourceAndLocale(t *testing.T) {
 	ctx := metadata.WithLocale(context.Background(), "en-US")
 	path := filepath.Join(t.TempDir(), "library.db")
@@ -63,7 +61,7 @@ func TestScrapeLibraryQueuesProposalWithOriginalSourceAndLocale(t *testing.T) {
 	engine := task.New(task.Config{Store: tasks, RunBackground: func(fn func()) { fn() }, DecorateRunContext: application.DecorateRunContext})
 	provider := &source{}
 	var requestedKeys []string
-	service := intelligence.New(application.NewRuns(engine, nil), store, proposal.NewService(proposalDB{store}), organize.NewAIGrouping(store, nil), intelligence.Sources{Metadata: func(key string) metadata.Provider { requestedKeys = append(requestedKeys, key); return provider }}, nil)
+	service := intelligence.New(application.NewRuns(engine, nil), store, proposal.NewService(proposalDB{store}), organize.NewAIGrouping(store, nil), intelligence.Sources{Metadata: func(key string) metadata.Fetcher { requestedKeys = append(requestedKeys, key); return provider }}, nil)
 	launch, err := service.ScrapeLibrary(ctx, lib.ID, "controlled", task.TriggerManual)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +213,7 @@ func TestQueuedGenerationCancellationReleasesCoverageWithoutCallingSource(t *tes
 	var bodies []func()
 	engine := task.New(task.Config{Store: tasks, Slots: func() int { return 1 }, RunBackground: func(fn func()) { bodies = append(bodies, fn) }})
 	provider := &source{}
-	service := intelligence.New(application.NewRuns(engine, nil), store, proposal.NewService(proposalDB{store}), organize.NewAIGrouping(store, nil), intelligence.Sources{Metadata: func(string) metadata.Provider { return provider }, Grouping: func() intelligence.GroupingProvider { return provider }}, nil)
+	service := intelligence.New(application.NewRuns(engine, nil), store, proposal.NewService(proposalDB{store}), organize.NewAIGrouping(store, nil), intelligence.Sources{Metadata: func(string) metadata.Fetcher { return provider }, Grouping: func() intelligence.GroupingProvider { return provider }}, nil)
 	_, err = engine.Start(ctx, task.RunSpec{Identity: task.Identity{Type: "block", Scope: task.ScopeSystem}, Trigger: task.TriggerManual, Key: "block"}, func(context.Context, *runhandle.Handle) (task.Result, error) { return task.Result{}, nil })
 	if err != nil {
 		t.Fatal(err)
