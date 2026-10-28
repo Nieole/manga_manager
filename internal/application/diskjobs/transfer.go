@@ -92,7 +92,7 @@ func (c *Service) TransferPrepared(ctx context.Context, libraryID int64, session
 			return task.Result{Code: "task.msg.transfer_external_library.all_exist"}, nil
 		}
 		lastCommitted := 0
-		result, transferErr := c.external.Transfer(ctx, libraryID, sessionID, plan, func(p external.TransferProgress) {
+		result, transferErr := c.external.Transfer(ctx, libraryID, sessionID, plan, handle, func(p external.TransferProgress) {
 			done := len(p.Result.CommittedBookIDs) + len(p.Result.ExistingBookIDs)
 			handle.Report(runhandle.Frame{
 				Current: &done, Total: &total, Phase: "transferring_files", Item: p.Operation.RelativePath,

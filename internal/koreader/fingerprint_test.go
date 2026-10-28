@@ -7,6 +7,7 @@ package koreader
 import (
 	"context"
 	"errors"
+	"manga-manager/internal/bookidentity"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,11 +25,11 @@ func TestFingerprintQuickFileChangesWithTailContent(t *testing.T) {
 		t.Fatalf("write second file failed: %v", err)
 	}
 
-	a, err := FingerprintQuickFile(first)
+	a, err := bookidentity.FingerprintQuickFile(first)
 	if err != nil {
 		t.Fatalf("FingerprintQuickFile first failed: %v", err)
 	}
-	b, err := FingerprintQuickFile(second)
+	b, err := bookidentity.FingerprintQuickFile(second)
 	if err != nil {
 		t.Fatalf("FingerprintQuickFile second failed: %v", err)
 	}
@@ -53,11 +54,11 @@ func TestFingerprintQuickFileSmallFiles(t *testing.T) {
 		if err := os.WriteFile(p, tc.data, 0o644); err != nil {
 			t.Fatalf("%s write: %v", tc.name, err)
 		}
-		h1, err := FingerprintQuickFile(p)
+		h1, err := bookidentity.FingerprintQuickFile(p)
 		if err != nil {
 			t.Fatalf("%s fingerprint: %v", tc.name, err)
 		}
-		h2, err := FingerprintQuickFile(p)
+		h2, err := bookidentity.FingerprintQuickFile(p)
 		if err != nil {
 			t.Fatalf("%s fingerprint retry: %v", tc.name, err)
 		}
@@ -81,17 +82,17 @@ func TestFingerprintFileContextStopsOnCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := FingerprintFileContext(ctx, path); !errors.Is(err, context.Canceled) {
+	if _, err := bookidentity.FingerprintFileContext(ctx, path); !errors.Is(err, context.Canceled) {
 		t.Fatalf("已取消的 ctx 返回 %v，期望 context.Canceled —— 取消打不断整文件读取", err)
 	}
 
 	// 未取消时结果必须与不带 ctx 的版本逐字相同：指纹是 KOReader 匹配的主键，
 	// 变了就等于全库进度重新对不上。
-	want, err := FingerprintFile(path)
+	want, err := bookidentity.FingerprintFile(path)
 	if err != nil {
 		t.Fatalf("FingerprintFile: %v", err)
 	}
-	got, err := FingerprintFileContext(context.Background(), path)
+	got, err := bookidentity.FingerprintFileContext(context.Background(), path)
 	if err != nil {
 		t.Fatalf("FingerprintFileContext: %v", err)
 	}

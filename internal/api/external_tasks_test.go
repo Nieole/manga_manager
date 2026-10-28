@@ -15,8 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+	"manga-manager/internal/diskwork"
 	"manga-manager/internal/external"
+	"manga-manager/internal/storageio"
 )
 
 // externalTaskStore 同时充当两个角色：Controller 的 database.Store（只有 GetLibrary 会被调到）
@@ -100,7 +103,7 @@ func newExternalRig(t *testing.T, books int, now func() time.Time, run func(func
 		})
 	}
 
-	engine, snapshots := newBackgroundTestEngine(t, run, nil)
+	engine, snapshots := newBackgroundTestEngine(t, run, diskwork.NewRunner(func() config.Config { return config.Config{} }, storageio.NewScheduler()))
 	engine.now = now
 
 	rig := &externalRig{

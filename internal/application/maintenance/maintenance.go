@@ -6,6 +6,7 @@ import (
 	"errors"
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/scanning"
+	"manga-manager/internal/bookidentity"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/koreader"
@@ -15,6 +16,7 @@ import (
 
 // Store supplies maintenance candidates and derived-index writes.
 type Store interface {
+	bookidentity.Store
 	ListLibraries(context.Context) ([]database.Library, error)
 	RebuildSeriesSearchIndex(context.Context) error
 	RebuildBookSearchIndex(context.Context) error
@@ -22,8 +24,6 @@ type Store interface {
 	ClearAllSeriesStatsCoverPaths(context.Context) error
 	CountBooksMissingQuickHash(context.Context) (int64, error)
 	ListBooksMissingQuickHashBatch(context.Context, int64, int) ([]database.BookIdentityCandidate, error)
-	UpdateBookIdentity(context.Context, database.UpdateBookIdentityParams) error
-	CountBooksMissingIdentity(context.Context, string) (int64, error)
 }
 
 // Effects publishes completed maintenance changes.
@@ -38,6 +38,7 @@ type Service struct {
 	store      Store
 	scans      *scanning.Service
 	koreader   *koreader.Service
+	identities *bookidentity.Service
 	config     func() config.Config
 	effects    Effects
 	thumbnails *ThumbnailProgress
@@ -51,7 +52,7 @@ func New(runs *application.Runs, store Store, scans *scanning.Service, reader *k
 	if effects.WarmStats == nil {
 		effects.WarmStats = func(string) {}
 	}
-	return &Service{runs: runs, store: store, scans: scans, koreader: reader, config: cfg, effects: effects, thumbnails: NewThumbnailProgress()}
+	return &Service{runs: runs, store: store, scans: scans, koreader: reader, identities: bookidentity.New(store), config: cfg, effects: effects, thumbnails: NewThumbnailProgress()}
 }
 func failure(code string, err error) task.Result {
 	if errors.Is(err, context.Canceled) {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"manga-manager/internal/bookidentity"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,7 +26,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/images"
-	"manga-manager/internal/koreader"
+
 	"manga-manager/internal/parser"
 	"manga-manager/internal/seriesmeta"
 	"manga-manager/internal/storageio"
@@ -1163,12 +1164,12 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 	// 错误，因为算不出指纹不该中止这本书；中止只由 Do 返回的闸门与令牌错误决定。
 	hashWork := diskwork.Work{Kind: storageio.WorkKindIdentityHash, Path: job.path}
 
-	var fileHash string
+	var fileHash bookidentity.ContentHash
 	if opts.Profile.computesFullHash(cfg) {
 		progress.publish("hashing", job.path, false)
 		var hashErr error
 		stats, err := s.diskWork.Do(ctx, hashWork, func() error {
-			fileHash, hashErr = koreader.FingerprintFileContext(ctx, job.path)
+			fileHash, hashErr = bookidentity.FingerprintFileContext(ctx, job.path)
 			return nil
 		})
 		metrics.absorbDiskWork(stats)
@@ -1184,12 +1185,12 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		}
 	}
 
-	var quickHash string
+	var quickHash bookidentity.QuickHash
 	if opts.Profile.computesQuickHash() {
 		progress.publish("hashing", job.path, false)
 		var hashErr error
 		stats, err := s.diskWork.Do(ctx, hashWork, func() error {
-			quickHash, hashErr = koreader.FingerprintQuickFile(job.path)
+			quickHash, hashErr = bookidentity.FingerprintQuickFile(job.path)
 			return nil
 		})
 		metrics.absorbDiskWork(stats)
@@ -1212,10 +1213,10 @@ func (s *Scanner) workerProcess(ctx context.Context, libIDInt int64, rootPath st
 		openedArchive:        opts.Profile.opensArchive(),
 		coverCandidate:       coverHint,
 		comicInfo:            cInfo,
-		fileHash:             fileHash,
-		quickHash:            quickHash,
-		pathFingerprint:      koreader.FingerprintRelativePath(rootPath, job.path, false),
-		pathFingerprintNoExt: koreader.FingerprintRelativePath(rootPath, job.path, true),
+		fileHash:             string(fileHash),
+		quickHash:            string(quickHash),
+		pathFingerprint:      string(bookidentity.FingerprintRelativePath(rootPath, job.path, false)),
+		pathFingerprintNoExt: string(bookidentity.FingerprintRelativePath(rootPath, job.path, true)),
 	}
 
 	select {
