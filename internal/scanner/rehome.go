@@ -1,8 +1,5 @@
-// 文件改名/移动后的身份重连：把注定要被 CleanupLibrary 删掉的旧记录改挂到新路径，保留 books.id。
-//
-// 扫描器以 books.path 为书的身份，改名因此被看成「旧书消失 + 新书出现」；而阅读进度、书签、
-// 合集归属、阅读清单条目都以 books.id 为外键 ON DELETE CASCADE——不重连就等于改名一本书
-// 丢掉它的全部阅读记录。改挂后 UpsertBookByPath 经 ON CONFLICT(path) 命中同一行照常刷新元数据。
+// 文件改名后的路径重连保留 books.id 及其阅读记录；路径是 upsert 的匹配键，不是书的持久身份。
+// 认领必须满足证据唯一、旧文件缺失和每行至多一次等守卫，不能从内容相似性推断记录合并。
 
 package scanner
 
