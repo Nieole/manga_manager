@@ -31,7 +31,7 @@
 
 11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
 
-当前完成 30/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、27、29、36、38、41。30、39 在独立工作树实施，28、31 按依赖继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+当前完成 31/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、27、29、36、38、39、41。28、30、40 在独立工作树实施，31 按依赖继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
 
 12 已合入并关闭：主树 AI 分组 owner race 13.910s、数据库窄能力 race 7.706s、集成后全前端 99 文件 / 937 测试及 lint/build 通过，Go lint 0 issues、格式和 diff 检查通过。主树 API 多次被 Application Control 拦截，稳定二进制启动也未确认执行，已停止精确启动器并保留限制；API 实际通过依据为实现树完整 104.921s、focused race 17.835s 和合并集成后 focused 普通 7.710s。日志位于 .tmp/merge-wave10-*.log。
 
@@ -50,3 +50,5 @@
 38 已合入并关闭：主树初始化窄数据库能力 race 11.072s、并发 setup/claim/session/login/auth HTTP race 60.133s、3 项初始化恢复前端消费者实际通过。Go lint 0 issues、gofmt、完整基线 diff 检查和 tracked 冲突标记扫描通过。账户 owner 完整用例由真实 SQLite HTTP fixture 调用验证，包本身无独立测试文件。日志为 .tmp/merge-wave16-account-*.log。
 
 27 已合入并关闭：主树扫描身份/重联/锁定/清理/封面 race 42.501s、新增两项提交边界 rollback 回归单独 race 6.663s、scanning/runtime race 10.302s/8.866s、扫描封面 HTTP race 15.572s 实际通过。database 的筛选命令没有选中测试，不计行为证据；窄摄入事务由真实 SQLite scanner 回归验证。lint 0 issues、gofmt、完整基线 diff 与 tracked marker 扫描通过。完整扫描 outcome 与 cleanup 资格仍由 28 接续，27不声称改变旧 warn+nil 语义。日志为 .tmp/merge-wave17-*.log。
+
+39 已合入并关闭：主树账户管理窄能力 race 1.538s、最后管理员并发/当前actor权限/自删与级联 HTTP owner race 15.721s、4 项管理页消费者实际通过。Go lint 0 issues、gofmt、完整基线 diff 和 tracked 冲突标记扫描通过。改密与会话资格交接继续由40承接。日志为 .tmp/merge-wave18-*.log。
