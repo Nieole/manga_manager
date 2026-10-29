@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 184、185、188、190、191、192、193。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -27,3 +27,8 @@
 - Full API/database suites executed 99.800s / 10.566s (`ticket38-full-go.log`). Related setup/auth/transaction race regressions executed API 32.693s and database 5.067s (`ticket38-final-race.log`). Final focused consumer verification after extracting the shared password constant passed API 7.095s/database 0.741s (`ticket38-handoff-consumers.log`). Capability escape checks actually executed; earlier policy-blocked launches were not counted as passes.
 - Frontend full suite passed 102 files / 945 tests, lint and build (`ticket38-full-ui.log`, `ticket38-ui-lint-final.log`, `ticket38-ui-build.log`). The final real setup-to-login flow and claim-warning consumers passed 3 tests (`ticket38-ui-login-final.log`). No generated target or SQL schema/query source changed.
 - Final Go lint reported `0 issues.` (`ticket38-handoff-lint.log`); gofmt, whole-baseline whitespace checks and tracked conflict-marker scans were clean. The branch is based on integration 48527f2; ticket closure remains pending merger verification.
+
+### Integration verification (2026-10-29)
+
+- Merged without conflicts through 87a1fe70fe95611e0bd2692d96121f39bc829207. Main-tree database initialization/narrow-capability race passed 11.072s. Setup concurrency, exact usernames, legacy claim rollback, committed-account/session failures and login/auth HTTP race consumers actually passed 60.133s. The account owner is exercised through those complete-use-case SQLite HTTP fixtures; package compilation alone is not behavioral evidence.
+- Initialization/login recovery consumers passed all 3 frontend tests. Go lint reported 0 issues; gofmt emitted no files. Whole-baseline git diff --check and tracked conflict-marker scans passed. Raw logs: .tmp/merge-wave16-account-owner.log, merge-wave16-account-api.log, merge-wave16-account-web.log and merge-wave16-account-lint.log.
