@@ -32,10 +32,11 @@ const configReloadDebounce = 500 * time.Millisecond
 // 的中间态。校验只跑纯值域（ValidateConfigValues）：触盘的深度校验可能在离线网络挂载上
 // 无限阻塞，而它跑在事件循环里，卡住就等于连带卡死停机等待。
 type Watcher struct {
-	path     string
-	manager  *Manager
-	apply    func(*Config) error
-	debounce time.Duration
+	path        string
+	manager     *Manager
+	apply       func(*Config) error
+	publication func() error
+	debounce    time.Duration
 
 	fs       *fsnotify.Watcher
 	stopOnce sync.Once
@@ -49,6 +50,18 @@ func StartWatcher(path string, manager *Manager, apply func(*Config) error) (*Wa
 	if manager == nil {
 		return nil, errors.New("config: watcher requires a manager")
 	}
+	return startWatcher(path, manager, apply, nil)
+}
+
+// StartPublicationWatcher routes file events to the application's complete reload capability.
+func StartPublicationWatcher(path string, publish func() error) (*Watcher, error) {
+	if publish == nil {
+		return nil, errors.New("config: watcher requires a reload capability")
+	}
+	return startWatcher(path, nil, nil, publish)
+}
+
+func startWatcher(path string, manager *Manager, apply func(*Config) error, publish func() error) (*Watcher, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		absPath = path
@@ -64,13 +77,14 @@ func StartWatcher(path string, manager *Manager, apply func(*Config) error) (*Wa
 	}
 
 	w := &Watcher{
-		path:     absPath,
-		manager:  manager,
-		apply:    apply,
-		debounce: configReloadDebounce,
-		fs:       fsw,
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		path:        absPath,
+		manager:     manager,
+		apply:       apply,
+		publication: publish,
+		debounce:    configReloadDebounce,
+		fs:          fsw,
+		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
 	}
 	go w.run(fsw.Events, fsw.Errors)
 	slog.Info("Config hot-reload watcher started", "path", absPath, "watching_dir", dir)
@@ -140,6 +154,12 @@ func (w *Watcher) run(events <-chan fsnotify.Event, errs <-chan error) {
 
 // reload 读盘、校验、比对、生效。任一环节不通过都保留当前内存配置。
 func (w *Watcher) reload() {
+	if w.publication != nil {
+		if err := w.publication(); err != nil {
+			slog.Error("Config hot-reload failed; keeping current configuration", "path", w.path, "error", err)
+		}
+		return
+	}
 	if err := w.manager.Reload(w.path, w.apply, func() {
 		applied := w.manager.Snapshot()
 		slog.Info("Config hot-reload applied successfully",

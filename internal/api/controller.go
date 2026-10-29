@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/application/diskjobs"
 	"manga-manager/internal/application/intelligence"
 	"manga-manager/internal/application/libraries"
@@ -37,7 +38,6 @@ import (
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/reading"
 	"manga-manager/internal/relocation"
-	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/seriesmeta"
 	"manga-manager/internal/taskcontrol"
@@ -120,6 +120,8 @@ type SystemConfigResponse struct {
 	Config       config.Config              `json:"config"`
 	Validation   config.ValidationResult    `json:"validation"`
 	Capabilities SystemCapabilitiesResponse `json:"capabilities"`
+	FieldEffects []config.FieldEffect       `json:"field_effects"`
+	Publication  configuration.Publication  `json:"publication"`
 }
 
 type SearchResult struct {
@@ -296,10 +298,8 @@ func (c *Controller) persistConfigExpected(expected, cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	return c.config.Save(c.configPath, expected, func(next *config.Config) error {
-		*next = config.CloneConfig(*cfg)
-		return nil
-	}, runtimecfg.Apply, nil)
+	_, err := c.runtime.Configuration.SaveExpected(expected, *cfg)
+	return err
 }
 
 func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
@@ -320,6 +320,8 @@ func (c *Controller) buildSystemConfigResponse(cfg config.Config) SystemConfigRe
 		Config:       cfg,
 		Validation:   config.ValidateConfig(&cfg),
 		Capabilities: c.systemCapabilities(),
+		FieldEffects: config.FieldEffects(),
+		Publication:  c.runtime.Configuration.Status(),
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"manga-manager/internal/api"
+	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/config"
 )
 
@@ -32,6 +33,8 @@ var targets = []reflect.Type{
 	reflect.TypeOf(api.RunSamplesResponse{}),
 	reflect.TypeOf(config.ValidationIssue{}),
 	reflect.TypeOf(config.ValidationResult{}),
+	reflect.TypeOf(config.FieldEffect{}),
+	reflect.TypeOf(configuration.Publication{}),
 	reflect.TypeOf(api.SystemCapabilitiesResponse{}),
 	reflect.TypeOf(api.StorageFailureResponse{}),
 	reflect.TypeOf(api.RelocationDetail{}),

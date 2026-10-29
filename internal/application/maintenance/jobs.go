@@ -43,9 +43,9 @@ func (c *Service) rebuildThumbnailLibraries(ctx context.Context, h *runhandle.Ha
 	}
 	return c.scans.RebuildThumbnails(ctx, h, libs, c.thumbnails.BeginLibrary)
 }
-func (c *Service) clearThumbnailDir(thumbDir string) error {
+func (c *Service) clearThumbnailDir(thumbDir string, cfg config.Config) error {
 	keep := make(map[string]bool)
-	for _, dir := range config.NonThumbnailDirs(c.config()) {
+	for _, dir := range config.NonThumbnailDirs(cfg) {
 		keep[dir] = true
 	}
 
@@ -101,7 +101,7 @@ func (c *Service) RebuildThumbnails(trigger task.Trigger) error {
 		defer c.thumbnails.End()
 
 		handle.Report(runhandle.Frame{Phase: "clearing_cache", Item: thumbDir, Code: "task.msg.rebuild_thumbnails.clearing_cache"})
-		if err := c.clearThumbnailDir(thumbDir); err != nil {
+		if err := c.clearThumbnailDir(thumbDir, cfg); err != nil {
 			return failure("task.msg.rebuild_thumbnails.clear_cache_failed", err), err
 		}
 		if err := handle.Checkpoint(ctx); err != nil {

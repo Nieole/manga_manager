@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { apiClient, isAxiosError } from '../../api/client';
 import { getClientLocale, translateInLocale, useI18n } from '../../i18n/LocaleProvider';
 import { useToast } from '../../components/ToastProvider';
-import type { ValidationResult, SystemCapabilitiesResponse } from '../../api/generated';
+import type { ValidationResult, SystemCapabilitiesResponse, Publication, FieldEffect } from '../../api/generated';
 
 export interface Config {
   server: { host: string; port: number; allowed_origins: string[] };
@@ -83,7 +83,11 @@ interface ConfigEnvelope {
   config: Config;
   validation: ValidationResult;
   capabilities: Capabilities;
+  field_effects?: FieldEffect[];
+  publication?: Publication;
 }
+
+interface ConfigSaveResponse { message?: string; validation: ValidationResult; publication?: Publication }
 
 export interface KOReaderStatus {
   enabled: boolean;
@@ -203,6 +207,9 @@ type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai'
 // 分别 memo 后嵌套提供）：前者承载核心配置域 + 共享助手，后者承载易变的 KOReader 状态
 // （账户/设备/匹配/表单），使 KOReader 高频变化不会连带重渲仅消费配置的页面。
 interface ConfigContextValue {
+  fieldEffects: FieldEffect[];
+  configPublication: Publication | null;
+  lastPublication: Publication | null;
   config: Config | null;
   setConfig: React.Dispatch<React.SetStateAction<Config | null>>;
   validation: ValidationResult;
@@ -380,6 +387,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const [config, setConfig] = useState<Config | null>(null);
   const [initialConfig, setInitialConfig] = useState<Config | null>(null);
+  const [fieldEffects, setFieldEffects] = useState<FieldEffect[]>([]);
+  const [configPublication, setConfigPublication] = useState<Publication | null>(null);
+  const [lastPublication, setLastPublication] = useState<Publication | null>(null);
   const [validation, setValidation] = useState<ValidationResult>({ valid: true, issues: [] });
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [loading, setLoading] = useState(true);
@@ -446,6 +456,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setInitialConfig(res.data.config);
     setValidation(res.data.validation);
     setCapabilities(res.data.capabilities);
+    setFieldEffects(res.data.field_effects ?? []);
+    setConfigPublication(res.data.publication ?? null);
     setKOReaderForm((current) => buildKOReaderForm(res.data.config.koreader, null, current));
   }, []);
 
@@ -522,10 +534,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         // 敏感字段（LLM APIKey 等）在 initialConfig 里是占位符，后端会据此保留原值，
         // 所以这样叠加不会把密钥抹成掩码串。
         const payload = applySectionSnapshot(initialConfig, config, section);
-        const res = await apiClient.post('/api/system/config', payload, { headers: { 'If-Match': sectionVersions[section] || '' } });
+        const res = await apiClient.post<ConfigSaveResponse>('/api/system/config', payload, { headers: { 'If-Match': sectionVersions[section] || '' } });
         setValidation(res.data.validation);
-        showToast(res.data.message || successMessage, 'success');
-        await fetchConfig(section);
+        if (res.data.publication) { setLastPublication(res.data.publication); setConfigPublication(res.data.publication); }
+        const message = res.data.publication?.restart_required.length ? t('settings.toast.configSavedRestart')
+          : res.data.publication?.next_operation.length ? t('settings.toast.configSavedNext') : res.data.message || successMessage;
+        showToast(message, 'success');
+        try { await fetchConfig(section); } catch (error) { console.error(error); showToast(t('settings.toast.configRefreshFailed'), 'error'); }
       } catch (error) {
         console.error(error);
         if (isAxiosError(error) && error.response?.status === 409) {
@@ -563,11 +578,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         },
       } as Config;
       const payload = applySectionSnapshot(initialConfig, draft, 'connections');
-      const res = await apiClient.post('/api/system/config', payload, { headers: { 'If-Match': sectionVersions.connections || '' } });
+      const res = await apiClient.post<ConfigSaveResponse>('/api/system/config', payload, { headers: { 'If-Match': sectionVersions.connections || '' } });
       setValidation(res.data.validation);
-      await fetchConfig('connections');
+      if (res.data.publication) { setLastPublication(res.data.publication); setConfigPublication(res.data.publication); }
+      try { await fetchConfig('connections'); } catch (error) { console.error(error); showToast(t('settings.toast.configRefreshFailed'), 'error'); }
     },
-    [config, initialConfig, sectionVersions, fetchConfig],
+    [config, initialConfig, sectionVersions, fetchConfig, showToast, t],
   );
 
   const handleTestLLM = useCallback(async () => {
@@ -749,6 +765,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const configValue = useMemo<ConfigContextValue>(
     () => ({
+      fieldEffects,
+      configPublication,
+      lastPublication,
       config,
       setConfig,
       validation,
@@ -768,6 +787,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       hasSectionChanges,
     }),
     [
+      fieldEffects,
+      configPublication,
+      lastPublication,
       capabilities,
       config,
       fieldErrors,

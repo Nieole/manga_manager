@@ -77,6 +77,12 @@ func (m *Manager) Save(path string, expected *Config, mutate func(*Config) error
 			return errors.Join(err, restoreErr, apply(&current))
 		}
 	}
+	if err := verifyConfigFile(path, data); err != nil {
+		if apply != nil && !configsEqual(&next, &current) {
+			return errors.Join(err, apply(&current))
+		}
+		return err
+	}
 	m.replace(&next)
 	if after != nil {
 		after()
@@ -119,6 +125,12 @@ func (m *Manager) Reload(path string, apply func(*Config) error, after func()) e
 			}
 			return errors.Join(err, marshalErr, restoreErr, apply(&current))
 		}
+	}
+	if err := verifyConfigFile(path, observed); err != nil {
+		if apply != nil {
+			return errors.Join(err, apply(&current))
+		}
+		return err
 	}
 	m.replace(next)
 	if after != nil {

@@ -1,6 +1,19 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'settings.toast.configSavedRestart': 'Configuration saved and published; some fields still require a server restart.',
+    'settings.toast.configSavedNext': 'Configuration saved and published; related fields are read by subsequent requests or jobs.',
+    'settings.toast.configRefreshFailed': 'The save succeeded, but refreshing settings failed. Reload to verify the current view.',
+    'settings.publication.title': 'Configuration publication and effect timing',
+    'settings.publication.saved': 'The last configuration save persisted and published. Effect timing is listed below.',
+    'settings.publication.immediate': 'Immediate effect',
+    'settings.publication.next_operation': 'Read by subsequent requests, jobs or checkpoints',
+    'settings.publication.restart': 'Takes effect after a server restart',
+    'settings.publication.pendingRestart': 'Server restart still required',
+    'settings.publication.managed': 'Managed by library registration',
+    'settings.publication.compatibility': 'Compatibility input; canonical fields take precedence',
+    'settings.publication.catalog': 'Field effect timing',
+    'settings.publication.description': 'Immediate fields are read by the current process. Subsequent-operation fields are read by new requests, jobs or checkpoints; restart fields still use current process resources. Started operations retain their target, source and write intent.',
     'librarySave.unavailable': 'The library is in use or its root is reserved. Wait for access to close and retry; your form has been kept.',
     'librarySave.refreshFailed': 'Library saved, but navigation could not refresh. Retry the library list; saving again is unnecessary.',
     'librarySave.savedWarning': 'Library saved. Watching or the initial scan could not start. Check Tasks and library settings; scan admission is not scan completion.',
