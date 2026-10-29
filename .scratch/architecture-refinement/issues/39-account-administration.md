@@ -4,7 +4,7 @@
 
 **Blocked by:** 38: 站点初始化与账户用例入口。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 184、186、187、188、193。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -28,3 +28,8 @@
 - Frontend full suite passed 103 files / 948 tests with lint/build (`ticket39-full-ui.log`, `ticket39-ui-lint.log`, `ticket39-ui-build.log`). A subsequent deletion-consumer regression joins the three earlier management tests; the final four tests passed (`ticket39-ui-final-consumers.log`), without implying a newer full-suite count. Go lint reported `0 issues.` (`ticket39-lint.log`). SQL source/schema and generated contract targets were unchanged. Integration closure remains pending merger verification.
 
 - Merged integration bb300a8 before handoff; resolved the changelog and Store-interface additions by retaining both sides. Post-merge account/auth/capability consumers actually passed API 1.748s/database 0.067s (`ticket39-merged-consumers.log`), final Go lint remained `0 issues.` (`ticket39-merged-lint.log`), and final frontend lint passed (`ticket39-handoff-ui-lint.log`). Gofmt and whole-baseline diff/marker checks remained clean.
+
+### Integration verification (2026-10-29)
+
+- Merged without conflicts through c1e1ac8b560b1a4741f53a4579a3bc7ae876e71d. Main-tree private account-management capability race passed 1.538s; administrator/actor authorization, concurrent demotion/deletion and session/device cascade owner+HTTP race consumers actually passed 15.721s. Administration page consumers passed all 4 tests.
+- Go 1.26.10 lint reported 0 issues and gofmt emitted no files. Whole-baseline whitespace and tracked conflict-marker scans passed. Raw logs: .tmp/merge-wave18-owner.log, merge-wave18-api.log, merge-wave18-web.log and merge-wave18-lint.log. Password/session qualification remains the separate ticket 40 scope.
