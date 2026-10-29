@@ -719,109 +719,72 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request) {
 
 // ---- 管理员：账户管理 ----
 
-func (c *Controller) listUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := c.store.ListUsers(r.Context())
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to list users")
-		return
+func accountManagementError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, accounts.ErrForbidden):
+		jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.admin_required"))
+	case errors.Is(err, accounts.ErrLastAdmin):
+		jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.last_admin"))
+	case errors.Is(err, accounts.ErrSelfDelete):
+		jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.cannot_delete_self"))
+	case errors.Is(err, accounts.ErrRole):
+		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.role_invalid"))
+	case errors.Is(err, accounts.ErrUsername):
+		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.username_required"))
+	case errors.Is(err, accounts.ErrPassword):
+		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_too_short"))
+	case errors.Is(err, database.ErrUsernameTaken):
+		jsonError(w, http.StatusConflict, apiText(requestLocale(r), "auth.username_taken"))
+	case errors.Is(err, database.ErrUserNotFound):
+		jsonError(w, http.StatusNotFound, apiText(requestLocale(r), "auth.user_not_found"))
+	default:
+		jsonError(w, http.StatusInternalServerError, "account management failed")
 	}
-	if users == nil {
-		users = []database.User{}
+}
+func (c *Controller) listUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := accounts.NewManagement(c.store, hashPassword).List(r.Context(), accounts.Actor{ID: c.currentUserID(r)})
+	if err != nil {
+		accountManagementError(w, r, err)
+		return
 	}
 	jsonResponse(w, http.StatusOK, users)
 }
-
-// createUser 由管理员创建账户并设置初始密码；must_change_password=true 引导用户首登改密。
 func (c *Controller) createUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var req struct {
+	var in struct {
 		Username    string `json:"username"`
 		Password    string `json:"password"`
 		Role        string `json:"role"`
 		DisplayName string `json:"display_name"`
 	}
-	if !decodeAuthJSON(w, r, &req) {
+	if !decodeAuthJSON(w, r, &in) {
 		return
 	}
-	username := strings.TrimSpace(req.Username)
-	if username == "" {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.username_required"))
-		return
-	}
-	if len(req.Password) < minPasswordLen {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_too_short"))
-		return
-	}
-	role := database.RoleRegular
-	if req.Role == database.RoleAdmin {
-		role = database.RoleAdmin
-	} else if req.Role != "" && req.Role != database.RoleRegular {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.role_invalid"))
-		return
-	}
-	hash, err := hashPassword(req.Password)
+	user, err := accounts.NewManagement(c.store, hashPassword).Create(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, accounts.CreateInput{Username: in.Username, Password: in.Password, Role: in.Role, DisplayName: in.DisplayName})
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to hash password")
-		return
-	}
-	user, err := c.store.CreateUser(ctx, database.CreateUserParams{
-		Username:           username,
-		PasswordHash:       hash,
-		Role:               role,
-		DisplayName:        strings.TrimSpace(req.DisplayName),
-		MustChangePassword: true,
-	})
-	if err != nil {
-		if errors.Is(err, database.ErrUsernameTaken) {
-			jsonError(w, http.StatusConflict, apiText(requestLocale(r), "auth.username_taken"))
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, "failed to create user")
+		accountManagementError(w, r, err)
 		return
 	}
 	jsonResponse(w, http.StatusOK, user)
 }
-
-// updateUser 修改展示名与角色；阻止把最后一个管理员降级。
 func (c *Controller) updateUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	id, err := parseID(r, "userId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid user ID")
 		return
 	}
-	target, err := c.store.GetUserByID(ctx, id)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, apiText(requestLocale(r), "auth.user_not_found"))
-		return
-	}
-	var req struct {
+	var in struct {
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
 	}
-	if !decodeAuthJSON(w, r, &req) {
+	if !decodeAuthJSON(w, r, &in) {
 		return
 	}
-	role := target.Role
-	if req.Role != "" {
-		if req.Role != database.RoleAdmin && req.Role != database.RoleRegular {
-			jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.role_invalid"))
-			return
-		}
-		role = req.Role
-	}
-	if target.IsAdmin() && role != database.RoleAdmin {
-		if !c.hasAnotherAdmin(ctx, target.ID) {
-			jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.last_admin"))
-			return
-		}
-	}
-	if err := c.store.UpdateUserProfile(ctx, id, strings.TrimSpace(req.DisplayName), role); err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to update user")
+	user, err := accounts.NewManagement(c.store, hashPassword).Update(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, id, accounts.UpdateInput{DisplayName: in.DisplayName, Role: in.Role})
+	if err != nil {
+		accountManagementError(w, r, err)
 		return
 	}
-	updated, _ := c.store.GetUserByID(ctx, id)
-	jsonResponse(w, http.StatusOK, updated)
+	jsonResponse(w, http.StatusOK, user)
 }
 
 // resetUserPassword 由管理员重置某账户密码，并踢掉其全部会话强制重新登录。
@@ -863,46 +826,16 @@ func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 
 // deleteUser 删除账户；禁止删除自身与最后一个管理员。
 func (c *Controller) deleteUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	id, err := parseID(r, "userId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid user ID")
 		return
 	}
-	if cur, ok := userFromContext(ctx); ok && cur.ID == id {
-		jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.cannot_delete_self"))
-		return
-	}
-	target, err := c.store.GetUserByID(ctx, id)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, apiText(requestLocale(r), "auth.user_not_found"))
-		return
-	}
-	if target.IsAdmin() && !c.hasAnotherAdmin(ctx, target.ID) {
-		jsonError(w, http.StatusForbidden, apiText(requestLocale(r), "auth.last_admin"))
-		return
-	}
-	if err := c.store.DeleteUser(ctx, id); err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to delete user")
+	if err := accounts.NewManagement(c.store, hashPassword).Delete(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, id); err != nil {
+		accountManagementError(w, r, err)
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// hasAnotherAdmin 判断除 excludeID 外是否仍有管理员，用于守卫「最后一个管理员」。
-func (c *Controller) hasAnotherAdmin(ctx context.Context, excludeID int64) bool {
-	n, err := c.store.CountAdmins(ctx)
-	if err != nil {
-		return false
-	}
-	if n > 1 {
-		return true
-	}
-	if n == 1 {
-		id, e := c.store.FirstAdminUserID(ctx)
-		return e == nil && id != excludeID
-	}
-	return false
 }
 
 // decodeAuthJSON 解码鉴权端点的 JSON 请求体，失败时写 400 并返回 false。
