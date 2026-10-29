@@ -15,6 +15,10 @@ import (
 // GroupLibrary generates collection suggestions for explicit later adjudication.
 func (c *Service) GroupLibrary(ctx context.Context, libID int64, locale string, trigger task.Trigger) (task.Launched, error) {
 	locale = metadata.LocaleFromContext(metadata.WithLocale(ctx, locale))
+	var provider GroupingProvider
+	if c.sources.Grouping != nil {
+		provider = c.sources.Grouping()
+	}
 	scopeName := ""
 	if lib, err := c.store.GetLibrary(ctx, libID); err == nil {
 		scopeName = lib.Name
@@ -41,7 +45,7 @@ func (c *Service) GroupLibrary(ctx context.Context, libID int64, locale string, 
 	return c.runs.Start(ctx, spec, func(taskCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		ctx := metadata.WithLocale(taskCtx, locale)
 
-		result, err := c.groups.Generate(ctx, libID, c.sources.Grouping, groupingObserver{Handle: handle, ctx: ctx, libraryID: libID})
+		result, err := c.groups.Generate(ctx, libID, func() GroupingProvider { return provider }, groupingObserver{Handle: handle, ctx: ctx, libraryID: libID})
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				slog.ErrorContext(ctx, "AI grouping failed", "library_id", libID, "error", err)

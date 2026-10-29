@@ -6,6 +6,8 @@
 #
 # 首次启动时若 config.yaml 不存在，程序也会自动在工作目录生成一份默认配置。
 # 本文件仅作为字段结构与默认值的参考，请勿在此填入真实密钥。
+# 字段生效范围见设置页的“字段生效范围”或 GET /api/system/config 的 field_effects。
+# 字段时机的权威定义位于 internal/config/effects.go。
 
 server:
     host: 0.0.0.0

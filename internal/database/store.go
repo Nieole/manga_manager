@@ -27,6 +27,8 @@ var schemaHandwrittenSQL string
 var schemaSQL = schemaCoreSQL + "\n" + schemaHandwrittenSQL
 
 type Store interface {
+	WithAccountPassword(context.Context, func(AccountPasswordWrite) error) error
+	WithAccountManagement(context.Context, func(AccountManagementWrite) error) error
 	WithScanIngestion(context.Context, func(ScanIngestionWrite) error) error
 	WithAccountInitialization(context.Context, func(AccountInitializationWrite) error) error
 	LibraryHasRecords(context.Context, int64) (bool, error)

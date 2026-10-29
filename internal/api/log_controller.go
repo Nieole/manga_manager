@@ -81,7 +81,7 @@ func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	// 仅当 logger 未初始化文件日志（如测试环境）时，回退到按数据目录推导。
 	logFilePath := logger.LogFilePath()
 	if logFilePath == "" {
-		logFilePath = filepath.Join(filepath.Dir(c.currentConfig().Database.Path), "manga_manager.log")
+		logFilePath = filepath.Join(filepath.Dir(c.runtime.Configuration.DatabasePath()), "manga_manager.log")
 	}
 
 	file, err := os.Open(logFilePath)

@@ -1,5 +1,3 @@
-// 本文件由 controller.go 拆分而来，属于后端 API 层的系统配置子域，负责系统配置读写（含敏感字段脱敏）、能力查询、LLM 连通性测试与目录浏览。
-
 package api
 
 import (
@@ -7,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/config"
 	"manga-manager/internal/metadata"
 	"net/http"
@@ -110,11 +109,12 @@ func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.C
 }
 
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := c.currentConfig()
-	w.Header().Set("ETag", c.config.Version(cfg))
+	view := c.runtime.Configuration.Read()
+	cfg := view.Config
+	w.Header().Set("ETag", view.Publication.Version)
 	c.enrichConfigWithDatabase(r.Context(), &cfg)
 	// 回显前脱敏：LLM api_key、server.auth.token 等敏感字段以占位符返回，不向客户端泄露明文。
-	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(config.MaskSecrets(cfg)))
+	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(config.MaskSecrets(cfg), view.Publication))
 }
 
 func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -122,28 +122,22 @@ func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
-	expected := c.currentConfig()
 	var newCfg config.Config
 	if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid configuration format")
 		return
 	}
-	// 前端保存整份配置时会把未改动的密钥以占位符形式回传，用当前值回填，避免真实密钥被占位符覆盖。
-	config.RestoreMaskedSecrets(&newCfg, expected)
-	config.NormalizeConfig(&newCfg)
-
-	validation := config.ValidateConfig(&newCfg)
-	if !validation.Valid {
-		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
-			"error":      "Configuration validation failed",
-			"validation": validation,
-		})
-		return
-	}
-	if !c.requireConfigVersion(w, r, expected) {
-		return
-	}
-	if err := c.persistConfigExpected(&expected, &newCfg); err != nil {
+	result, err := c.runtime.Configuration.SaveSettings(r.Header.Get("If-Match"), newCfg)
+	if err != nil {
+		var invalid *configuration.Invalid
+		if errors.As(err, &invalid) {
+			jsonResponse(w, http.StatusUnprocessableEntity, map[string]any{"error": "Configuration validation failed", "validation": invalid.Validation})
+			return
+		}
+		if errors.Is(err, configuration.ErrVersionRequired) {
+			jsonError(w, http.StatusPreconditionRequired, "Read the configuration and send its ETag in If-Match before saving")
+			return
+		}
 		if errors.Is(err, config.ErrConflict) {
 			jsonError(w, http.StatusConflict, err.Error())
 			return
@@ -151,13 +145,15 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusInternalServerError, "Failed to persist configuration")
 		return
 	}
-
+	newCfg = result.Config
 	c.enrichConfigWithDatabase(r.Context(), &newCfg)
+	w.Header().Set("ETag", result.Publication.Version)
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"message":    apiText(requestLocale(r), "config.saved"),
-		"config":     config.MaskSecrets(newCfg),
-		"validation": validation,
+		"message":     apiText(requestLocale(r), "config.saved"),
+		"config":      config.MaskSecrets(newCfg),
+		"validation":  result.Validation,
+		"publication": result.Publication,
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"manga-manager/internal/application"
+	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/application/diskjobs"
 	"manga-manager/internal/application/intelligence"
 	"manga-manager/internal/application/libraries"
@@ -61,6 +62,7 @@ type Options struct {
 
 // Runtime holds assembled capabilities. Their modules retain rules, transactions and execution bodies.
 type Runtime struct {
+	Configuration     *configuration.Service
 	Engine            *task.Engine
 	Runs              *application.Runs
 	Tasks             task.Store
@@ -114,6 +116,7 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	}
 	options.Effects = e
 	r := &Runtime{store: store, cfg: cfg, options: options, group: newBackground()}
+	r.Configuration = configuration.New(cfg, options.ConfigPath, runtimecfg.Apply)
 	r.Tasks = taskstore.New(store.DB())
 	r.DiskWork = diskwork.NewRunner(cfg.Snapshot, storageio.Default)
 	tc := options.Tasks

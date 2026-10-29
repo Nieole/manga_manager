@@ -1,8 +1,3 @@
-// 本文件把鉴权链路的进程内状态（账户是否已存在、Basic 凭据缓存、两个失败限流器）
-// 从 Controller 抽成独立组件：这些状态彼此耦合——改密必须同时失效 basicAuthCache，
-// 否则旧口令还能在协议侧用满 TTL；限流与缓存又共用同一个「客户端 IP」概念——
-// 分散在 Controller 里，这些关系没地方统一维护。
-
 package api
 
 import (
@@ -33,6 +28,9 @@ type authState struct {
 	// basicAuthCache: key = 用户名+口令的哈希 → basicAuthEntry。
 	// 用 sync.Map 而非带锁 map：读多写少，且条目数等于活跃协议客户端数（个位到几十）。
 	basicAuthCache sync.Map
+	// 发布和撤销共用代次，避免旧密码的在飞校验在撤销后重新填入缓存。
+	basicAuthPublishMu sync.Mutex
+	basicAuthEpoch     atomic.Uint64
 
 	loginLimiter *attemptLimiter
 	// basicAuthLimiter 装阅读协议 Basic 鉴权里**成功即清零**的那两种桶（键前缀区分，见
@@ -97,8 +95,20 @@ func (a *authState) lookupBasicAuth(username, password string, now time.Time) (i
 	return entry.userID, true
 }
 
-func (a *authState) rememberBasicAuth(username, password string, userID int64, now time.Time) {
+func (a *authState) basicAuthGeneration() uint64 {
 	if a == nil {
+		return 0
+	}
+	return a.basicAuthEpoch.Load()
+}
+
+func (a *authState) rememberBasicAuth(username, password string, userID int64, now time.Time, generation uint64) {
+	if a == nil {
+		return
+	}
+	a.basicAuthPublishMu.Lock()
+	defer a.basicAuthPublishMu.Unlock()
+	if a.basicAuthEpoch.Load() != generation {
 		return
 	}
 	a.basicAuthCache.Store(basicAuthCacheKey(username, password),
@@ -114,6 +124,9 @@ func (a *authState) invalidateBasicAuthForUser(userID int64) {
 	if a == nil {
 		return
 	}
+	a.basicAuthPublishMu.Lock()
+	defer a.basicAuthPublishMu.Unlock()
+	a.basicAuthEpoch.Add(1)
 	a.basicAuthCache.Range(func(key, value any) bool {
 		if e, ok := value.(basicAuthEntry); ok && e.userID == userID {
 			a.basicAuthCache.Delete(key)

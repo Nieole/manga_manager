@@ -36,6 +36,7 @@ interface SessionResponse {
 }
 
 interface AuthContextValue {
+  passwordLoginRequired?: boolean;
   setupNotice?: 'session' | 'claims' | null;
   loading: boolean;
   setupRequired: boolean;
@@ -58,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [setupNotice, setSetupNotice] = useState<'session' | 'claims' | null>(null);
   const [setupRequired, setSetupRequired] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [passwordLoginRequired, setPasswordLoginRequired] = useState(false);
   const [backendUnreachable, setBackendUnreachable] = useState(false);
 
   const applySession = useCallback((data: SessionResponse) => {
@@ -150,6 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data } = await apiClient.post<SessionResponse>('/api/auth/login', { username, password });
       applySession(data);
       setSetupNotice(null);
+      setPasswordLoginRequired(false);
     } catch (error) {
       // 原始错误挂到 cause 上：getApiErrorMessage 只取出给用户看的那句话，
       // 而状态码、响应体这些排查要用的信息都在原始的 axios 错误里。
@@ -184,20 +187,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
     try {
-      const { data } = await apiClient.post<{ csrf_token?: string }>('/api/auth/change-password', {
+      const { data } = await apiClient.post<SessionResponse>('/api/auth/change-password', {
         current_password: currentPassword,
         new_password: newPassword,
       });
-      if (data.csrf_token) setCsrfToken(data.csrf_token);
-      await refresh();
+      applySession(data);
     } catch (error) {
+      if (isAxiosError(error) && error.response?.data?.password_committed === true && error.response?.data?.login_required === true) {
+        setCsrfToken('');
+        setUser(null);
+        setBackendUnreachable(false);
+        setPasswordLoginRequired(true);
+      }
       // 原始错误挂到 cause 上：getApiErrorMessage 只取出给用户看的那句话，
       // 而状态码、响应体这些排查要用的信息都在原始的 axios 错误里。
       throw new Error(getApiErrorMessage(error, 'change password failed'), { cause: error });
     }
-  }, [refresh]);
+  }, [applySession]);
 
   const value = useMemo<AuthContextValue>(() => ({
+    passwordLoginRequired,
     setupNotice,
     loading,
     setupRequired,
@@ -209,7 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     logout,
     changePassword,
-  }), [setupNotice, loading, setupRequired, user, backendUnreachable, refresh, setup, login, logout, changePassword]);
+  }), [passwordLoginRequired, setupNotice, loading, setupRequired, user, backendUnreachable, refresh, setup, login, logout, changePassword]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

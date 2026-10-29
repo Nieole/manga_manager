@@ -1,6 +1,21 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'settings.toast.configSavedRestart': '配置已保存并发布；部分字段仍需重启服务后生效。',
+    'settings.toast.configSavedNext': '配置已保存并发布；相关字段由后续请求或作业读取。',
+    'settings.toast.configRefreshFailed': '保存已成功，但设置视图刷新失败；请重新加载后核对。',
+    'settings.publication.title': '配置发布与生效范围',
+    'settings.publication.saved': '最近一次配置保存已完成并发布，生效范围如下。',
+    'settings.publication.immediate': '即时生效',
+    'settings.publication.next_operation': '后续请求、作业或检查点读取',
+    'settings.publication.restart': '服务重启后生效',
+    'settings.publication.pendingRestart': '仍需重启服务',
+    'settings.publication.managed': '由资料库登记管理',
+    'settings.publication.compatibility': '兼容输入，以规范字段为准',
+    'settings.publication.catalog': '字段生效范围',
+    'settings.publication.description': '即时项由当前进程读取；后续操作项在新请求、作业或检查点读取；重启项仍使用当前进程资源。已发起操作的目标、来源与写入意图保持不变。',
+    'settingsUsers.refreshAfterSaveFailed': '账户已保存，但会话资料刷新失败。请刷新当前账户状态。',
+    'auth.password.sessionFailed': '密码已修改，但新会话未能建立。请使用新密码登录，无需重复改密。',
     'auth.setup.sessionFailed': '管理员已建立，但会话未能建立。请使用该账户登录，无需重复初始化。',
     'auth.setup.claimWarning': '管理员已建立并登录，但部分历史数据未能认领。请保留该账户并检查服务日志。',
     'librarySave.unavailable': '资料库仍被使用或目录已被保留，请等待访问结束后重试。表单内容已保留。',

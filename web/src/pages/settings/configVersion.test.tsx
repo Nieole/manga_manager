@@ -2,6 +2,7 @@
 import { fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { SettingsProvider, useSettings } from './SettingsContext';
+import { SettingsPublicationNotice } from './SettingsPublicationNotice';
 const mocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), toast: vi.fn(), t: (key: string) => key }));
 vi.mock('../../api/client', () => ({ apiClient: mocks, isAxiosError: () => true }));
 vi.mock('../../components/ToastProvider', () => ({ useToast: () => ({ showToast: mocks.toast }) }));
@@ -9,7 +10,7 @@ vi.mock('../../i18n/LocaleProvider', () => ({ useI18n: () => ({ t: mocks.t }), g
 function Editor() {
  const { loading, config, setConfig, saveConfig } = useSettings();
  if (loading || !config) return <span>Loading</span>;
- return <><input aria-label="Workers" value={config.scanner.workers} onChange={(event) => setConfig({ ...config, scanner: { ...config.scanner, workers: Number(event.target.value) } })} /><button onClick={() => void saveConfig('library')}>Save</button><button onClick={() => void saveConfig('media')}>Save media</button></>;
+ return <><SettingsPublicationNotice /><input aria-label="Workers" value={config.scanner.workers} onChange={(event) => setConfig({ ...config, scanner: { ...config.scanner, workers: Number(event.target.value) } })} /><button onClick={() => void saveConfig('library')}>Save</button><button onClick={() => void saveConfig('media')}>Save media</button></>;
 }
 beforeEach(() => {
  vi.clearAllMocks();
@@ -22,6 +23,32 @@ beforeEach(() => {
  mocks.post.mockResolvedValue({ data: { validation: { valid: true, issues: [] } }, headers: {} });
 });
 afterEach(cleanup);
+it('reports a saved configuration with pending restart instead of claiming immediate effects', async () => {
+ mocks.post.mockResolvedValueOnce({ data: { validation: { valid: true, issues: [] }, publication: { saved: true, published: true, version: '"version-two"', immediate: [], next_operation: ['scanner.workers'], restart_required: ['server.port'] } }, headers: {} });
+ render(<SettingsProvider><Editor /></SettingsProvider>);
+ fireEvent.click(await screen.findByText('Save'));
+ await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('settings.toast.configSavedRestart', 'success'));
+ expect(screen.getByText('settings.publication.pendingRestart')).toBeTruthy();
+ expect(screen.getByText('server.port')).toBeTruthy();
+ expect(screen.getByText('scanner.workers')).toBeTruthy();
+});
+
+it('keeps a successful save distinct from a failed follow-up refresh', async () => {
+ const initialGet = mocks.get.getMockImplementation()!;
+ let reads = 0;
+ mocks.get.mockImplementation(async (path: string) => {
+  if (path === '/api/system/config' && ++reads > 1) throw new Error('refresh unavailable');
+  return initialGet(path);
+ });
+ const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+ try {
+  render(<SettingsProvider><Editor /></SettingsProvider>);
+  fireEvent.click(await screen.findByText('Save'));
+  await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('settings.toast.configRefreshFailed', 'error'));
+  expect(mocks.toast).not.toHaveBeenCalledWith('settings.toast.configSaveFailed', 'error');
+ } finally { log.mockRestore(); }
+});
+
 it('sends the version belonging to the displayed server snapshot', async () => {
  render(<SettingsProvider><Editor /></SettingsProvider>);
  fireEvent.change(await screen.findByLabelText('Workers'), { target: { value: '7' } });

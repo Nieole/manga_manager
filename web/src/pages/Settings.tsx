@@ -5,6 +5,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useAuth } from '../auth/AuthProvider';
 import { SettingsProvider, useSettings } from './settings/SettingsContext';
+import { SettingsPublicationNotice } from './settings/SettingsPublicationNotice';
 
 type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance';
 
@@ -163,6 +164,7 @@ function SettingsLayoutInner() {
           <p className="mt-3 text-xs text-gray-500">{t('settings.currentGroupValue', { value: currentNavLabel })}</p>
         </div>
 
+        <SettingsPublicationNotice />
         <Outlet context={{ navigateSettingsSection }} />
       </div>
 
