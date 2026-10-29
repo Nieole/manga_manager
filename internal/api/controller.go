@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"manga-manager/internal/dashboard"
+	"manga-manager/internal/recommendation"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,7 +54,7 @@ type Controller struct {
 	imageCache *imageMemoryCache
 	content    *bookcontent.Service
 	// 仪表盘统计缓存已抽成独立组件（stats_cache.go）；Controller 仅持引用，失效经薄委托方法转发。
-	stats   *statsCache
+	stats   *dashboard.Service
 	scanner *scanner.Scanner
 	config  *config.Manager
 	// diskWork 引用应用运行时为唯一任务引擎装配的共享磁盘执行器。
@@ -74,7 +76,7 @@ type Controller struct {
 	sse *sseBroker
 
 	// AI 阅读推荐缓存已抽成独立组件（recommendation_cache.go，按 locale + TTL + singleflight）；Controller 仅持引用。
-	recommendations *recommendationCache
+	recommendations *recommendation.Service
 
 	// taskEngine 是任务子域的适配层：把启动入口、控制端点与**重启函数**注册表接到
 	// internal/task 的领域引擎与 internal/taskstore 的落盘上（它自己不留任务表，理由见它的符号 doc）。
@@ -136,8 +138,6 @@ type SearchHit struct {
 	Fields map[string]interface{} `json:"fields,omitempty"`
 }
 
-const dashboardStatsCacheTTL = 30 * time.Second
-
 // controllerCacheSizes 是各内存 LRU 的容量。抽成参数是为了让白盒测试用极小容量构造，
 // 从而能在几条数据内触发淘汰路径，而不必为此复制一份装配逻辑。
 type controllerCacheSizes struct {
@@ -160,13 +160,13 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	cache := newImageMemoryCache(sizes.imageBytes)
 	c := &Controller{
 		store:           store,
-		stats:           newStatsCache(),
+		stats:           dashboard.New(),
 		imageCache:      cache,
 		scanner:         scan,
 		config:          cfg,
 		configPath:      cfgPath,
 		sse:             newSSEBroker(),
-		recommendations: newRecommendationCache(24 * time.Hour),
+		recommendations: recommendation.New(24 * time.Hour),
 		openPath:        openPathInDefaultFileManager,
 		auth:            newAuthState(),
 	}

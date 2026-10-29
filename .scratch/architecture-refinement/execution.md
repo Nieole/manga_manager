@@ -31,7 +31,7 @@
 
 11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
 
-当前完成 27/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、29、36。27、41 在独立工作树实施，30 将继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+当前完成 29/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、29、36、38、41。27、30、39 在独立工作树实施，31、28 按依赖继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
 
 12 已合入并关闭：主树 AI 分组 owner race 13.910s、数据库窄能力 race 7.706s、集成后全前端 99 文件 / 937 测试及 lint/build 通过，Go lint 0 issues、格式和 diff 检查通过。主树 API 多次被 Application Control 拦截，稳定二进制启动也未确认执行，已停止精确启动器并保留限制；API 实际通过依据为实现树完整 104.921s、focused race 17.835s 和合并集成后 focused 普通 7.710s。日志位于 .tmp/merge-wave10-*.log。
 
@@ -44,3 +44,7 @@
 29 已合入并关闭：主树 config/metadata/intelligence 完整 race 6.398s/6.628s/10.949s、搜索/抓取/连接配置 HTTP race 35.510s 实际通过，lint 0 issues、gofmt、完整基线 diff 检查与 tracked 冲突标记扫描通过。无前端、SQL 或生成契约变化。日志为 .tmp/merge-wave13-*.log。
 
 26、21 已合入并关闭。26 主树 bookidentity/KOReader/maintenance/runtime 完整 race 4.845s/46.562s/16.574s/20.573s、scanner 身份重联 race 15.011s、设备 HTTP race 21.118s 全部实际通过。21 主树 diskjobs/diskwork/storageio 完整 race 20.742s/6.009s/5.424s、external 普通全包 4.675s、14 项前端消费者通过。external race 启动被拦截，未算通过；实际 race 依据为实现树 34.446s。外部 HTTP 广泛匹配初次命中迁移测试，Windows rename Access is denied 失败保留；外部及该失败测试的 race 定向重跑实际通过 10.430s。lint 0 issues、gofmt、完整基线 diff 检查及 tracked 冲突标记扫描通过。10/29 恢复核对已结束原始日志，没有重复已通过整套门禁；日志为 .tmp/merge-wave14-*.log。
+
+41 已合入并关闭：主树完整owner SQLite和HTTP搜索/上下文/推荐/看板/评价消费者普通测试实际通过 4.754s，3 项系列上下文页面消费者通过，lint 0 issues、gofmt、完整基线 diff 和 tracked 冲突标记扫描通过。主树 race 两次启动被 Application Control 拦截，不计通过；实际 race 依据为实现树合并后的 16.036s。五个 owner 包没有独立测试文件，完整用例由上述真实 SQLite API fixture 调用验证；包编译不代替行为测试。日志为 .tmp/merge-wave15-*.log。
+
+38 已合入并关闭：主树初始化窄数据库能力 race 11.072s、并发 setup/claim/session/login/auth HTTP race 60.133s、3 项初始化恢复前端消费者实际通过。Go lint 0 issues、gofmt、完整基线 diff 检查和 tracked 冲突标记扫描通过。账户 owner 完整用例由真实 SQLite HTTP fixture 调用验证，包本身无独立测试文件。日志为 .tmp/merge-wave16-account-*.log。

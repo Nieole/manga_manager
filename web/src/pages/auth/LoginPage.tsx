@@ -24,7 +24,7 @@ export default function LoginPage() {
     setError('');
     setSubmitting(true);
     try {
-      await login(username.trim(), password);
+      await login(username, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('auth.error.generic'));
       setSubmitting(false);

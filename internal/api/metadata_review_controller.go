@@ -287,6 +287,10 @@ func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int6
 		return metadataReviewResponse{}, err
 	}
 
+	return metadataReviewResponseFrom(listed), nil
+}
+
+func metadataReviewResponseFrom(listed proposal.SeriesProposals) metadataReviewResponse {
 	payload := metadataReviewResponse{
 		Reviews:    make([]metadataReviewView, 0, len(listed.Proposals)),
 		Provenance: make([]metadataProvenanceView, 0, len(listed.Provenance)),
@@ -298,14 +302,7 @@ func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int6
 		payload.Provenance = append(payload.Provenance, provenanceToView(row))
 	}
 
-	return payload, nil
-}
-
-func emptyMetadataReviewResponse() metadataReviewResponse {
-	return metadataReviewResponse{
-		Reviews:    []metadataReviewView{},
-		Provenance: []metadataProvenanceView{},
-	}
+	return payload
 }
 
 func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Request) {

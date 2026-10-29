@@ -9,6 +9,7 @@ import { Suspense, lazy, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from './AuthProvider';
+import { useI18n } from '../i18n/LocaleProvider';
 import { isOfflineReadableRoute } from './offlineAccess';
 
 const LoginPage = lazy(() => import('../pages/auth/LoginPage'));
@@ -23,8 +24,17 @@ function AuthFallback() {
   );
 }
 
+function SetupNotice({ kind }: { kind: 'session' | 'claims' }) {
+  const { t } = useI18n();
+  return (
+    <div role="alert" className="border border-amber-500/40 bg-amber-950 px-4 py-3 text-sm text-amber-100">
+      {t(kind === 'session' ? 'auth.setup.sessionFailed' : 'auth.setup.claimWarning')}
+    </div>
+  );
+}
+
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { loading, setupRequired, user, backendUnreachable } = useAuth();
+  const { loading, setupRequired, user, backendUnreachable, setupNotice } = useAuth();
   const { pathname } = useLocation();
 
   if (loading) return <AuthFallback />;
@@ -38,6 +48,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   else if (!user) gate = offlinePass ? null : <LoginPage />;
   else if (user.must_change_password) gate = <ForcePasswordChangePage />;
 
-  if (gate) return <Suspense fallback={<AuthFallback />}>{gate}</Suspense>;
-  return <>{children}</>;
+  const notice = setupNotice ? <SetupNotice kind={setupNotice} /> : null;
+  if (gate) return <>{notice}<Suspense fallback={<AuthFallback />}>{gate}</Suspense></>;
+  return <>{notice}{children}</>;
 }

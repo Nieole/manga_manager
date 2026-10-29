@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"manga-manager/internal/application/maintenance"
 	"manga-manager/internal/bookidentity"
+	"manga-manager/internal/recommendation"
 	"manga-manager/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
@@ -4057,7 +4058,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	// 缓存按 (locale, user) 分区；无会话上下文时 currentUserID 为 0。
-	controller.recommendations.storeAt(controller.recommendations.snapshotGen(), recommendationCacheKey("zh-CN", 0), []AIRecommendationResponse{{
+	controller.recommendations.StoreAt(controller.recommendations.SnapshotGen(), recommendation.Key("zh-CN", 0), []recommendation.Item{{
 		SeriesID:  99,
 		Reason:    "Cached reason",
 		Title:     "Cached title",

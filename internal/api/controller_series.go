@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"manga-manager/internal/seriescontext"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"manga-manager/internal/application/seriesediting"
-	"manga-manager/internal/booksort"
 	"manga-manager/internal/database"
 	"manga-manager/internal/reading"
 	"manga-manager/internal/seriesmeta"
@@ -388,100 +387,30 @@ func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-
-	// 1. 获取系列基本信息
-	series, err := c.store.GetSeries(ctx, seriesID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "Series not found")
-		return
-	}
-
-	// 2. 获取书籍列表
-	// 书籍列表是这个响应的主干，也是「继续阅读」落点的计算依据。
-	// 查询失败时返回 200 + 空系列会让前端把「数据库暂时不可用」显示成「这个系列没有书」，
-	// 并据此算出错误的续读位置；与同文件 getSeriesContinueEndpoint 的口径统一为 500。
 	subject, err := c.currentReadingSubject(r)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	view, err := reading.NewQueries(c.store).SeriesBooks(ctx, subject, seriesID)
+	out, err := seriescontext.New(c.store, c.relations, c.proposals, c.taskEngine.engine).Load(r.Context(), subject, seriesID)
 	if err != nil {
-		slog.Error("Failed to fetch books for context", "series_id", seriesID, "error", err)
-		jsonError(w, http.StatusInternalServerError, "Failed to load series context")
+		if errors.Is(err, seriescontext.ErrMissing) {
+			jsonError(w, http.StatusNotFound, "Series not found")
+		} else {
+			jsonError(w, http.StatusInternalServerError, "Failed to load series context")
+		}
 		return
 	}
-	books := readerBookResponses(view.Books)
-
-	// 3. 标签
-	tags, err := c.store.GetTagsForSeries(ctx, seriesID)
+	failedTasks, err := c.taskEngine.statusesFrom(r.Context(), out.FailedRuns)
 	if err != nil {
-		slog.Error("Failed to fetch tags for context", "series_id", seriesID, "error", err)
-	}
-	if tags == nil {
-		tags = []database.Tag{}
-	}
-
-	// 4. 作者
-	authors, err := c.store.GetAuthorsForSeries(ctx, seriesID)
-	if err != nil {
-		slog.Error("Failed to fetch authors for context", "series_id", seriesID, "error", err)
-	}
-	if authors == nil {
-		authors = []database.Author{}
-	}
-
-	// 5. 链接
-	links, err := c.store.GetLinksForSeries(ctx, seriesID)
-	if err != nil {
-		slog.Error("Failed to fetch links for context", "series_id", seriesID, "error", err)
-	}
-	if links == nil {
-		links = []database.SeriesLink{}
-	}
-
-	relations, err := c.loadSeriesRelations(ctx, seriesID)
-	if err != nil {
-		slog.Error("Failed to fetch relations for context", "series_id", seriesID, "error", err)
-		relations = []SeriesRelation{}
-	}
-
-	metadataReview, err := c.loadSeriesMetadataReview(ctx, seriesID)
-	if err != nil {
-		slog.Error("Failed to fetch metadata review for context", "series_id", seriesID, "error", err)
-		metadataReview = emptyMetadataReviewResponse()
-	}
-
-	failedTasks, err := c.taskEngine.listRunSnapshots(ctx, taskFilters{
-		Status:  "failed",
-		Scope:   taskScopeSeries,
-		ScopeID: &seriesID,
-		Limit:   5,
-	})
-	if err != nil {
-		slog.Error("Failed to fetch failed tasks for context", "series_id", seriesID, "error", err)
-		failedTasks = []RunSnapshot{}
+		jsonError(w, http.StatusInternalServerError, "Failed to load series tasks")
+		return
 	}
 	if failedTasks == nil {
 		failedTasks = []RunSnapshot{}
 	}
-
-	jsonResponse(w, http.StatusOK, SeriesContextResponse{
-		Series:            series,
-		Books:             books,
-		Tags:              tags,
-		Authors:           authors,
-		Links:             links,
-		Volumes:           buildSeriesVolumeSummaries(view.Books, false),
-		Relations:         relations,
-		MetadataReview:    metadataReview,
-		MetadataSummary:   summarizeSeriesMetadata(metadataReview),
-		FailedTasks:       failedTasks,
-		FailedTaskSummary: summarizeFailedTasks(failedTasks),
-		Continue:          view.Continue,
-		MetadataVersion:   seriesmeta.Version(series, tags, authors, links),
-	})
+	metadataReview := metadataReviewResponseFrom(out.Proposals)
+	jsonResponse(w, http.StatusOK, SeriesContextResponse{Series: out.Series, Books: readerBookResponses(out.Books.Books), Tags: out.Tags, Authors: out.Authors, Links: out.Links, Volumes: buildSeriesVolumeSummaries(out.Books.Books, false), Relations: out.Relations, MetadataReview: metadataReview, MetadataSummary: SeriesMetadataSummary{PendingReviewCount: out.PendingReviews, ProvenanceCount: out.ProvenanceCount}, FailedTasks: failedTasks, FailedTaskSummary: SeriesFailedTaskSummary{Count: len(out.FailedRuns), LatestAt: out.LatestFailure}, Continue: out.Books.Continue, MetadataVersion: out.MetadataVersion})
 }
 
 func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Request) {
@@ -512,63 +441,12 @@ func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Re
 }
 
 func buildSeriesVolumeSummaries(books []reading.BookView, includeBooks bool) []SeriesVolumeSummary {
-	type volumeAccumulator struct {
-		summary SeriesVolumeSummary
-		books   []database.Book
+	volumes := seriescontext.Volumes(books, includeBooks)
+	out := make([]SeriesVolumeSummary, 0, len(volumes))
+	for _, v := range volumes {
+		out = append(out, SeriesVolumeSummary{Name: v.Name, BookCount: v.BookCount, TotalPages: v.TotalPages, ReadPages: v.ReadPages, CoverBookID: v.CoverBookID, CoverPath: v.CoverPath, UpdatedAt: v.UpdatedAt, Books: readerBookResponses(v.Books)})
 	}
-	volumeMap := make(map[string]*volumeAccumulator)
-	for _, view := range books {
-		book := readerBookResponse(view)
-		volumeName := strings.TrimSpace(book.Volume)
-		if volumeName == "" {
-			continue
-		}
-		acc, ok := volumeMap[volumeName]
-		if !ok {
-			acc = &volumeAccumulator{summary: SeriesVolumeSummary{Name: volumeName}}
-			volumeMap[volumeName] = acc
-		}
-		acc.summary.BookCount++
-		acc.summary.TotalPages += book.PageCount
-		acc.summary.ReadPages += view.Inspect().ReadPages
-		if acc.summary.CoverBookID == 0 && book.CoverPath.Valid && strings.TrimSpace(book.CoverPath.String) != "" {
-			acc.summary.CoverBookID = book.ID
-			acc.summary.CoverPath = book.CoverPath
-			acc.summary.UpdatedAt = book.UpdatedAt
-		}
-		if includeBooks {
-			acc.books = append(acc.books, book)
-		}
-	}
-	items := make([]SeriesVolumeSummary, 0, len(volumeMap))
-	for _, acc := range volumeMap {
-		if includeBooks {
-			acc.summary.Books = acc.books
-		}
-		items = append(items, acc.summary)
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return booksort.CompareLabels(items[i].Name, items[j].Name) < 0
-	})
-	return items
-}
-
-func summarizeFailedTasks(tasks []RunSnapshot) SeriesFailedTaskSummary {
-	summary := SeriesFailedTaskSummary{Count: len(tasks)}
-	for _, task := range tasks {
-		if summary.LatestAt == nil || task.UpdatedAt.After(*summary.LatestAt) {
-			updatedAt := task.UpdatedAt
-			summary.LatestAt = &updatedAt
-		}
-	}
-	return summary
-}
-
-func summarizeSeriesMetadata(review metadataReviewResponse) SeriesMetadataSummary {
-	return SeriesMetadataSummary{
-		PendingReviewCount: len(review.Reviews),
-		ProvenanceCount:    len(review.Provenance),
-	}
+	return out
 }
 
 func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {
