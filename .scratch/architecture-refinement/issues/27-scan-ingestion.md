@@ -4,15 +4,34 @@
 
 **Blocked by:** 26: 书身份与设备匹配能力。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 36、38、123、124、126、129、134、135。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
 **切片类型：** 纵向切片。
 
-- [ ] 消费中立身份能力，来源元数据仍用既有锁定与写入规则。
-- [ ] 事务只暴露所需摄入能力，保留批次、回滚、聚合和统计事件。
-- [ ] 改名重连、根可达/真实书/比例保护及封面独立交接保持。
-- [ ] 真实 SQLite/归档扫描用例验证结果，adapter 不公开 worker/SQL 配方。
+- [x] 消费中立身份能力，来源元数据仍用既有锁定与写入规则。
+- [x] 事务只暴露所需摄入能力，保留批次、回滚、聚合和统计事件。
+- [x] 改名重连、根可达/真实书/比例保护及封面独立交接保持。
+- [x] 真实 SQLite/归档扫描用例验证结果，adapter 不公开 worker/SQL 配方。
 
 ## Comments
+
+### Implementation and verification — 2026-10-29
+
+- Both complete public scan entrypoints now use one internal ingestion process. `archiveDiscovery` owns format and profile-aware incremental admission, `archiveInterpreter` owns archive parsing, source placement, cover hints and neutral typed evidence, and `ingestionWriter` alone claims old identities and persists batches. Interpreted source facts contain no ownership IDs or SQL parameters; `claimedArchive` adds the writer's optional old-record claim, and only the writer maps committed ownership into persistence inputs. Callers still invoke complete library/series scans and never schedule workers or flush SQL.
+- `database.ScanIngestionWrite` exposes only series/book/evidence writes and source-specific append associations inside `WithScanIngestion`. Its concrete adapter holds a private query field instead of embedding Queries or exposing DB/ExecTx. The writer receives only ingestion, series-snapshot and derived-refresh capabilities. `seriesmeta` retains the existing cached scan locks, default locked title, source-specific updates and tolerant association append semantics. Single-writer batching and the existing profile behavior remain intact.
+- Transactional series and lock-cache additions are staged until commit. Renaming metrics and success logs also publish only committed rehomes. Real SQLite rollback reproduced two visible defects before the fixes: a failed first batch poisoned the next batch with nonexistent series IDs (zero books survived), and a rolled-back rename was reported as `RehomedBooks=1`. The final regressions use deferred-FK triggers to fail at commit while the transaction retains all writes; they verify the next successful batch and original identities through the public scanner/store/observer seams. CHANGELOG records these actual fixes.
+- `derivedSeries` owns committed dirty membership, throttled retries and the bounded cancellation-independent final drain. `libraryCleanup` owns root reachability, surviving real book files, uncertain-error retention, ratio protection and protected deletion. Independent cover batches still receive only committed jobs and outlive the scan through the existing handoff; unique run admission and size+mtime/ambiguity/copy policies are unchanged. Watcher scheduling and stop coordination remain ticket 28.
+- Red evidence: `.tmp/ticket27-red-cache-real.log` and `ticket27-red-rehome.log` contain actual scanner failures before the fixes. The initial trigger exercised rollback during a statement; final `ticket27-green-commit-trigger.log` passes with commit-boundary deferred constraints. Complete source metadata failure, title/lock, cancellation, renamed-record, cleanup and cover consumer regressions remain in the scanner suite.
+- Actual passing executions: scanner full 16.114s and complete scanner race 45.243s; full API 96.980s; scanning 3.479s, maintenance 3.153s, runtime 5.562s and database 8.288s. Ordinary seriesmeta execution was blocked by Windows Application Control and is not a pass; its complete race retry actually passed 22.005s. Backend build passed. Lint reported 0 issues after correcting a file-comment attachment; gofmt output was empty. Raw logs are under `.tmp/ticket27-*.log`.
+- No frontend, SQL source or generated response structures changed. The complete baseline whitespace/conflict-marker audit and final merge validation follow below. Status stays ready-for-agent until merger validation and closure.
+- Merged integration 48527f2 in 8fb6b78, then current 3821b4e in 26c3706. Resolutions retained both CHANGELOG entries and both Store capabilities. After the first merge, complete scanner passed 19.194s and runtime 6.612s; scan/cover HTTP consumers passed 5.483s. After the latest merge, scanning executed and passed 6.162s, the scan/cover HTTP consumers passed 7.253s, lint reported 0 issues and gofmt output was empty (.tmp/ticket27-merged-scan.log, ticket27-scanning-final.log, ticket27-api-final.log, ticket27-lint-final.log, ticket27-format-final.log). An intermediate test attempted before merge conflicts were resolved produced only marker-related compile errors and is not verification evidence.
+
+- Ticket 28 follow-up: current compatibility scan methods retain warning/metric reporting for dropped batches and can return nil error. The coordinator must consume an explicit actual ingestion completion/partial-failure/cleanup-eligibility result rather than equating nil error or a run terminal state with safe cleanup. The new rollback tests here are fixtures for protecting the old identity while a renamed file has not been successfully ingested. This eligibility change is not claimed implemented in ticket 27.
+
+### Integration verification (2026-10-29)
+
+- Merged through 0333974fa0a1b84d55a2f15dcc73822c350d5c86 without conflicts. Main-tree scanner identity/rehome/lock/cleanup/cover race passed 42.501s. Both new commit-boundary rollback regressions ran explicitly and passed under race 6.663s; the initial broad filter is not used as evidence for those two tests.
+- Related scanning/runtime race consumers passed 10.302s/8.866s, and scan/cover HTTP race passed 15.572s. The database package compiled but its filtered command selected no tests; actual narrow transaction behavior is exercised through the real SQLite scanner rollback consumers, not inferred from that empty selection.
+- Go lint reported 0 issues; gofmt emitted no files. Whole-baseline whitespace and tracked conflict-marker scans passed. Raw logs: .tmp/merge-wave17-scanner.log, merge-wave17-rollback.log, merge-wave17-owner.log, merge-wave17-api.log and merge-wave17-lint.log. The explicit actual completion/cleanup eligibility change remains ticket 28 as recorded above.
