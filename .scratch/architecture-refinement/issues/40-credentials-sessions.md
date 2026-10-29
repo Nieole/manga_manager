@@ -4,7 +4,7 @@
 
 **Blocked by:** 38: 站点初始化与账户用例入口。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 184、188、189、191、192、193。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -27,3 +27,9 @@
 - Before merging the latest configuration publication, complete API/database tests executed in 107.240s/11.190s; password/capability race executed in 22.023s/1.502s. The final cache-handoff plus Basic/protocol race executed in 27.832s. The complete frontend executed 103 files/952 tests, lint and build. The merged auth/account/config consumers executed 15 tests successfully. Logs are in `.tmp/ticket40-*.log`.
 - Code commit `5f21200`; integration `cb7b737` merged in `1215c69`, preserving both configuration-publication and password CHANGELOG entries. Final merged verification is recorded below. Status remains `ready-for-agent` until merger verification and closure.
 - Final merged complete API/database executed successfully in 108.123s/8.018s; merged frontend executed 103 files/954 tests. Frontend lint/build, Go build, Go lint (`0 issues.`), empty `gofmt -l ./cmd ./internal`, full-baseline `git diff --check` and all-tracked conflict-marker scan passed. No SQL source, schema or generated-contract change was needed by this ticket. No remote device or other-platform execution is claimed.
+
+### Integration verification — 2026-10-30
+
+- Integrated `codex/refinement-40` at `bcb05cf66af1c5b127cd9c45cb5310153427347a`. Main-tree real SQLite password/revocation, replacement-session failure, in-flight Basic cache, forced-change/device protocol and password-probe HTTP regressions executed with race detection in 38.782s.
+- The private transaction capability guard executed with race detection in 1.524s. Auth recovery and account-reset consumers executed 2 files/10 tests successfully. Go lint reported `0 issues.`, gofmt output was empty, and the complete baseline diff and tracked conflict-marker checks passed.
+- Raw main-tree evidence: `.tmp/merge-wave20-password-api.log`, `.tmp/merge-wave20-password-capability.log`, `.tmp/merge-wave20-password-web.log` and `.tmp/merge-wave20-lint.log`. These commands executed successfully; no blocked launch was counted as passing.
