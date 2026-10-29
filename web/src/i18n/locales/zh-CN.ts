@@ -2,6 +2,7 @@ import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
     'settingsUsers.refreshAfterSaveFailed': '账户已保存，但会话资料刷新失败。请刷新当前账户状态。',
+    'auth.password.sessionFailed': '密码已修改，但新会话未能建立。请使用新密码登录，无需重复改密。',
     'auth.setup.sessionFailed': '管理员已建立，但会话未能建立。请使用该账户登录，无需重复初始化。',
     'auth.setup.claimWarning': '管理员已建立并登录，但部分历史数据未能认领。请保留该账户并检查服务日志。',
     'librarySave.unavailable': '资料库仍被使用或目录已被保留，请等待访问结束后重试。表单内容已保留。',

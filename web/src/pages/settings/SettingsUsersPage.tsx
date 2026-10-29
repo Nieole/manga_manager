@@ -94,11 +94,16 @@ export function SettingsUsersPage() {
     if (!resetTarget || resetPassword.length < 8) return;
     setBusyId(resetTarget.id);
     try {
-      await apiClient.post(`/api/users/${resetTarget.id}/password`, { password: resetPassword });
+      const { data } = await apiClient.post<{ user: UserRow }>(`/api/users/${resetTarget.id}/password`, { password: resetPassword });
+      setUsers((current) => current.map((item) => item.id === data.user.id ? data.user : item));
       showToast(t('settingsUsers.resetSuccess'), 'success');
       setResetTarget(null);
       setResetPassword('');
-      load();
+      if (currentUser?.id === data.user.id) {
+        try { await refreshAuth(); } catch {
+          showToast(t('settingsUsers.refreshAfterSaveFailed'), 'error');
+        }
+      }
     } catch (err) {
       showToast(getApiErrorMessage(err, t('settingsUsers.resetFailed')), 'error');
     } finally {
