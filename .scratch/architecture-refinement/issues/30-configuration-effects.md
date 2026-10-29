@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 137、138、139、142、143。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -29,3 +29,9 @@
 - After incorporating scan ingestion and the final snapshot-consistency fix, `.tmp/ticket30-final-combination.log` records publication 0.645s, intelligence 0.801s, maintenance 0.225s and API 1.148s actually passing; `.tmp/ticket30-final-lint.log` records `0 issues.`. Full-baseline whitespace checks from `badc595541250189586b87e9d1c1c83ac79fd677` and tracked conflict-marker scans were empty, as was gofmt.
 - The final account-administration merge preserved both sets of CHANGELOG/localization additions; `.tmp/ticket30-last-main-api.log` records the real settings/active-database-target HTTP tests passing 0.247s afterward, and `.tmp/ticket30-last-main-ui-build.log` records the successful final real build.
 - No remote multi-platform execution or resource-retirement acceptance is claimed. Status remains ready-for-agent pending merger verification and closure.
+
+### Integration verification (2026-10-29)
+
+- Merged through aa26dd045a5732a4f3beb1f0baf857fdba97dccf without conflicts. Main-tree full config/publisher/intelligence/maintenance race suites passed 3.761s/1.759s/5.959s/6.925s. Configuration HTTP race passed 11.510s; explicit publication/deferred-effects and pending-database/actual-trash-target HTTP race passed 2.692s. Settings publication consumers passed all 5 tests.
+- Initial runtime full race actually failed TestShutdownWaitsForAlreadyAdmittedBackgroundHandoff: the fixture observed completed rather than cancelled after releasing a handoff following a 20ms timer. The whole runtime race retry passed 8.822s. The failed log remains evidence of timing instability; no shutdown fix is claimed here, and ticket 31 should replace timing assumptions with an actual shutdown boundary check.
+- Go lint reported 0 issues, gofmt emitted no files, and actual tsgen generated 26 types without drift. Whole-baseline whitespace and tracked conflict-marker scans passed. Raw logs: .tmp/merge-wave19-owner.log, merge-wave19-runtime-retry.log, merge-wave19-api.log, merge-wave19-publication-api.log, merge-wave19-web.log and merge-wave19-lint.log.
