@@ -27,7 +27,7 @@ var apiMessages = map[string]map[string]string{
 		"maintenance.thumbnails_rebuilding":         "当前的所有缩略图缓存已彻底撕毁，后台已发起全量静默遍历来重制封面。",
 		"maintenance.cover_cleanup_started":         "已在后台启动无效封面资源清理任务。",
 		"maintenance.file_identity_rebuild_started": "文件身份索引重建已启动",
-		"config.saved":                          "配置已成功保存。大部分设定会立刻生效。",
+		"config.saved":                          "配置已保存；生效范围见设置结果。",
 		"recommendations.ai_grouping_submitted": "AI 分组审核任务已提交至后台",
 
 		"comicinfo.write.unsupported":   "该格式不支持写入元数据（仅 cbz/zip 可写，rar/cbr 会跳过）。",
@@ -85,7 +85,7 @@ var apiMessages = map[string]map[string]string{
 		"maintenance.thumbnails_rebuilding":         "All thumbnail caches were cleared; a full background sweep is regenerating covers.",
 		"maintenance.cover_cleanup_started":         "Started a background task to clean up orphaned cover assets.",
 		"maintenance.file_identity_rebuild_started": "File identity index rebuild started",
-		"config.saved":                          "Configuration saved. Most settings take effect immediately.",
+		"config.saved":                          "Configuration saved; see the settings result for when changes take effect.",
 		"recommendations.ai_grouping_submitted": "AI grouping review task submitted to the background",
 
 		"comicinfo.write.unsupported":   "This format cannot embed metadata (only cbz/zip are writable; rar/cbr are skipped).",

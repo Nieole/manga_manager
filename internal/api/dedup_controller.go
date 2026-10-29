@@ -76,7 +76,7 @@ func (c *Controller) removeBooks(w http.ResponseWriter, r *http.Request) {
 
 	var trashDir string
 	if req.MoveToTrash {
-		trashDir = filepath.Join(filepath.Dir(c.currentConfig().Database.Path), "trash")
+		trashDir = filepath.Join(filepath.Dir(c.runtime.Configuration.DatabasePath()), "trash")
 		if err := os.MkdirAll(trashDir, 0o755); err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to prepare trash directory")
 			return

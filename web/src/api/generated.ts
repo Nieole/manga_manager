@@ -147,6 +147,20 @@ export interface ValidationResult {
   issues: ValidationIssue[];
 }
 
+export interface FieldEffect {
+  field: string;
+  scope: string;
+}
+
+export interface Publication {
+  saved: boolean;
+  published: boolean;
+  version: string;
+  immediate: string[];
+  next_operation: string[];
+  restart_required: string[];
+}
+
 export interface SystemCapabilitiesResponse {
   supported_scan_formats: string[];
   supported_scan_profiles: string[];

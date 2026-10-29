@@ -1,6 +1,19 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'settings.toast.configSavedRestart': 'Configuration saved and published; some fields still require a server restart.',
+    'settings.toast.configSavedNext': 'Configuration saved and published; related fields are read by subsequent requests or jobs.',
+    'settings.toast.configRefreshFailed': 'The save succeeded, but refreshing settings failed. Reload to verify the current view.',
+    'settings.publication.title': 'Configuration publication and effect timing',
+    'settings.publication.saved': 'The last configuration save persisted and published. Effect timing is listed below.',
+    'settings.publication.immediate': 'Immediate effect',
+    'settings.publication.next_operation': 'Read by subsequent requests, jobs or checkpoints',
+    'settings.publication.restart': 'Takes effect after a server restart',
+    'settings.publication.pendingRestart': 'Server restart still required',
+    'settings.publication.managed': 'Managed by library registration',
+    'settings.publication.compatibility': 'Compatibility input; canonical fields take precedence',
+    'settings.publication.catalog': 'Field effect timing',
+    'settings.publication.description': 'Immediate fields are read by the current process. Subsequent-operation fields are read by new requests, jobs or checkpoints; restart fields still use current process resources. Started operations retain their target, source and write intent.',
     'settingsUsers.refreshAfterSaveFailed': 'The account was saved, but session details could not refresh. Reload your account status.',
     'auth.password.sessionFailed': 'Your password changed, but a new session could not be created. Sign in with your new password; do not repeat the change.',
     'auth.setup.sessionFailed': 'The administrator was created, but the session could not start. Sign in with that account; do not repeat setup.',

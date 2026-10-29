@@ -58,7 +58,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 		watch := r.options.WatchConfig
 		if watch == nil {
 			watch = func(path string, cfg *config.Manager) (ConfigWatch, error) {
-				return config.StartWatcher(path, cfg, runtimecfg.Apply)
+				return config.StartPublicationWatcher(path, func() error { _, err := r.Configuration.Reload(); return err })
 			}
 		}
 		w, err := watch(r.options.ConfigPath, r.cfg)
