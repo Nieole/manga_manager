@@ -24,7 +24,7 @@ interface UserRow {
 export function SettingsUsersPage() {
   const { t } = useI18n();
   const { showToast } = useToast();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, refresh: refreshAuth } = useAuth();
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,15 +56,15 @@ export function SettingsUsersPage() {
     if (!form.username.trim() || form.password.length < 8) return;
     setCreating(true);
     try {
-      await apiClient.post('/api/users', {
-        username: form.username.trim(),
+      const { data } = await apiClient.post<UserRow>('/api/users', {
+        username: form.username,
         password: form.password,
         display_name: form.display_name.trim(),
         role: form.role,
       });
       showToast(t('settingsUsers.created'), 'success');
       setForm({ username: '', password: '', display_name: '', role: 'regular' });
-      load();
+      setUsers((current) => [...current, data]);
     } catch (err) {
       showToast(getApiErrorMessage(err, t('settingsUsers.createFailed')), 'error');
     } finally {
@@ -76,8 +76,13 @@ export function SettingsUsersPage() {
     if (u.role === role) return;
     setBusyId(u.id);
     try {
-      await apiClient.patch(`/api/users/${u.id}`, { display_name: u.display_name, role });
-      load();
+      const { data } = await apiClient.patch<UserRow>(`/api/users/${u.id}`, { display_name: u.display_name, role });
+      setUsers((current) => current.map((item) => item.id === data.id ? data : item));
+      if (currentUser?.id === data.id) {
+        try { await refreshAuth(); } catch {
+          showToast(t('settingsUsers.refreshAfterSaveFailed'), 'error');
+        }
+      }
     } catch (err) {
       showToast(getApiErrorMessage(err, t('settingsUsers.createFailed')), 'error');
     } finally {
@@ -108,7 +113,7 @@ export function SettingsUsersPage() {
       await apiClient.delete(`/api/users/${deleteTarget.id}`);
       showToast(t('settingsUsers.deleted'), 'success');
       setDeleteTarget(null);
-      load();
+      setUsers((current) => current.filter((item) => item.id !== deleteTarget.id));
     } catch (err) {
       showToast(getApiErrorMessage(err, t('settingsUsers.deleteFailed')), 'error');
     } finally {
