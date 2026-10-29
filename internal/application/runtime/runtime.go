@@ -165,7 +165,7 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 		}
 	}
 	r.Intelligence = intelligence.New(r.Runs, store, r.Proposals, organize.NewAIGrouping(store, nil), sources, e.Publish)
-	r.Watcher, r.WatcherError = scanner.NewFileWatcher(scanner.WatcherHooks{ScanLibrary: func(ctx context.Context, id int64) error { return r.Scans.WatchLibrary(ctx, id) }, CleanupLibrary: func(ctx context.Context, id int64) error { return r.Scans.WatchCleanup(ctx, id) }, LibraryScanRunning: r.Scanner.LibraryScanActive})
+	r.Watcher, r.WatcherError = scanner.NewFileWatcher(scanner.WatcherHooks{ScanLibrary: r.Scans.WatchIngestion, CleanupLibrary: r.Scans.WatchCleanupWhen, LibraryScanRunning: r.Scanner.LibraryScanActive})
 	var libraryWatcher libraries.Watcher
 	if r.Watcher != nil {
 		libraryWatcher = r.Watcher

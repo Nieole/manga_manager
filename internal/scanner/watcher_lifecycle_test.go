@@ -49,7 +49,7 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 	)
 
 	// 两个桩都阻塞到 ctx 被取消为止：ctx 若永不取消（旧行为），它们就永远不返回。
-	fw.scanLibrary = func(ctx context.Context, _ int64) error {
+	fw.scanLibrary = completedWatchScan(func(ctx context.Context, _ int64) error {
 		select {
 		case scanStarted <- struct{}{}:
 		default:
@@ -58,8 +58,8 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 		scanSawCancel.Store(true)
 		scanDone.Store(true)
 		return ctx.Err()
-	}
-	fw.cleanupLibrary = func(ctx context.Context, _ int64) error {
+	})
+	fw.cleanupLibrary = qualifiedWatchCleanup(func(ctx context.Context, _ int64) error {
 		select {
 		case cleanupStarted <- struct{}{}:
 		default:
@@ -68,7 +68,7 @@ func TestStopCancelsAndWaitsForDispatchedWork(t *testing.T) {
 		cleanSawCancel.Store(true)
 		cleanupDone.Store(true)
 		return ctx.Err()
-	}
+	})
 
 	// 扫描与清理分属两个库。同一个库的清理如今接在该库扫描之后串行（见
 	// TestCleanupWaitsForSameLibraryScan），而这里要验的是两类派发各自可取消、各自被 Stop
@@ -138,14 +138,14 @@ func TestStopClosesDispatchBeforeWaiting(t *testing.T) {
 	t.Run("Stop 之后事件循环不再派活", func(t *testing.T) {
 		fw := newLifecycleWatcher(t)
 		var dispatched atomic.Int64
-		fw.scanLibrary = func(context.Context, int64) error {
+		fw.scanLibrary = completedWatchScan(func(context.Context, int64) error {
 			dispatched.Add(1)
 			return nil
-		}
-		fw.cleanupLibrary = func(context.Context, int64) error {
+		})
+		fw.cleanupLibrary = qualifiedWatchCleanup(func(context.Context, int64) error {
 			dispatched.Add(1)
 			return nil
-		}
+		})
 
 		fw.Stop()
 
@@ -175,10 +175,10 @@ func TestStopClosesDispatchBeforeWaiting(t *testing.T) {
 				cleanupDebounce:    time.Millisecond,
 				cleanupMaxDeferral: time.Hour,
 			}
-			fw.scanLibrary = func(context.Context, int64) error {
+			fw.scanLibrary = completedWatchScan(func(context.Context, int64) error {
 				time.Sleep(time.Millisecond)
 				return nil
-			}
+			})
 			fw.mu.Lock()
 			fw.libs[libPath] = libID
 			fw.mu.Unlock()

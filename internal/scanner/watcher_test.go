@@ -16,8 +16,8 @@ import (
 // （见 FileWatcher 的注入字段）——构造期必须交齐，是为了让生产漏掉一个时编译不过。
 func stubWatcherHooks() WatcherHooks {
 	return WatcherHooks{
-		ScanLibrary:        func(context.Context, int64) error { return nil },
-		CleanupLibrary:     func(context.Context, int64) error { return nil },
+		ScanLibrary:        completedWatchScan(func(context.Context, int64) error { return nil }),
+		CleanupLibrary:     qualifiedWatchCleanup(func(context.Context, int64) error { return nil }),
 		LibraryScanRunning: func(int64) bool { return false },
 	}
 }
@@ -75,5 +75,25 @@ func TestUnwatchLibraryRemovesNestedDirectories(t *testing.T) {
 		if watchedPath == root || strings.HasPrefix(watchedPath, root+string(filepath.Separator)) {
 			t.Fatalf("expected watched paths under %q to be removed, found %q", root, watchedPath)
 		}
+	}
+}
+
+// completedWatchScan marks only an actually returned test scan as complete.
+func completedWatchScan(fn func(context.Context, int64) error) func(context.Context, int64) (ScanOutcome, error) {
+	return func(ctx context.Context, id int64) (ScanOutcome, error) {
+		err := fn(ctx, id)
+		if err != nil {
+			return ScanOutcome{}, err
+		}
+		return ScanOutcome{Status: ScanComplete}, nil
+	}
+}
+
+func qualifiedWatchCleanup(fn func(context.Context, int64) error) func(context.Context, int64, func() bool) error {
+	return func(ctx context.Context, id int64, eligible func() bool) error {
+		if !eligible() {
+			return ErrCleanupDeferred
+		}
+		return fn(ctx, id)
 	}
 }

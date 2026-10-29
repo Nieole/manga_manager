@@ -25,7 +25,7 @@ func TestCleanupWaitsForSameLibraryScan(t *testing.T) {
 	cleanupStarted := make(chan struct{}, 1)
 	scanGate := make(chan struct{})
 
-	fw.scanLibrary = func(ctx context.Context, _ int64) error {
+	fw.scanLibrary = completedWatchScan(func(ctx context.Context, _ int64) error {
 		scanStarted <- struct{}{}
 		select {
 		case <-scanGate:
@@ -33,11 +33,11 @@ func TestCleanupWaitsForSameLibraryScan(t *testing.T) {
 			return ctx.Err()
 		}
 		return nil
-	}
-	fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+	})
+	fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 		cleanupStarted <- struct{}{}
 		return nil
-	}
+	})
 
 	const libID int64 = 1
 	past := time.Now().Add(-10 * time.Second) // 已越过 5 秒去抖阈值
@@ -80,20 +80,20 @@ func TestCleanupSkippedWhenSameLibraryScanFails(t *testing.T) {
 	scanStarted := make(chan struct{}, 1)
 	cleanupStarted := make(chan struct{}, 1)
 
-	fw.scanLibrary = func(_ context.Context, _ int64) error {
+	fw.scanLibrary = completedWatchScan(func(_ context.Context, _ int64) error {
 		select {
 		case scanStarted <- struct{}{}:
 		default:
 		}
 		return errors.New("scan failed")
-	}
-	fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+	})
+	fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 		select {
 		case cleanupStarted <- struct{}{}:
 		default:
 		}
 		return nil
-	}
+	})
 
 	const libID int64 = 1
 	past := time.Now().Add(-10 * time.Second)
@@ -178,14 +178,14 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 		fw.timings.cleanupMaxDeferral = time.Hour // 本条只验「不抢跑」，别让推迟上限插手
 
 		cleanupStarted := make(chan struct{}, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64) error { return nil }
-		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+		fw.scanLibrary = completedWatchScan(func(_ context.Context, _ int64) error { return nil })
+		fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 			select {
 			case cleanupStarted <- struct{}{}:
 			default:
 			}
 			return nil
-		}
+		})
 
 		// 时刻由用例给、每一拍也由用例自己驱动：不起事件循环，就不存在「刷新窗口的协程被饿着、
 		// 墙钟却照走」这回事——判据于是只看派发逻辑，不看机器快慢。
@@ -220,18 +220,18 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 
 		var scanReturned atomic.Bool
 		cleanupSawScan := make(chan bool, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64) error {
+		fw.scanLibrary = completedWatchScan(func(_ context.Context, _ int64) error {
 			time.Sleep(30 * time.Millisecond)
 			scanReturned.Store(true)
 			return nil
-		}
-		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+		})
+		fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 			select {
 			case cleanupSawScan <- scanReturned.Load():
 			default:
 			}
 			return nil
-		}
+		})
 
 		fw.mu.Lock()
 		fw.libs[libPath] = libID
@@ -265,7 +265,7 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 		var scanReturned atomic.Bool
 		cleanupSawScan := make(chan bool, 1)
 
-		fw.scanLibrary = func(ctx context.Context, _ int64) error {
+		fw.scanLibrary = completedWatchScan(func(ctx context.Context, _ int64) error {
 			select {
 			case scanStarted <- struct{}{}:
 			default:
@@ -277,14 +277,14 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 			}
 			scanReturned.Store(true)
 			return nil
-		}
-		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+		})
+		fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 			select {
 			case cleanupSawScan <- scanReturned.Load():
 			default:
 			}
 			return nil
-		}
+		})
 
 		fw.mu.Lock()
 		fw.libs[libPath] = libID
@@ -332,14 +332,14 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 		fw.libraryScanRunning = func(int64) bool { return elsewhere.Load() }
 
 		cleanupStarted := make(chan struct{}, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64) error { return nil }
-		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+		fw.scanLibrary = completedWatchScan(func(_ context.Context, _ int64) error { return nil })
+		fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 			select {
 			case cleanupStarted <- struct{}{}:
 			default:
 			}
 			return nil
-		}
+		})
 
 		past := time.Now().Add(-time.Second)
 		fw.mu.Lock()
@@ -371,17 +371,17 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 
 		var scans atomic.Int64
 		cleanupStarted := make(chan struct{}, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64) error {
+		fw.scanLibrary = completedWatchScan(func(_ context.Context, _ int64) error {
 			scans.Add(1)
 			return errors.New("scan failed")
-		}
-		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+		})
+		fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 			select {
 			case cleanupStarted <- struct{}{}:
 			default:
 			}
 			return nil
-		}
+		})
 
 		past := time.Now().Add(-time.Second)
 		fw.mu.Lock()
@@ -411,17 +411,17 @@ func TestCleanupHoldsForUnsettledRehome(t *testing.T) {
 
 		var scanReturned atomic.Bool
 		cleanupSawScan := make(chan bool, 1)
-		fw.scanLibrary = func(_ context.Context, _ int64) error {
+		fw.scanLibrary = completedWatchScan(func(_ context.Context, _ int64) error {
 			scanReturned.Store(true)
 			return nil
-		}
-		fw.cleanupLibrary = func(_ context.Context, _ int64) error {
+		})
+		fw.cleanupLibrary = qualifiedWatchCleanup(func(_ context.Context, _ int64) error {
 			select {
 			case cleanupSawScan <- scanReturned.Load():
 			default:
 			}
 			return nil
-		}
+		})
 
 		fw.mu.Lock()
 		fw.libs[libPath] = libID
