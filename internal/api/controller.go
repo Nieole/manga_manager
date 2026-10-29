@@ -315,13 +315,13 @@ func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
 	}
 }
 
-func (c *Controller) buildSystemConfigResponse(cfg config.Config) SystemConfigResponse {
+func (c *Controller) buildSystemConfigResponse(cfg config.Config, publication configuration.Publication) SystemConfigResponse {
 	return SystemConfigResponse{
 		Config:       cfg,
 		Validation:   config.ValidateConfig(&cfg),
 		Capabilities: c.systemCapabilities(),
 		FieldEffects: config.FieldEffects(),
-		Publication:  c.runtime.Configuration.Status(),
+		Publication:  publication,
 	}
 }
 

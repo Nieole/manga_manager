@@ -109,11 +109,12 @@ func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.C
 }
 
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := c.currentConfig()
-	w.Header().Set("ETag", c.config.Version(cfg))
+	view := c.runtime.Configuration.Read()
+	cfg := view.Config
+	w.Header().Set("ETag", view.Publication.Version)
 	c.enrichConfigWithDatabase(r.Context(), &cfg)
 	// 回显前脱敏：LLM api_key、server.auth.token 等敏感字段以占位符返回，不向客户端泄露明文。
-	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(config.MaskSecrets(cfg)))
+	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(config.MaskSecrets(cfg), view.Publication))
 }
 
 func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Request) {

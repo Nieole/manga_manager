@@ -82,11 +82,20 @@ func (s *Service) describe(before, after config.Config, saved bool) Publication 
 	return p
 }
 
-// Status reports pending restart effects against resources created for this process.
-func (s *Service) Status() Publication {
-	current := s.manager.Snapshot()
-	return s.describe(current, current, false)
+// Snapshot keeps the published document and its version/effect status in one read.
+type Snapshot struct {
+	Config      config.Config
+	Publication Publication
 }
+
+// Read returns one Manager generation and the effect status belonging to that generation.
+func (s *Service) Read() Snapshot {
+	current := s.manager.Snapshot()
+	return Snapshot{Config: current, Publication: s.describe(current, current, false)}
+}
+
+// Status reports pending restart effects against resources created for this process.
+func (s *Service) Status() Publication { return s.Read().Publication }
 
 // SaveSettings validates a masked client document and its expected version before saving.
 func (s *Service) SaveSettings(version string, proposed config.Config) (Result, error) {
