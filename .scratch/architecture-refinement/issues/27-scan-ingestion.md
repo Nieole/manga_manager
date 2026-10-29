@@ -4,7 +4,7 @@
 
 **Blocked by:** 26: 书身份与设备匹配能力。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 36、38、123、124、126、129、134、135。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -29,3 +29,9 @@
 - Merged integration 48527f2 in 8fb6b78, then current 3821b4e in 26c3706. Resolutions retained both CHANGELOG entries and both Store capabilities. After the first merge, complete scanner passed 19.194s and runtime 6.612s; scan/cover HTTP consumers passed 5.483s. After the latest merge, scanning executed and passed 6.162s, the scan/cover HTTP consumers passed 7.253s, lint reported 0 issues and gofmt output was empty (.tmp/ticket27-merged-scan.log, ticket27-scanning-final.log, ticket27-api-final.log, ticket27-lint-final.log, ticket27-format-final.log). An intermediate test attempted before merge conflicts were resolved produced only marker-related compile errors and is not verification evidence.
 
 - Ticket 28 follow-up: current compatibility scan methods retain warning/metric reporting for dropped batches and can return nil error. The coordinator must consume an explicit actual ingestion completion/partial-failure/cleanup-eligibility result rather than equating nil error or a run terminal state with safe cleanup. The new rollback tests here are fixtures for protecting the old identity while a renamed file has not been successfully ingested. This eligibility change is not claimed implemented in ticket 27.
+
+### Integration verification (2026-10-29)
+
+- Merged through 0333974fa0a1b84d55a2f15dcc73822c350d5c86 without conflicts. Main-tree scanner identity/rehome/lock/cleanup/cover race passed 42.501s. Both new commit-boundary rollback regressions ran explicitly and passed under race 6.663s; the initial broad filter is not used as evidence for those two tests.
+- Related scanning/runtime race consumers passed 10.302s/8.866s, and scan/cover HTTP race passed 15.572s. The database package compiled but its filtered command selected no tests; actual narrow transaction behavior is exercised through the real SQLite scanner rollback consumers, not inferred from that empty selection.
+- Go lint reported 0 issues; gofmt emitted no files. Whole-baseline whitespace and tracked conflict-marker scans passed. Raw logs: .tmp/merge-wave17-scanner.log, merge-wave17-rollback.log, merge-wave17-owner.log, merge-wave17-api.log and merge-wave17-lint.log. The explicit actual completion/cleanup eligibility change remains ticket 28 as recorded above.
