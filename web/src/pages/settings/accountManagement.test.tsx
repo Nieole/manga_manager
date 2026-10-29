@@ -22,3 +22,30 @@ it('removes a deleted account using the committed result without reloading the l
   await waitFor(() => expect(screen.queryByText('@original')).toBeNull());
   expect(mocks.remove).toHaveBeenCalledWith('/api/users/1');
 });
+
+it('keeps the authoritative temporary-password state after reset without reloading the user list', async () => {
+  mocks.get.mockResolvedValueOnce({ data: [row] }).mockRejectedValue(new Error('reload failed'));
+  mocks.post.mockResolvedValue({ data: { user: { ...row, must_change_password: true }, password_committed: true } });
+  setup();
+  await screen.findByText('@original');
+  fireEvent.click(screen.getByTitle('重置密码'));
+  fireEvent.change(screen.getByPlaceholderText('新的初始密码（至少 8 位）'), { target: { value: 'password2' } });
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '重置密码', exact: true }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(screen.getByText(/· 待首次登录改密/)).toBeTruthy();
+  expect(mocks.get).toHaveBeenCalledTimes(1);
+});
+
+it('reports a session-refresh failure separately after resetting the current account', async () => {
+  mocks.get.mockResolvedValue({ data: [{ ...row, id: 99 }] });
+  mocks.post.mockResolvedValue({ data: { user: { ...row, id: 99, must_change_password: true }, password_committed: true } });
+  mocks.refresh.mockRejectedValueOnce(new Error('session refresh failed'));
+  setup();
+  await screen.findByText('@original');
+  fireEvent.click(screen.getByTitle('重置密码'));
+  fireEvent.change(screen.getByPlaceholderText('新的初始密码（至少 8 位）'), { target: { value: 'password2' } });
+  fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '重置密码', exact: true }));
+  await screen.findByText('账户已保存，但会话资料刷新失败。请刷新当前账户状态。');
+  expect(screen.getByText(/· 待首次登录改密/)).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+});

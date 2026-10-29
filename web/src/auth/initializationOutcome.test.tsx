@@ -69,3 +69,23 @@ it('successful setup keeps legacy-claim warnings visible after entering the app'
   await screen.findByText('application-ready');
   expect((await screen.findByRole('alert')).textContent).toContain('历史数据');
 });
+
+it('committed password with failed replacement session returns to login and preserves offline ownership', async () => {
+  localStorage.setItem('manga-manager:offline-owner', '1');
+  localStorage.setItem('manga-manager:offline-books', '{"42":{"bookId":"42"}}');
+  mocks.get.mockResolvedValue({ data: { setup_required: false, authenticated: true, ...session, user: { ...session.user, must_change_password: true } } });
+  mocks.post.mockRejectedValueOnce({ isAxiosError: true, response: { status: 500, data: { password_committed: true, login_required: true } } }).mockResolvedValueOnce({ data: session });
+  render(<LocaleProvider initialLocale="zh-CN" initialMessages={messages} fallbackMessages={messages}><MemoryRouter><AuthProvider><AuthGate><div>application-ready</div></AuthGate></AuthProvider></MemoryRouter></LocaleProvider>);
+  await waitFor(() => expect(document.getElementById('fc-current')).toBeTruthy());
+  for (const [id, value] of [['fc-current', 'password1'], ['fc-new', 'password2'], ['fc-confirm', 'password2']]) fireEvent.change(document.getElementById(id)!, { target: { value } });
+  fireEvent.submit(document.querySelector('form')!);
+  await waitFor(() => expect(document.getElementById('login-username')).toBeTruthy());
+  expect((await screen.findByRole('alert')).textContent).toContain('新密码');
+  expect(localStorage.getItem('manga-manager:offline-owner')).toBe('1');
+  expect(localStorage.getItem('manga-manager:offline-books')).toContain('42');
+  fireEvent.change(document.getElementById('login-username')!, { target: { value: ' Admin ' } });
+  fireEvent.change(document.getElementById('login-password')!, { target: { value: 'password2' } });
+  fireEvent.submit(document.querySelector('form')!);
+  await screen.findByText('application-ready');
+  expect(screen.queryByRole('alert')).toBeNull();
+});
