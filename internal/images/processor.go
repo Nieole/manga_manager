@@ -47,15 +47,28 @@ func InitProcessor(maxAiConcurrency int) {
 	if maxAiConcurrency <= 0 {
 		maxAiConcurrency = 1
 	}
-	ch := make(chan struct{}, maxAiConcurrency)
-	aiSemaphore.Store(&ch)
+	if current := aiSemaphore.Load(); current == nil || cap(*current) != maxAiConcurrency {
+		ch := make(chan struct{}, maxAiConcurrency)
+		aiSemaphore.Store(&ch)
+	}
 
 	softwareLimit := runtime.NumCPU()
 	if softwareLimit < 1 {
 		softwareLimit = 1
 	}
-	swCh := make(chan struct{}, softwareLimit)
-	softwareSemaphore.Store(&swCh)
+	// Changing the AI limit must not create a second, unchanged software budget
+	// alongside software work that already holds its permits.
+	if current := softwareSemaphore.Load(); current == nil || cap(*current) != softwareLimit {
+		swCh := make(chan struct{}, softwareLimit)
+		softwareSemaphore.Store(&swCh)
+	}
+}
+
+// CloseProcessor retires the published budgets without closing channels held by
+// active processors. Their final release still returns to the acquired channel.
+func CloseProcessor() {
+	aiSemaphore.Store(nil)
+	softwareSemaphore.Store(nil)
 }
 
 // AIConcurrency 返回当前 AI 放大子进程的并发上限（未初始化时为 0）。供运行时诊断与配置生效的回归测试观测。

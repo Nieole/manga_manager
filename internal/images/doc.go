@@ -4,6 +4,6 @@
 // 里调外部引擎子进程，失败回退 lanczos3。InitProcessor 按配置重建 AI 并发闸，软件闸取 CPU 核数。
 //
 // 边界：读字节、缓存、ETag 与 HTTP 都不属于它——scanner.generateBookThumbnail 与 api 的
-// servePageImageByNumber 先取存储令牌、从归档读出页字节再交进来；配置经 runtimecfg.Apply 转入。
+// servePageImageByNumber 先取存储令牌、从归档读出页字节再交进来；预算由 runtimecfg.Resources 发布及退休。
 // 除 AI 沙盒的临时文件外本包不碰文件系统，不导入兄弟包，也不认识资料库、系列与书。
 package images
