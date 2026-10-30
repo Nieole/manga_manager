@@ -219,6 +219,7 @@ func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, passwor
 		return 0, false
 	}
 	now := time.Now()
+	generation := c.auth.basicAuthGeneration()
 	if uid, ok := c.auth.lookupBasicAuth(username, password, now); ok {
 		return uid, true
 	}
@@ -226,7 +227,7 @@ func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, passwor
 	if !ok {
 		return 0, false
 	}
-	c.auth.rememberBasicAuth(username, password, user.ID, now)
+	c.auth.rememberBasicAuth(username, password, user.ID, now, generation)
 	return user.ID, true
 }
 
@@ -688,33 +689,22 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	if !verifyPassword(user.PasswordHash, req.CurrentPassword) {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_incorrect"))
-		return
-	}
-	if len(req.NewPassword) < minPasswordLen {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_too_short"))
-		return
-	}
-	hash, err := hashPassword(req.NewPassword)
+	out, err := accounts.NewPasswords(c.store, hashPassword, verifyPassword, c.auth.invalidateBasicAuthForUser).Change(ctx, accounts.Actor{ID: user.ID}, accounts.ChangePasswordInput{CurrentPassword: req.CurrentPassword, NewPassword: req.NewPassword})
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to hash password")
+		if errors.Is(err, accounts.ErrCurrentPassword) {
+			jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_incorrect"))
+		} else {
+			accountManagementError(w, r, err)
+		}
 		return
 	}
-	if err := c.store.UpdateUserPassword(ctx, user.ID, hash, false); err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to update password")
-		return
-	}
-	// 旧口令必须立刻从 Basic 鉴权缓存里踢掉，否则它在 OPDS/Mihon 上最长还能再用 5 分钟。
-	c.auth.invalidateBasicAuthForUser(user.ID)
-	// 改密即失效全部旧会话（含其他设备），再为当前设备建立新会话。
-	_ = c.store.DeleteSessionsForUser(ctx, user.ID)
 	csrf, err := c.startSession(ctx, w, r, user.ID)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to start session")
+		c.clearSessionCookie(w, r)
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": "password changed; sign in with your new password", "password_committed": out.Committed, "login_required": true})
 		return
 	}
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "csrf_token": csrf})
+	jsonResponse(w, http.StatusOK, map[string]any{"status": "ok", "csrf_token": csrf, "user": out.User, "password_committed": out.Committed})
 }
 
 // ---- 管理员：账户管理 ----
@@ -795,33 +785,19 @@ func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid user ID")
 		return
 	}
-	if _, err := c.store.GetUserByID(ctx, id); err != nil {
-		jsonError(w, http.StatusNotFound, apiText(requestLocale(r), "auth.user_not_found"))
-		return
-	}
+
 	var req struct {
 		Password string `json:"password"`
 	}
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	if len(req.Password) < minPasswordLen {
-		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_too_short"))
-		return
-	}
-	hash, err := hashPassword(req.Password)
+	out, err := accounts.NewPasswords(c.store, hashPassword, verifyPassword, c.auth.invalidateBasicAuthForUser).Reset(ctx, accounts.Actor{ID: c.currentUserID(r)}, id, req.Password)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to hash password")
+		accountManagementError(w, r, err)
 		return
 	}
-	if err := c.store.UpdateUserPassword(ctx, id, hash, true); err != nil {
-		jsonError(w, http.StatusInternalServerError, "failed to reset password")
-		return
-	}
-	// 管理员重置他人密码同理：被重置的账号的旧口令要立刻失效。
-	c.auth.invalidateBasicAuthForUser(id)
-	_ = c.store.DeleteSessionsForUser(ctx, id)
-	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+	jsonResponse(w, http.StatusOK, map[string]any{"status": "ok", "password_committed": out.Committed, "user": out.User})
 }
 
 // deleteUser 删除账户；禁止删除自身与最后一个管理员。

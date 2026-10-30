@@ -31,7 +31,7 @@
 
 11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
 
-当前完成 32/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、27、29、30、36、38、39、41。28、40 在独立工作树实施，31 按依赖继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+当前完成 33/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、27、29、30、36、38、39、40、41。28、31 在独立工作树实施，32 按依赖继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
 
 12 已合入并关闭：主树 AI 分组 owner race 13.910s、数据库窄能力 race 7.706s、集成后全前端 99 文件 / 937 测试及 lint/build 通过，Go lint 0 issues、格式和 diff 检查通过。主树 API 多次被 Application Control 拦截，稳定二进制启动也未确认执行，已停止精确启动器并保留限制；API 实际通过依据为实现树完整 104.921s、focused race 17.835s 和合并集成后 focused 普通 7.710s。日志位于 .tmp/merge-wave10-*.log。
 
@@ -54,3 +54,5 @@
 39 已合入并关闭：主树账户管理窄能力 race 1.538s、最后管理员并发/当前actor权限/自删与级联 HTTP owner race 15.721s、4 项管理页消费者实际通过。Go lint 0 issues、gofmt、完整基线 diff 和 tracked 冲突标记扫描通过。改密与会话资格交接继续由40承接。日志为 .tmp/merge-wave18-*.log。
 
 30 已合入并关闭：主树 config/publisher/intelligence/maintenance 全 race 3.761s/1.759s/5.959s/6.925s、配置 HTTP race 11.510s、明确发布与实际 DB 目标 HTTP race 2.692s、5 项设置消费者实际通过；tsgen 26 types 无漂移，lint 0 issues、格式/完整基线检查通过。runtime 全 race 首次实际失败于 shutdown handoff fixture 的 completed/cancelled 期待，整包重跑实际 8.822s 通过；初次失败日志保留，不声称已修复时序不稳定，31需核对真实关闭边界而非20ms假定。日志为 .tmp/merge-wave19-*.log。
+
+40 已合入并关闭：主树密码提交与会话撤销、替换会话失败、旧 Basic 在飞回填、设备/强制改密协议及密码探测成本 HTTP race 实际通过 38.782s，私有事务能力隔离 race 1.524s、2 文件/10 项认证恢复与重置界面消费者通过。Go lint 0 issues、gofmt、完整基线 diff 和 tracked 冲突标记扫描通过。实现树合并后完整 API/database 108.123s/8.018s、前端 103 文件/954 项及 lint/build 的真实证据保留在逐票记录。主树日志为 .tmp/merge-wave20-*.log。

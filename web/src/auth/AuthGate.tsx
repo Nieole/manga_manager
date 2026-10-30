@@ -24,17 +24,17 @@ function AuthFallback() {
   );
 }
 
-function SetupNotice({ kind }: { kind: 'session' | 'claims' }) {
+function SetupNotice({ kind }: { kind: 'session' | 'claims' | 'password' }) {
   const { t } = useI18n();
   return (
     <div role="alert" className="border border-amber-500/40 bg-amber-950 px-4 py-3 text-sm text-amber-100">
-      {t(kind === 'session' ? 'auth.setup.sessionFailed' : 'auth.setup.claimWarning')}
+      {t(kind === 'password' ? 'auth.password.sessionFailed' : kind === 'session' ? 'auth.setup.sessionFailed' : 'auth.setup.claimWarning')}
     </div>
   );
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { loading, setupRequired, user, backendUnreachable, setupNotice } = useAuth();
+  const { loading, setupRequired, user, backendUnreachable, setupNotice, passwordLoginRequired } = useAuth();
   const { pathname } = useLocation();
 
   if (loading) return <AuthFallback />;
@@ -48,7 +48,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   else if (!user) gate = offlinePass ? null : <LoginPage />;
   else if (user.must_change_password) gate = <ForcePasswordChangePage />;
 
-  const notice = setupNotice ? <SetupNotice kind={setupNotice} /> : null;
+  const notice = passwordLoginRequired ? <SetupNotice kind="password" /> : setupNotice ? <SetupNotice kind={setupNotice} /> : null;
   if (gate) return <>{notice}<Suspense fallback={<AuthFallback />}>{gate}</Suspense></>;
   return <>{notice}{children}</>;
 }

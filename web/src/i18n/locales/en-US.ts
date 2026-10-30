@@ -15,6 +15,7 @@ export const messages: MessageCatalog = {
     'settings.publication.catalog': 'Field effect timing',
     'settings.publication.description': 'Immediate fields are read by the current process. Subsequent-operation fields are read by new requests, jobs or checkpoints; restart fields still use current process resources. Started operations retain their target, source and write intent.',
     'settingsUsers.refreshAfterSaveFailed': 'The account was saved, but session details could not refresh. Reload your account status.',
+    'auth.password.sessionFailed': 'Your password changed, but a new session could not be created. Sign in with your new password; do not repeat the change.',
     'auth.setup.sessionFailed': 'The administrator was created, but the session could not start. Sign in with that account; do not repeat setup.',
     'auth.setup.claimWarning': 'The administrator was created and signed in, but some historical data could not be claimed. Keep this account and check the server logs.',
     'librarySave.unavailable': 'The library is in use or its root is reserved. Wait for access to close and retry; your form has been kept.',

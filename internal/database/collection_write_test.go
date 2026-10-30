@@ -78,4 +78,8 @@ func TestCollectionTransactionCapabilitiesDoNotExposeSQLOrUnrelatedEdits(t *test
 		t.Fatal(err)
 	}
 
+	if err := store.WithAccountPassword(context.Background(), func(w database.AccountPasswordWrite) error { assertNoSQL(w); return nil }); err != nil {
+		t.Fatal(err)
+	}
+
 }
