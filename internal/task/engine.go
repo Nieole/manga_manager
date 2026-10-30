@@ -165,6 +165,8 @@ type Engine struct {
 
 	mu                  sync.Mutex
 	stopping            bool
+	stoppingCh          chan struct{}
+	stoppingOnce        sync.Once
 	pendingLaunches     sync.WaitGroup
 	libraryVersion      uint64
 	libraryExclusive    map[int64]bool
@@ -212,6 +214,7 @@ func New(cfg Config) *Engine {
 		panic("task: Config.RunBackground 不得为 nil")
 	}
 	e := &Engine{
+		stoppingCh:          make(chan struct{}),
 		store:               cfg.Store,
 		libraryExclusive:    make(map[int64]bool),
 		libraryReservations: make(map[int64]*LibraryReservation),

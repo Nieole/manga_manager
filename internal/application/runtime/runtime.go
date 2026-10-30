@@ -62,6 +62,7 @@ type Options struct {
 
 // Runtime holds assembled capabilities. Their modules retain rules, transactions and execution bodies.
 type Runtime struct {
+	Resources         *runtimecfg.Resources
 	Configuration     *configuration.Service
 	Engine            *task.Engine
 	Runs              *application.Runs
@@ -116,7 +117,8 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	}
 	options.Effects = e
 	r := &Runtime{store: store, cfg: cfg, options: options, group: newBackground()}
-	r.Configuration = configuration.New(cfg, options.ConfigPath, runtimecfg.Apply)
+	r.Resources = runtimecfg.NewResources()
+	r.Configuration = configuration.New(cfg, options.ConfigPath, r.Resources.Apply)
 	r.Tasks = taskstore.New(store.DB())
 	r.DiskWork = diskwork.NewRunner(cfg.Snapshot, storageio.Default)
 	tc := options.Tasks
@@ -147,7 +149,7 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	r.Proposals = proposal.NewService(proposalStore{store})
 	r.Relocation = relocation.NewService(store, cfg)
 	r.Relocation.ConfigPath = options.ConfigPath
-	r.Relocation.ApplyConfig = runtimecfg.Apply
+	r.Relocation.ApplyConfig = r.Resources.Apply
 	r.KOReader = koreader.NewService(store, cfg, koreader.WithReadingPositions(reading.New(store, e.InvalidateReading)))
 	r.Relations = organize.NewRelations(store, func(work func()) {
 		r.Go(func() { work(); e.Publish("refresh") })
@@ -284,13 +286,13 @@ func (r *Runtime) Close() {
 			r.options.Effects.StopEvents()
 		}
 		r.group.signal()
+		r.Engine.Shutdown()
 		if r.Watcher != nil {
 			r.Watcher.Stop()
 		}
-		r.Engine.Shutdown()
 		r.group.sealAndWait()
 		r.Scanner.Close()
-		runtimecfg.Close()
+		r.Resources.Close()
 	})
 }
 

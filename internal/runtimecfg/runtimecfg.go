@@ -1,24 +1,65 @@
-// 本文件集中重建所有从运行时配置派生的进程级资源（归档句柄池、图像处理并发、日志级别），
-// 使「配置文件热重载」与「经 API/UI 保存配置」两条路径应用完全一致的副作用——否则会出现只有
-// 其一生效的隐性 bug（例如经 UI 改 archive_pool_size / max_ai_concurrency 却不重建对应池，需重启才生效）。
-// 维护要点：新增任何「随配置变化需要重建/重设的进程级资源」时，只在此登记一处即可让两条路径同步生效。
-
 package runtimecfg
 
 import (
+	"errors"
 	"manga-manager/internal/config"
 	"manga-manager/internal/images"
 	"manga-manager/internal/logger"
 	"manga-manager/internal/parser"
+	"sync"
 )
 
-// Apply 按给定配置重建所有配置派生的运行时资源。两条配置生效路径（文件热重载、API 保存）都调用它，
-// 使它成为这些副作用的唯一事实来源。InitPool / InitProcessor 均为幂等（按新值重建/调整），可安全重复调用。
+// ErrClosed rejects configuration publication after the owning runtime has stopped.
+var ErrClosed = errors.New("runtime resources are closed")
+
+// Resources serializes publication and retirement of the process-singleton resources.
+// Borrowed archives and image permits retain their original return destination.
+type Resources struct {
+	mu     sync.Mutex
+	closed bool
+}
+
+// NewResources binds one runtime to the process resource publication lifecycle.
+func NewResources() *Resources { return &Resources{} }
+
+// Apply serializes resource changes and rejects publication after retirement.
+func (r *Resources) Apply(cfg *config.Config) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return ErrClosed
+	}
+	return Apply(cfg)
+}
+
+// Close retires admission after process users have been drained. Existing borrows
+// close their own archive on final return; permit channels are never closed.
+func (r *Resources) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	r.closed = true
+	Close()
+}
+
+// Apply initializes process resources for embedded callers. Application runtimes
+// publish through their Resources owner so late callbacks cannot reopen retired resources.
 func Apply(cfg *config.Config) error {
+	if err := logger.SetLevel(cfg.Logging.Level); err != nil {
+		return err
+	}
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
-	images.InitProcessor(cfg.Scanner.MaxAiConcurrency)
-	return logger.SetLevel(cfg.Logging.Level)
+	limit := cfg.Scanner.MaxAiConcurrency
+	if limit < 1 {
+		limit = 1
+	}
+	if images.AIConcurrency() != limit {
+		images.InitProcessor(limit)
+	}
+	return nil
 }
 
 // Close releases process configuration resources after request and task owners have exited.
-func Close() { parser.CloseArchivePool() }
+func Close() { parser.CloseArchivePool(); images.CloseProcessor() }

@@ -2,9 +2,9 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"manga-manager/internal/config"
-	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/task"
 	"time"
 )
@@ -48,8 +48,8 @@ func (r *Runtime) Start(ctx context.Context) error {
 		return nil
 	}
 	initial := r.cfg.Snapshot()
-	if err := runtimecfg.Apply(&initial); err != nil {
-		slog.WarnContext(ctx, "Failed to apply runtime config at startup", "error", err)
+	if err := r.Resources.Apply(&initial); err != nil {
+		return fmt.Errorf("initialize runtime resources: %w", err)
 	}
 	if err := r.RecoverRuns(ctx); err != nil {
 		return err
