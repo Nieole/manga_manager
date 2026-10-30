@@ -4,7 +4,7 @@
 
 **Blocked by:** 27: 扫描摄入的完整内部用例。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 125、126、127、128、129、135。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -28,3 +28,9 @@
 - Corrected full API execution actually passed 131.829s (ticket28-api-full-fixed.log); this is the full-suite pass after the retained failed run.
 
 - After merging resources ticket 31, actual combined shutdown race passed runtime 2.129s/scanning 7.813s; frozen queued watcher stop independently passed race 8.162s. Both body-exit and engine-stopping boundaries are retained.
+
+### Integrated closure — 2026-10-30
+
+- Merged without conflicts at d117e50 after resource ownership aa693f5. Main-tree complete scanner/application/scanning/runtime/task/runtimecfg race actually passed 80.762s/2.134s/26.288s/13.738s/1.912s/1.268s, including real ingestion completion, queued-cleanup qualification, Windows registration/Stop, body-exit and resource-shutdown coverage.
+- Corrected broken-archive RunEvents and nested-library watcher HTTP consumers passed in the combined race run (36.565s), together with configuration/page/download checks. The broken archive remains a failure fixture and its failed run and detailed events are asserted; it is not recast as safe completion.
+- Go lint 0 issues, gofmt, fixed-baseline diff check and all tracked conflict-marker checks passed. No frontend production, schema or generated-contract changes were introduced. Raw logs: main .tmp/merge-wave21-lifecycle*.log. Status is done.
