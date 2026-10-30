@@ -360,6 +360,9 @@ func (fw *FileWatcher) Stop() {
 	fw.eventLoop.Wait()
 	// Close releases synchronous Add/Remove before joining a caller-owned registration.
 	fw.registrationOps.Lock()
+	fw.registryMu.Lock()
+	clear(fw.registryPending)
+	fw.registryMu.Unlock()
 	fw.registrationOps.Unlock()
 	fw.registryDone.Wait()
 	fw.coordinationLoop.Wait()
