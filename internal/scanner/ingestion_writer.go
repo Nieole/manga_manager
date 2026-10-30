@@ -82,6 +82,7 @@ func (w *ingestionWriter) persist(ctx context.Context, batch []claimedArchive) (
 					NameInitial:  metadata.NameInitial,
 				})
 				if err != nil {
+					w.metrics.uncertainEntries.Add(1)
 					slog.ErrorContext(ctx, "Failed to create/upsert series", "series_name", res.seriesName, "error", err)
 					continue
 				}
@@ -132,6 +133,7 @@ func (w *ingestionWriter) persist(ctx context.Context, batch []claimedArchive) (
 				})
 				switch {
 				case err != nil:
+					w.metrics.uncertainEntries.Add(1)
 					slog.WarnContext(ctx, "Failed to rehome renamed book", "book_id", res.rehome.bookID,
 						"old_path", res.rehome.oldPath, "new_path", res.book.Path, "error", err)
 				case affected == 0:
@@ -153,6 +155,7 @@ func (w *ingestionWriter) persist(ctx context.Context, batch []claimedArchive) (
 					database.UpsertBookByPathKeepingPagesAndCoverParams(input))
 			}
 			if err != nil {
+				w.metrics.uncertainEntries.Add(1)
 				slog.ErrorContext(ctx, "Failed to upsert book", "path", res.book.Path, "error", err)
 				continue
 			}
@@ -163,6 +166,7 @@ func (w *ingestionWriter) persist(ctx context.Context, batch []claimedArchive) (
 				PathFingerprint:      string(res.pathFingerprint),
 				PathFingerprintNoExt: string(res.pathFingerprintNoExt),
 			}); err != nil {
+				w.metrics.uncertainEntries.Add(1)
 				slog.WarnContext(ctx, "Failed to update book identity", "book_id", actualBook.ID, "path", actualBook.Path, "error", err)
 			}
 			if res.coverCandidate != nil && (!actualBook.CoverPath.Valid || actualBook.CoverPath.String == "") {
@@ -194,7 +198,10 @@ func (w *ingestionWriter) persist(ctx context.Context, batch []claimedArchive) (
 func (w *ingestionWriter) consume(ctx context.Context, results <-chan interpretedArchive) {
 	w.seriesCache = make(map[string]database.Series)
 	w.lockedFieldsCache = make(map[int64]seriesmeta.ScanLocks)
-	existing, _ := w.store.ListSeriesByLibraryLite(ctx, w.libraryID)
+	existing, err := w.store.ListSeriesByLibraryLite(ctx, w.libraryID)
+	if err != nil {
+		w.metrics.uncertainEntries.Add(1)
+	}
 	for _, series := range existing {
 		w.seriesCache[series.Path] = series
 		w.lockedFieldsCache[series.ID] = seriesmeta.ParseScanLocks(series.LockedFields)

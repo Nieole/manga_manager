@@ -190,6 +190,7 @@ func (i *archiveInterpreter) interpret(ctx context.Context, job archiveCandidate
 		}
 		progress.publish("hashing", job.path, false)
 		if hashErr != nil {
+			metrics.uncertainEntries.Add(1)
 			slog.WarnContext(ctx, "Failed to compute book binary fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}
@@ -211,6 +212,7 @@ func (i *archiveInterpreter) interpret(ctx context.Context, job archiveCandidate
 		}
 		progress.publish("hashing", job.path, false)
 		if hashErr != nil {
+			metrics.uncertainEntries.Add(1)
 			slog.WarnContext(ctx, "Failed to compute quick book fingerprint", "path", job.path, "error", hashErr, "scan_profile", opts.Profile)
 		}
 	}

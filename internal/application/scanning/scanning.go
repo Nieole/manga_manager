@@ -27,10 +27,9 @@ type Store interface {
 
 // Scanner owns ingestion, rename reconnection and missing-record removal.
 type Scanner interface {
-	ScanLibraryWithOptions(context.Context, int64, string, scanner.LibraryScanOptions, scanner.ScanObserver) error
+	IngestLibrary(context.Context, int64, string, scanner.LibraryScanOptions, scanner.ScanObserver) (scanner.ScanOutcome, error)
 	CleanupThumbnails(context.Context, func(int, int)) error
-	ScanLibrary(context.Context, int64, string, bool, scanner.ScanObserver) error
-	ScanSeries(context.Context, int64, bool, scanner.ScanObserver) error
+	IngestSeries(context.Context, int64, bool, scanner.ScanObserver) (scanner.ScanOutcome, error)
 	CleanupLibrary(context.Context, int64) error
 	QueueMissingCovers(context.Context, int64) (*scanner.CoverBatch, error)
 }
@@ -44,7 +43,7 @@ type Effects struct {
 	Publish           func(string)
 }
 
-// Service shares the application run entry and leaves filesystem event scheduling to scanner.
+// Service shares the application run entry and shares complete scan results with ingestion coordination.
 type Service struct {
 	runs      *application.Runs
 	store     Store
@@ -81,6 +80,10 @@ func (c *Service) BatchEvent(action string) {
 
 // ScanLibrary starts a library scan with one identity across manual, scheduled and watcher inputs.
 func (c *Service) ScanLibrary(lib database.Library, force bool, trigger task.Trigger) (task.Launched, error) {
+	return c.scanLibrary(lib, force, trigger, nil)
+}
+
+func (c *Service) scanLibrary(lib database.Library, force bool, trigger task.Trigger, completed func(scanner.ScanOutcome)) (task.Launched, error) {
 	if trigger != task.TriggerManual {
 		if err := c.requireAutomaticProcessing(context.Background(), lib.ID); err != nil {
 			return task.Launched{}, err
@@ -135,7 +138,14 @@ func (c *Service) ScanLibrary(lib database.Library, force bool, trigger task.Tri
 		defer c.effects.PurgeReadingPaths()
 		// 把**运行句柄**包成**扫描观察者**一起交出去：扫描器的报文不带身份，
 		// 「这次扫描的进度写到哪」由这次交出的是谁回答。
-		if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, force, NewObserver(handle)); err != nil {
+		outcome, err := c.scanner.IngestLibrary(ctx, lib.ID, lib.Path, scanner.LibraryScanOptions{Force: force}, NewObserver(handle))
+		if completed != nil {
+			completed(outcome)
+		}
+		if err == nil {
+			err = outcome.Err()
+		}
+		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				c.effects.InvalidateStats("scan_library_cancelled")
 				return task.Result{Params: map[string]string{"name": lib.Name}}, err
@@ -223,7 +233,11 @@ func (c *Service) ScanSeries(seriesID int64, force bool, trigger task.Trigger) e
 	}
 	_, err := c.runs.Start(context.Background(), spec, func(ctx context.Context, handle *runhandle.Handle) (task.Result, error) {
 		defer c.effects.PurgeReadingPaths()
-		if err := c.scanner.ScanSeries(ctx, seriesID, force, NewObserver(handle)); err != nil {
+		outcome, err := c.scanner.IngestSeries(ctx, seriesID, force, NewObserver(handle))
+		if err == nil {
+			err = outcome.Err()
+		}
+		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				c.effects.InvalidateStats("scan_series_cancelled")
 				return task.Result{Params: idParams}, err
@@ -241,6 +255,10 @@ func (c *Service) ScanSeries(seriesID int64, force bool, trigger task.Trigger) e
 
 // CleanupLibrary starts protected missing-record removal; shutdown does not interrupt its transaction.
 func (c *Service) CleanupLibrary(libraryID int64, trigger task.Trigger) (task.Launched, error) {
+	return c.cleanupLibrary(libraryID, trigger, nil)
+}
+
+func (c *Service) cleanupLibrary(libraryID int64, trigger task.Trigger, eligible func() bool) (task.Launched, error) {
 	if err := c.requireAutomaticProcessing(context.Background(), libraryID); err != nil {
 		return task.Launched{}, err
 	}
@@ -264,6 +282,9 @@ func (c *Service) CleanupLibrary(libraryID int64, trigger task.Trigger) (task.La
 	spec.Trigger = trigger
 	spec.LibraryIDs = []int64{libraryID}
 	return c.runs.Start(context.Background(), spec, func(taskCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
+		if eligible != nil && !eligible() {
+			return task.Result{Params: idParams}, context.Canceled
+		}
 		handle.Phase("scanning_records", "task.msg.cleanup_library.scanning_records", idParams)
 		// 刻意不用任务体 ctx 的**取消**能力：本任务不可取消，而停机会取消所有任务 ctx——用了它，
 		// 一次关服就会把这个没人取消过的任务写成**已取消**。改动前先读本函数的 doc。
@@ -279,23 +300,63 @@ func (c *Service) CleanupLibrary(libraryID int64, trigger task.Trigger) (task.La
 
 // WatchLibrary waits for a real successful scan before the watcher may clean missing records.
 func (c *Service) WatchLibrary(ctx context.Context, libraryID int64) error {
-	lib, err := c.store.GetLibrary(ctx, libraryID)
+	outcome, err := c.WatchIngestion(ctx, libraryID)
 	if err != nil {
 		return err
 	}
-	// 监听触发的是一次**增量**扫描：它要的只是「把这批新文件收进来」。
-	launched, err := c.ScanLibrary(lib, false, task.TriggerWatch)
-	return c.awaitWatchedRun(ctx, launched, err)
+	return outcome.Err()
+}
+
+// WatchIngestion returns the actual body's facts; queued and merged admission is never completion.
+func (c *Service) WatchIngestion(ctx context.Context, libraryID int64) (scanner.ScanOutcome, error) {
+	lib, err := c.store.GetLibrary(ctx, libraryID)
+	if err != nil {
+		return scanner.ScanOutcome{}, err
+	}
+	completed := make(chan scanner.ScanOutcome, 1)
+	launched, err := c.scanLibrary(lib, false, task.TriggerWatch, func(outcome scanner.ScanOutcome) { completed <- outcome })
+	err = c.awaitWatchedRun(ctx, launched, err)
+	select {
+	case outcome := <-completed:
+		return outcome, err
+	default:
+		if err == nil {
+			err = scanner.ErrScanIncomplete
+		}
+		return scanner.ScanOutcome{}, err
+	}
 }
 
 // WatchCleanup waits for the cleanup run so watcher shutdown includes its work.
 func (c *Service) WatchCleanup(ctx context.Context, libraryID int64) error {
-	launched, err := c.CleanupLibrary(libraryID, task.TriggerWatch)
+	launched, err := c.cleanupLibrary(libraryID, task.TriggerWatch, func() bool { return ctx.Err() == nil })
 	return c.awaitWatchedRun(ctx, launched, err)
 }
 
+// WatchCleanupWhen revalidates the change barrier when the queued body actually starts.
+func (c *Service) WatchCleanupWhen(ctx context.Context, libraryID int64, eligible func() bool) error {
+	if !eligible() {
+		return scanner.ErrCleanupDeferred
+	}
+	checked := make(chan bool, 1)
+	launched, err := c.cleanupLibrary(libraryID, task.TriggerWatch, func() bool {
+		valid := ctx.Err() == nil && eligible()
+		checked <- valid
+		return valid
+	})
+	err = c.awaitWatchedRun(ctx, launched, err)
+	select {
+	case valid := <-checked:
+		if !valid {
+			return scanner.ErrCleanupDeferred
+		}
+	default:
+	}
+	return err
+}
+
 func (c *Service) awaitWatchedRun(ctx context.Context, launched task.Launched, launchErr error) error {
-	err := c.runs.AwaitWatched(ctx, launched, launchErr)
+	err := c.runs.JoinWatched(ctx, launched, launchErr)
 	if errors.Is(err, application.ErrRunCoalesced) {
 		return scanner.ErrScanCoalesced
 	}

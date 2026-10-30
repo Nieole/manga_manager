@@ -28,6 +28,28 @@ func (r *Runs) AwaitWatched(ctx context.Context, launched task.Launched, launchE
 	return r.AwaitOutcome(ctx, launched.Run.ID)
 }
 
+// JoinWatched owns the input's admitted run until its actual callback exits.
+// Cancellation requests cancellation only when allowed. A queued, noncancelable
+// body must retain the input's cancellation guard when it eventually starts.
+func (r *Runs) JoinWatched(ctx context.Context, launched task.Launched, launchErr error) error {
+	if launchErr != nil || launched.Stalled != task.StallNone || launched.Coalesced {
+		return r.AwaitWatched(ctx, launched, launchErr)
+	}
+	err := r.AwaitOutcome(ctx, launched.Run.ID)
+	if ctx.Err() == nil {
+		exitErr := r.engine.AwaitBodyExit(ctx, launched.Run.ID)
+		if ctx.Err() == nil {
+			return errors.Join(err, exitErr)
+		}
+	}
+	cancelErr := r.engine.Cancel(launched.Run.ID)
+	if errors.Is(cancelErr, task.ErrRunNotCancelable) || errors.Is(cancelErr, task.ErrRunNotRunning) {
+		cancelErr = nil
+	}
+	exitErr := r.engine.AwaitBodyExit(context.WithoutCancel(ctx), launched.Run.ID)
+	return errors.Join(ctx.Err(), cancelErr, exitErr)
+}
+
 // AwaitOutcome waits by run identity, including queued cancellation without a body.
 func (r *Runs) AwaitOutcome(ctx context.Context, runID int64) error {
 	run, err := r.engine.Await(ctx, runID)
