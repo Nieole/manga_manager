@@ -95,7 +95,7 @@ export default function SeriesDetailPage() {
     showToast,
     t,
   });
-  const metaReview = useSeriesMetadataReview({ reload: ctx.reload, showToast, t });
+  const metaReview = useSeriesMetadataReview({ seriesId, reload: ctx.reload, showToast, t });
   const relations = useSeriesRelations({
     seriesId,
     libraryId: ctx.series?.library_id,
