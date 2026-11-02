@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { BookmarkPanel } from './BookmarkPanel';
 import { OfflineReadingPanel } from './OfflineReadingPanel';
-import type { OfflineBookStatus } from './offlineReader';
+import type { OfflineBookStatus } from '../../features/offline/offlineReader';
 import { isResamplingFilter } from './readerImageSizing';
 import type { ImageFilter, ReaderImageFormat, ReaderTheme, ReadDirection, ReadingBookmark, ReadMode, ScaleMode } from './types';
 

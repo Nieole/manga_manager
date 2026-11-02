@@ -1,5 +1,5 @@
 import { CheckCircle2, Download, Loader2, Trash2, WifiOff } from 'lucide-react';
-import type { OfflineBookStatus } from './offlineReader';
+import type { OfflineBookStatus } from '../../features/offline/offlineReader';
 
 type Translate = (key: string, params?: Record<string, string | number | boolean | null | undefined>) => string;
 

@@ -10,8 +10,8 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useReaderOffline } from './useReaderOffline';
-import type { CacheOfflineBookOptions, OfflineBookStatus } from './offlineReader';
+import { useReaderOffline } from '../../features/offline/useReaderOffline';
+import type { CacheOfflineBookOptions, OfflineBookStatus } from '../../features/offline/offlineReader';
 import type { Page } from './types';
 
 const mocks = vi.hoisted(() => ({
@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // 只替掉离线存储那一层：本文件测的是钩子怎么把下载态分派回各自那本书。
-vi.mock('./offlineReader', () => ({
+vi.mock('../../features/offline/offlineReader', () => ({
   supportsOfflineReaderCache: () => true,
   cacheBookForOffline: mocks.cacheBookForOffline,
   deleteOfflineBook: mocks.deleteOfflineBook,

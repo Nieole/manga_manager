@@ -4,7 +4,7 @@
 
 **Blocked by:** 16: 页读取的共享内容能力；30: 配置发布与生效范围。
 
-**Status:** ready-for-agent
+**Status:** done
 
 **规格覆盖：** [父规格](../spec.md) US 140、141、144、145、153、154。全部验收同时遵守父规格的兼容、测试及范围外约束，不重新定义已批准业务规则。
 
@@ -30,3 +30,9 @@
 
 - Merged integration feb2e6b (including credential/session handoff) at 0e55c0c; retained both CHANGELOG entries. Post-merge runtimecfg/runtime complete race actually passed 1.568s/13.466s. Final Go lint returned 0 issues and gofmt produced no output. The earlier documentation-style log ends with its explicit success result; advisory historical-word counts are not failures.
 - Full baseline whitespace and tracked conflict-marker checks are clean. Ticket28 remains a separate in-flight change; the merger must verify its watcher join together with this shutdown ordering after both are integrated. Status remains ready-for-agent.
+
+### Integrated closure — 2026-10-30
+
+- Merged at aa693f5, then verified together with watcher completion and body joins at d117e50. Main-tree runtimecfg/runtime/task/parser/bookcontent/images complete race actually passed 1.212s/14.160s/1.983s/1.386s/2.008s/31.864s; precise configuration, real page and whole-download HTTP race passed 7.850s.
+- After both lifecycle changes merged, complete scanner/application/scanning/runtime/task/runtimecfg race passed 80.762s/2.134s/26.288s/13.738s/1.912s/1.268s. The broken-archive event, nested-library watcher, resource-publication, page and download HTTP combination passed race 36.565s. Admission stopping, handed-off body exit, watcher joins and final resource retirement retain separate boundaries.
+- Final Go lint returned 0 issues; gofmt, fixed-baseline whitespace and all tracked conflict-marker checks passed. No frontend production or generated-contract change required a new UI build. Raw integration logs: main .tmp/merge-wave21-*.log. Status is done.

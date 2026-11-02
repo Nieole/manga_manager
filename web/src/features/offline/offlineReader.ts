@@ -1,4 +1,3 @@
-import type { Page } from './types';
 import { getCsrfToken } from '../../utils/apiAuth';
 
 // syncRequestHeaders 构造离线进度回传所需的请求头。
@@ -23,6 +22,12 @@ const OFFLINE_PROGRESS_KEY = 'manga-manager:offline-progress';
 // 从不点登出，登出时的清理根本不会被触发。
 const OFFLINE_OWNER_KEY = 'manga-manager:offline-owner';
 let offlineOwnerGeneration = 0;
+
+export interface OfflinePage {
+  number: number;
+  width: number;
+  height: number;
+}
 
 export interface OfflineBookStatus {
   bookId: string;
@@ -66,9 +71,9 @@ export interface OfflineProgressSyncResult {
 export interface CacheOfflineBookOptions {
   bookId: string;
   title: string;
-  pages: Page[];
+  pages: OfflinePage[];
   imageProfile: string;
-  imageUrlForPage: (page: Page) => string;
+  imageUrlForPage: (page: OfflinePage) => string;
   onProgress?: (cachedPages: number, pageCount: number) => void;
 }
 

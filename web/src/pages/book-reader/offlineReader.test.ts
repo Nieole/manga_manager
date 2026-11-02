@@ -11,7 +11,7 @@ import {
   reconcileOfflineOwner,
   releaseOfflineOwner,
   syncQueuedOfflineProgress,
-} from './offlineReader';
+} from '../../features/offline/offlineReader';
 
 describe('offline progress payload builders', () => {
   it('bulk items carry updated_at and drop invalid book ids', () => {
