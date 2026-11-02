@@ -29,7 +29,7 @@ func TestPartialApplyHTTPClassifiesTransactionCurrentOutcome(t *testing.T) {
 			controller, store, _, _ := newTestController(t)
 			series, review := seedPartialApplyFixture(t, controller, store, "Alpha")
 			original := controller.proposals
-			controller.proposals = proposal.NewService(interleavingProposalStore{Store: store, beforeTransaction: func() {
+			controller.organizationHTTP.proposals = proposal.NewService(interleavingProposalStore{Store: store, beforeTransaction: func() {
 				switch decision {
 				case "rejected":
 					got, err := original.Reject(context.Background(), review.ID)

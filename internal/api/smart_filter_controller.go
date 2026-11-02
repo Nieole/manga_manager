@@ -24,20 +24,20 @@ func smartFilterError(w http.ResponseWriter, err error, missing, fallback string
 		jsonError(w, http.StatusInternalServerError, fallback)
 	}
 }
-func (c *Controller) listSmartFilters(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) listSmartFilters(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
 		return
 	}
-	rows, err := organize.NewSmartCollections(c.store).List(r.Context(), id)
+	rows, err := c.shelves.List(r.Context(), id)
 	if err != nil {
 		smartFilterError(w, err, "Library not found", "Failed to list smart filters")
 		return
 	}
 	jsonResponse(w, http.StatusOK, rows)
 }
-func (c *Controller) upsertSmartFilter(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) upsertSmartFilter(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -48,14 +48,14 @@ func (c *Controller) upsertSmartFilter(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	row, err := organize.NewSmartCollections(c.store).Save(r.Context(), id, req)
+	row, err := c.shelves.Save(r.Context(), id, req)
 	if err != nil {
 		smartFilterError(w, err, "Library not found", "Failed to save smart filter")
 		return
 	}
 	jsonResponse(w, http.StatusCreated, row)
 }
-func (c *Controller) updateSmartFilter(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) updateSmartFilter(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "filterId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid smart filter ID")
@@ -66,20 +66,20 @@ func (c *Controller) updateSmartFilter(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	row, err := organize.NewSmartCollections(c.store).Update(r.Context(), id, req)
+	row, err := c.shelves.Update(r.Context(), id, req)
 	if err != nil {
 		smartFilterError(w, err, "Smart filter not found", "Failed to update smart filter")
 		return
 	}
 	jsonResponse(w, http.StatusOK, row)
 }
-func (c *Controller) deleteSmartFilter(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) deleteSmartFilter(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "filterId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid smart filter ID")
 		return
 	}
-	if err := organize.NewSmartCollections(c.store).Delete(r.Context(), id); err != nil {
+	if err := c.shelves.Delete(r.Context(), id); err != nil {
 		smartFilterError(w, err, "Smart filter not found", "Failed to delete smart filter")
 		return
 	}

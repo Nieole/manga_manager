@@ -8,10 +8,12 @@ import (
 
 	"manga-manager/internal/api"
 	"manga-manager/internal/application/runtime"
+	"manga-manager/internal/application/seriesediting"
 	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/config"
 	"manga-manager/internal/dashboard"
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
 	"manga-manager/internal/recommendation"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
@@ -44,7 +46,8 @@ func Open(ctx context.Context, store database.Store, cfg *config.Manager, option
 		book, err := store.GetBook(ctx, id)
 		return bookcontent.Source{ID: book.ID, LibraryID: book.LibraryID, Path: book.Path, FileModifiedAt: book.FileModifiedAt, Size: book.Size, PageCount: book.PageCount}, err
 	}, cfg.Snapshot, memory, 512, 128)
-	app, err := runtime.New(store, cfg, runtime.Options{ConfigPath: options.ConfigPath, Scanner: options.Scanner, Resources: resources, Tasks: transport.TaskOptions(options.Tasks), Effects: transport.RuntimeEffects(), WatchConfig: options.WatchConfig})
+	effects := transport.RuntimeEffects()
+	app, err := runtime.New(store, cfg, runtime.Options{ConfigPath: options.ConfigPath, Scanner: options.Scanner, Resources: resources, Tasks: transport.TaskOptions(options.Tasks), Effects: effects, WatchConfig: options.WatchConfig})
 	if err != nil {
 		resources.Close()
 		return nil, err
@@ -52,8 +55,14 @@ func Open(ctx context.Context, store database.Store, cfg *config.Manager, option
 	stats := dashboard.New()
 	reader := api.NewReaderCapabilities(store, app.Relations, app.Proposals, app.Engine, func() { stats.InvalidateVolatile("reading") })
 	host := transport.Bind(api.HostDependencies{
-		Reading:        api.ReadingDependencies{Capabilities: reader, Content: content, ImageCache: memory, Statistics: stats, Recommendations: recommendation.New(24 * time.Hour), KOReader: app.KOReader},
-		Organization:   api.OrganizationDependencies{Relations: app.Relations, Proposals: app.Proposals},
+		Reading: api.ReadingDependencies{Capabilities: reader, Content: content, ImageCache: memory, Statistics: stats, Recommendations: recommendation.New(24 * time.Hour), KOReader: app.KOReader},
+		Organization: api.OrganizationDependencies{
+			Relations: app.Relations, Proposals: app.Proposals,
+			Collections: organize.NewCollections(store), Shelves: organize.NewSmartCollections(store), ReadingLists: organize.NewReadingLists(store),
+			Grouping: organize.NewAIGrouping(store, func() { effects.Publish("refresh") }), GroupingQueries: store, Series: store, StaticCollections: store,
+			Metadata: seriesediting.New(seriesediting.NewSQLStore(store)), Selection: seriesediting.NewSelection(seriesediting.NewSQLStore(store), func() { effects.InvalidateStats("bulk_edit") }),
+			UnmatchedCount: store.CountUnmatchedKOReaderProgress, KOReaderEnabled: func() bool { return cfg.Snapshot().KOReader.Enabled }, Publish: effects.Publish,
+		},
 		Libraries:      api.LibraryDependencies{Management: app.LibraryManagement, Scans: app.Scans, Maintenance: app.Maintenance, Moves: app.Moves, Disk: app.Disk, Intelligence: app.Intelligence, External: app.External, Relocation: app.Relocation, Scanner: app.Scanner, Watcher: app.Watcher, WatcherError: app.WatcherError, DiskWork: app.DiskWork, Runs: api.RunDependencies{Engine: app.Engine, Runs: app.Runs, Store: app.Tasks, Registry: app.Registry}},
 		Administration: api.AdministrationDependencies{Configuration: app.Configuration},
 		Lifecycle:      app,

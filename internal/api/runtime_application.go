@@ -4,6 +4,8 @@ import (
 	"context"
 	"manga-manager/internal/application/intelligence"
 	"manga-manager/internal/application/runtime"
+	"manga-manager/internal/application/seriesediting"
+	"manga-manager/internal/organize"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/task"
 )
@@ -39,6 +41,13 @@ func (c *Controller) assembleRuntime(scan *scanner.Scanner) error {
 	c.relocation = app.Relocation
 	c.relations = app.Relations
 	c.libraryManagement = app.LibraryManagement
+	c.organizationHTTP = newOrganizationHTTP(OrganizationDependencies{
+		Relations: app.Relations, Proposals: app.Proposals,
+		Collections: organize.NewCollections(c.store), Shelves: organize.NewSmartCollections(c.store), ReadingLists: organize.NewReadingLists(c.store),
+		Grouping: organize.NewAIGrouping(c.store, func() { c.sse.publish("refresh") }), GroupingQueries: c.store, Series: c.store, StaticCollections: c.store,
+		Metadata: seriesediting.New(seriesediting.NewSQLStore(c.store)), Selection: seriesediting.NewSelection(seriesediting.NewSQLStore(c.store), func() { c.invalidateDashboardStatsCache("bulk_edit") }),
+		UnmatchedCount: c.store.CountUnmatchedKOReaderProgress, KOReaderEnabled: func() bool { return c.config.Snapshot().KOReader.Enabled }, Publish: c.sse.publish,
+	})
 	c.watcher = app.Watcher
 	c.watcherInitErr = app.WatcherError
 	if err = app.Recover(context.Background()); err != nil {

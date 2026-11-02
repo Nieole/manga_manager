@@ -26,7 +26,6 @@ import (
 	"manga-manager/internal/application/relocating"
 	appruntime "manga-manager/internal/application/runtime"
 	"manga-manager/internal/application/scanning"
-	"manga-manager/internal/application/seriesediting"
 	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/config"
 	"manga-manager/internal/dashboard"
@@ -40,13 +39,13 @@ import (
 	"manga-manager/internal/recommendation"
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/scanner"
-	"manga-manager/internal/seriesmeta"
 	"manga-manager/internal/taskcontrol"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type Controller struct {
+	*organizationHTTP
 	reader *ReaderHTTP
 	store  database.Store
 	// imageCache 必须按**总字节**限流（见 image_memory_cache.go），不能按条数——
@@ -393,6 +392,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Use(c.authGate)
 		c.readerHTTP().setupRootRoutes(r)
 		c.readerHTTP().setupMihonRoutes(r)
+		c.organizationHTTP.setupRootRoutes(r)
 
 		// 鉴权与账户管理
 		r.Get("/auth/status", c.authStatus)
@@ -422,7 +422,6 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/relocation-plans/{planId}/details", c.relocationDetails)
 		r.Post("/relocation-plans/{planId}/commit", c.commitRelocationPlan)
 		r.Get("/relocation-operations/{operationId}", c.getRelocationOperation)
-		r.Get("/libraries/{libraryId}/franchise", c.getLibraryFranchiseGraph)
 		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
 		r.Post("/libraries/{libraryId}/external-libraries/session", c.createExternalLibrarySession)
 		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}", c.getExternalLibrarySession)
@@ -437,26 +436,10 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/metadata/providers", c.listProviders)
 
 		r.Get("/health/report", c.getHealthReport)
-		r.Get("/metadata/reviews", c.listMetadataReviewInbox)
-		r.Post("/metadata/reviews/bulk-apply", c.bulkApplyMetadataReviews)
-		r.Post("/metadata/reviews/bulk-reject", c.bulkRejectMetadataReviews)
-		r.Get("/ai-grouping/reviews", c.listAIGroupingReviews)
-		r.Get("/reviews/inbox", c.listReviewInbox)
-		r.Get("/reviews/inbox/summary", c.getReviewInboxSummary)
-		r.Post("/ai-grouping/reviews/{reviewId}/apply", c.applyAIGroupingReview)
-		r.Post("/ai-grouping/reviews/{reviewId}/reject", c.rejectAIGroupingReview)
-		r.Put("/ai-grouping/reviews/{reviewId}/collections/{collectionId}", c.updateAIGroupingReviewCollection)
-		r.Post("/ai-grouping/reviews/{reviewId}/collections/{collectionId}/apply", c.applyAIGroupingReviewCollection)
-		r.Post("/ai-grouping/reviews/{reviewId}/collections/{collectionId}/reject", c.rejectAIGroupingReviewCollection)
-		r.Get("/series/{seriesId}/metadata-review", c.listSeriesMetadataReview)
-		r.Post("/metadata/reviews/{reviewId}/apply", c.applyMetadataReview)
-		r.Post("/metadata/reviews/{reviewId}/reject", c.rejectMetadataReview)
 		r.Route("/series", func(r chi.Router) {
 			c.readerHTTP().setupSeriesRoutes(r)
 			r.Post("/bulk-update", c.bulkUpdateSeries)
-			r.Post("/bulk-edit", c.bulkEditSeries)
-
-			r.Put("/info/{seriesId}", c.updateSeriesInfo)
+			c.organizationHTTP.setupSeriesRoutes(r)
 			r.Post("/{seriesId}/open-dir", c.openSeriesDirectory)
 			r.Post("/{seriesId}/rescan", c.scanSeries)
 			r.Post("/{seriesId}/scrape", c.scrapeSeriesMetadata)
@@ -539,54 +522,11 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Delete("/system/koreader/progress/{progressId}", c.resetKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-initials", c.rebuildInitials)
-		r.Post("/system/rebuild-franchises", c.rebuildFranchiseCollectionsHandler)
 		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
 		r.Post("/system/cleanup-thumbnails", c.cleanupThumbnails)
 		r.Post("/system/rebuild-file-identities", c.rebuildFileIdentities)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
 		r.Post("/system/test-llm", c.testLLMConfig)
-
-		// 合集管理
-		r.Route("/collections", func(r chi.Router) {
-			r.Get("/", c.listCollections)
-			r.Post("/", c.createCollection)
-			r.Put("/{collectionId}", c.updateCollection)
-			r.Delete("/{collectionId}", c.deleteCollection)
-			r.Get("/{collectionId}/series", c.getCollectionSeries)
-			r.Post("/{collectionId}/series", c.addSeriesToCollection)
-			r.Delete("/{collectionId}/series/{seriesId}", c.removeSeriesFromCollection)
-		})
-		r.Get("/franchise-state", c.getFranchiseState)
-		r.Get("/collection-views", c.listCollectionViews)
-		r.Get("/collection-views/smart/{filterId}/series", c.getSmartCollectionSeries)
-		r.Get("/collection-views/smart/{filterId}/snapshot-preview", c.previewSmartCollectionSnapshot)
-		r.Post("/collection-views/smart/{filterId}/snapshot", c.snapshotSmartCollection)
-
-		r.Route("/libraries/{libraryId}/smart-filters", func(r chi.Router) {
-			r.Get("/", c.listSmartFilters)
-			r.Post("/", c.upsertSmartFilter)
-		})
-		r.Put("/smart-filters/{filterId}", c.updateSmartFilter)
-		r.Delete("/smart-filters/{filterId}", c.deleteSmartFilter)
-
-		// 有序阅读清单
-		r.Route("/reading-lists", func(r chi.Router) {
-			r.Get("/", c.listReadingLists)
-			r.Post("/", c.createReadingList)
-			r.Put("/{listId}", c.updateReadingList)
-			r.Delete("/{listId}", c.deleteReadingList)
-			r.Get("/{listId}/items", c.listReadingListItems)
-			r.Post("/{listId}/items", c.addReadingListItem)
-			r.Post("/{listId}/items/reorder", c.reorderReadingListItems)
-			r.Delete("/{listId}/items/{itemId}", c.removeReadingListItem)
-		})
-
-		// 系列关联
-		r.Get("/series/{seriesId}/relations", c.getSeriesRelations)
-		r.Get("/series/{seriesId}/franchise", c.getSeriesFranchise)
-		r.Post("/series/{seriesId}/relations", c.createSeriesRelation)
-		r.Delete("/relations/{relationId}", c.deleteSeriesRelation)
-		r.Put("/relations/{relationId}", c.updateSeriesRelation)
 
 		r.Route("/pages", func(r chi.Router) {
 			r.Get("/{bookId}", c.getPagesByBook)
@@ -700,36 +640,6 @@ func (c *Controller) bulkUpdateSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"message": "Bulk update completed"})
-}
-
-// BulkEditSeriesRequest 批量增量编辑多个系列的元数据；未提供的字段（nil/空）不改。
-type BulkEditSeriesRequest struct {
-	SeriesIDs  []int64  `json:"series_ids"`
-	AddTags    []string `json:"add_tags"`
-	RemoveTags []string `json:"remove_tags"`
-	Status     *string  `json:"status"`
-	Publisher  *string  `json:"publisher"`
-}
-
-func (c *Controller) bulkEditSeries(w http.ResponseWriter, r *http.Request) {
-	var req BulkEditSeriesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	result, err := seriesediting.NewSelection(seriesediting.NewSQLStore(c.store), func() {
-		c.invalidateDashboardStatsCache("bulk_edit")
-	}).Edit(r.Context(), req.SeriesIDs, seriesmeta.SelectionInput{
-		AddTags: req.AddTags, RemoveTags: req.RemoveTags, Status: req.Status, Publisher: req.Publisher,
-	})
-	response := selectionResponse(result)
-	if err != nil {
-		slog.ErrorContext(r.Context(), "Failed to bulk edit series", "count", len(req.SeriesIDs), "error", err)
-		response.Error = "Failed to bulk edit series"
-		jsonResponse(w, http.StatusInternalServerError, response)
-		return
-	}
-	jsonResponse(w, http.StatusOK, response)
 }
 
 func (c *Controller) getPagesByBook(w http.ResponseWriter, r *http.Request) {

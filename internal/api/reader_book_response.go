@@ -1,18 +1,9 @@
 package api
 
 import (
-	"net/http"
-
 	"manga-manager/internal/database"
 	"manga-manager/internal/reading"
 )
-
-func (c *Controller) currentReadingSubject(r *http.Request) (reading.Subject, error) {
-	if user, ok := userFromContext(r.Context()); ok {
-		return reading.UserSubject(user.ID)
-	}
-	return reading.AnonymousSubject(), nil
-}
 
 // readerBookResponse preserves the public book shape and its host-path redaction policy.
 func readerBookResponse(view reading.BookView) database.Book {

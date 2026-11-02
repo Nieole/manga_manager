@@ -9,7 +9,6 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/dashboard"
 	"manga-manager/internal/database"
-	"manga-manager/internal/organize"
 	"manga-manager/internal/reading"
 	"manga-manager/internal/recommendation"
 	"manga-manager/internal/seriescontext"
@@ -59,7 +58,7 @@ type ReaderHTTP struct {
 	serveBookFile, serveCoverImage, serveThumbnailImage, servePageImage func(http.ResponseWriter, *http.Request)
 	servePageImageByNumber                                              func(http.ResponseWriter, *http.Request, int64, int64)
 	guardBookRead                                                       func(http.ResponseWriter, *http.Request, int64) (func(), bool)
-	readingLists                                                        func() *organize.ReadingLists
+	readingLists                                                        func() ReadingListsCapability
 	loadCollectionViews                                                 func(context.Context, reading.Subject) ([]CollectionView, error)
 	loadStaticCollectionSeries                                          func(context.Context, int64, int, int) (CollectionView, []collectionSeriesListItem, int, error)
 	loadSmartCollectionSeries                                           func(context.Context, SmartFilter, int, int, reading.Subject) ([]database.SearchSeriesPagedRow, int, error)
