@@ -7,7 +7,7 @@ import (
 	"manga-manager/internal/database"
 )
 
-func (c *Controller) searchProtocolSeries(ctx context.Context, query string, page, limit int) ([]database.ProtocolSeriesRow, int, bool, error) {
+func (c *ReaderHTTP) searchProtocolSeries(ctx context.Context, query string, page, limit int) ([]database.ProtocolSeriesRow, int, bool, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, 0, false, nil
