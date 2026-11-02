@@ -64,7 +64,7 @@ func TestListAIGroupingReviewsBatchesDetailQueries(t *testing.T) {
 	seedManyAIGroupingReviews(t, controller, lib.ID, seriesA, seriesB, reviewCount)
 
 	counting := &aiGroupingCountingStore{Store: store}
-	controller.store = counting
+	controller.organizationHTTP.groupingQueries = counting
 
 	rec := httptest.NewRecorder()
 	controller.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews", nil))
@@ -105,7 +105,7 @@ func TestListAIGroupingReviewsPropagatesDetailErrors(t *testing.T) {
 	controller, store, lib, seriesA, seriesB := seedAIGroupingReviewFixture(t)
 	seedManyAIGroupingReviews(t, controller, lib.ID, seriesA, seriesB, 2)
 
-	controller.store = &aiGroupingCountingStore{Store: store, failSeriesNames: true}
+	controller.organizationHTTP.groupingQueries = &aiGroupingCountingStore{Store: store, failSeriesNames: true}
 
 	rec := httptest.NewRecorder()
 	controller.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews", nil))

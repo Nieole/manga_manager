@@ -28,7 +28,7 @@ type reviewInboxSummaryResponse struct {
 
 // getReviewInboxSummary returns pending counts across all review categories,
 // allowing the unified review center to render badges in a single fetch.
-func (c *Controller) getReviewInboxSummary(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) getReviewInboxSummary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	metadataCount, err := c.proposals.PendingCount(ctx)
@@ -37,7 +37,7 @@ func (c *Controller) getReviewInboxSummary(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	aiCount, err := c.store.CountAIGroupingReviews(ctx, database.CountAIGroupingReviewsParams{Status: "pending"})
+	aiCount, err := c.groupingQueries.CountAIGroupingReviews(ctx, database.CountAIGroupingReviewsParams{Status: "pending"})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to count AI grouping reviews")
 		return
@@ -49,8 +49,8 @@ func (c *Controller) getReviewInboxSummary(w http.ResponseWriter, r *http.Reques
 	// /reviews 显示互相矛盾的数。若确实认为它不该对普通用户可见，那是健康报告与
 	// /organize 入口的独立问题，得在那两处收口，不能在这里单点「假装收口」。
 	var koreaderCount int64
-	if c.currentConfig().KOReader.Enabled {
-		if n, err := c.store.CountUnmatchedKOReaderProgress(ctx); err != nil {
+	if c.koreaderEnabled() {
+		if n, err := c.unmatchedCount(ctx); err != nil {
 			// 旁路指标失败不该毁掉主线角标：metadata / ai_grouping 才是审核中心的主体。
 			slog.Warn("Failed to count unmatched KOReader progress for review inbox summary", "error", err)
 		} else {
@@ -69,7 +69,7 @@ func (c *Controller) getReviewInboxSummary(w http.ResponseWriter, r *http.Reques
 
 // listReviewInbox dispatches by ?type= to the underlying inbox listing for
 // the requested review category, providing a single front-end entrypoint.
-func (c *Controller) listReviewInbox(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) listReviewInbox(w http.ResponseWriter, r *http.Request) {
 	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type"))) {
 	case "", "metadata":
 		c.listMetadataReviewInbox(w, r)

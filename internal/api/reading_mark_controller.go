@@ -24,7 +24,7 @@ type BulkUpdateSeriesProgressRequest struct {
 	OperationID string     `json:"operation_id,omitempty"`
 }
 
-func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Request) {
 	var req BulkUpdateBookProgressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
@@ -34,12 +34,12 @@ func (c *Controller) bulkUpdateBookProgress(w http.ResponseWriter, r *http.Reque
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "No books updated"})
 		return
 	}
-	service := reading.New(c.store, func() { c.invalidateVolatileStatsCache("bulk_book_progress") })
+	service := c.positions
 	result, err := service.MarkBooks(r.Context(), reading.MarkBooksInput{UserID: c.currentUserID(r), BookIDs: req.BookIDs, IsRead: req.IsRead, OccurredAt: req.OccurredAt, OperationID: req.OperationID})
 	writeMarkResult(w, r, result, err, "Bulk progress update completed")
 }
 
-func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Request) {
 	var req BulkUpdateSeriesProgressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
@@ -49,7 +49,7 @@ func (c *Controller) bulkUpdateSeriesProgress(w http.ResponseWriter, r *http.Req
 		jsonResponse(w, http.StatusOK, map[string]interface{}{"message": "No series updated", "updated": 0})
 		return
 	}
-	service := reading.New(c.store, func() { c.invalidateVolatileStatsCache("bulk_series_progress") })
+	service := c.positions
 	result, err := service.MarkSeries(r.Context(), reading.MarkSeriesInput{UserID: c.currentUserID(r), SeriesIDs: req.SeriesIDs, IsRead: req.IsRead, OccurredAt: req.OccurredAt, OperationID: req.OperationID})
 	writeMarkResult(w, r, result, err, "Bulk series progress update completed")
 }

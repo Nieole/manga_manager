@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/application/diskjobs"
@@ -38,17 +39,12 @@ type Lifecycle interface {
 
 // ReadingDependencies supplies content and reader query projections.
 type ReadingDependencies struct {
+	Capabilities    *ReaderCapabilities
 	Content         *bookcontent.Service
 	ImageCache      *bookcontent.MemoryCache
 	Statistics      *dashboard.Service
 	Recommendations *recommendation.Service
 	KOReader        *koreader.Service
-}
-
-// OrganizationDependencies supplies the established metadata and organization owners.
-type OrganizationDependencies struct {
-	Relations *organize.Relations
-	Proposals *proposal.Service
 }
 
 // RunDependencies joins the transport projection to the same admitted queue.
@@ -149,7 +145,10 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 	c.content, c.imageCache = d.Reading.Content, d.Reading.ImageCache
 	c.stats, c.recommendations = d.Reading.Statistics, d.Reading.Recommendations
 	c.koreader = d.Reading.KOReader
-	c.relations, c.proposals = d.Organization.Relations, d.Organization.Proposals
+	c.organizationHTTP = newOrganizationHTTP(d.Organization)
+	// Compatibility bindings for catalog/scrape only; removed by 47.
+	c.relations, _ = d.Organization.Relations.(*organize.Relations)
+	c.proposals, _ = d.Organization.Proposals.(*proposal.Service)
 	c.libraryManagement, c.scans = d.Libraries.Management, d.Libraries.Scans
 	c.maintenance, c.moves, c.diskJobs = d.Libraries.Maintenance, d.Libraries.Moves, d.Libraries.Disk
 	c.intelligence, c.external, c.relocation = d.Libraries.Intelligence, d.Libraries.External, d.Libraries.Relocation
@@ -158,6 +157,9 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 	e := c.taskEngine
 	e.engine, e.runs, e.runStore, e.registry = d.Libraries.Runs.Engine, d.Libraries.Runs.Runs, d.Libraries.Runs.Store, d.Libraries.Runs.Registry
 	e.runBackground = d.Lifecycle.Go
+	if d.Reading.Capabilities != nil {
+		c.reader = c.bindReaderHTTP(d.Reading.Capabilities)
+	}
 	return &Host{compatibility: c}
 }
 

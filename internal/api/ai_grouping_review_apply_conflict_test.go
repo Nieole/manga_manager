@@ -121,7 +121,7 @@ func TestApplyAIGroupingReviewRejectsPreemptedApply(t *testing.T) {
 					t.Errorf("抢先应用失败: %v", err)
 				}
 			}}
-			controller.store = preempted
+			controller.organizationHTTP.grouping = organize.NewAIGrouping(preempted, func() {})
 
 			rec := tc.act(t, controller, review, target)
 			if rec.Code != http.StatusConflict {
