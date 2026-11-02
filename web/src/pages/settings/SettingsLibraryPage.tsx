@@ -1,6 +1,6 @@
 import { FolderOpen, HardDrive, Plus, Server, Trash2 } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { type LibraryStoragePolicy, type StorageIOPolicy, useSettings } from './SettingsContext';
+import { type LibraryStoragePolicy, type StorageIOPolicy, useSettings } from '../../features/settings-editor';
 import { FieldErrors, SettingsPageIntro, SettingsSaveBar, inputClassName, sectionClassName } from './shared';
 
 const defaultStorageIOPolicy: StorageIOPolicy = {
@@ -19,7 +19,9 @@ function normalizeStorageIOPolicy(policy?: Partial<StorageIOPolicy>): StorageIOP
 
 export function SettingsLibraryPage() {
   const { t } = useI18n();
-  const { config, setConfig, fieldErrors, capabilities, saving, saveConfig } = useSettings();
+  const { config, setConfig, fieldErrors, capabilities, isSectionSaving, saveConfig } = useSettings();
+
+  const saving = isSectionSaving('library');
 
   if (!config) return null;
   const ioPolicy = normalizeStorageIOPolicy(config.library.io_policy);

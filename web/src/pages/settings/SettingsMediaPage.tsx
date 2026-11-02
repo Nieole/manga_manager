@@ -1,11 +1,13 @@
 import { HardDrive, Image as ImageIcon, Save } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings } from './SettingsContext';
+import { useSettings } from '../../features/settings-editor';
 import { FieldErrors, SettingsPageIntro, SettingsSaveBar, inputClassName, sectionClassName } from './shared';
 
 export function SettingsMediaPage() {
   const { t } = useI18n();
-  const { config, setConfig, fieldErrors, saving, saveConfig } = useSettings();
+  const { config, setConfig, fieldErrors, isSectionSaving, saveConfig } = useSettings();
+
+  const saving = isSectionSaving('media');
 
   if (!config) return null;
 

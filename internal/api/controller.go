@@ -94,7 +94,9 @@ type Controller struct {
 	// 该头由客户端可控，逐次打日志等于给了一个刷日志的口子。
 	untrustedProtoWarnOnce sync.Once
 
-	runtime *appruntime.Runtime
+	runtime       *appruntime.Runtime
+	process       Lifecycle
+	configuration *configuration.Service
 
 	relations         *organize.Relations
 	libraryManagement *libraries.Service
@@ -158,18 +160,11 @@ func defaultControllerCacheSizes() controllerCacheSizes {
 // 两条路径共用同一份装配后，这类遗漏在结构上不可能出现。
 func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string, sizes controllerCacheSizes) *Controller {
 	cache := newImageMemoryCache(sizes.imageBytes)
-	c := &Controller{
-		store:           store,
-		stats:           dashboard.New(),
-		imageCache:      cache,
-		scanner:         scan,
-		config:          cfg,
-		configPath:      cfgPath,
-		sse:             newSSEBroker(),
-		recommendations: recommendation.New(24 * time.Hour),
-		openPath:        openPathInDefaultFileManager,
-		auth:            newAuthState(),
-	}
+	c := NewTransport(store, cfg, cfgPath).legacy
+	c.stats = dashboard.New()
+	c.imageCache = cache
+	c.scanner = scan
+	c.recommendations = recommendation.New(24 * time.Hour)
 
 	c.content = bookcontent.New(func(ctx context.Context, id int64) (bookcontent.Source, error) {
 		book, err := c.store.GetBook(ctx, id)
@@ -182,6 +177,8 @@ func newControllerCore(store database.Store, scan *scanner.Scanner, cfg *config.
 	return c
 }
 
+// NewController retains embedded callers until the HTTP family migrations remove Controller.
+// The production executable uses bootstrap.Open to own construction and startup.
 func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Manager, cfgPath string) *Controller {
 	c := newControllerCore(store, scan, cfg, cfgPath, defaultControllerCacheSizes())
 	if err := c.runtime.Start(context.Background()); err != nil {
@@ -190,17 +187,17 @@ func NewController(store database.Store, scan *scanner.Scanner, cfg *config.Mana
 	}
 	return c
 }
-func (c *Controller) lifecycleDone() <-chan struct{} { return c.runtime.Done() }
-func (c *Controller) runBackground(fn func())        { c.runtime.Go(fn) }
+func (c *Controller) lifecycleDone() <-chan struct{} { return c.process.Done() }
+func (c *Controller) runBackground(fn func())        { c.process.Go(fn) }
 func (c *Controller) Close() {
-	if c.runtime != nil {
-		c.runtime.Close()
+	if c.process != nil {
+		c.process.Close()
 	}
 }
 
 // Shutdown drains the HTTP host through the application-owned shutdown sequence.
 func (c *Controller) Shutdown(ctx context.Context, drain func(context.Context) error) error {
-	return c.runtime.Shutdown(ctx, drain)
+	return c.process.Shutdown(ctx, drain)
 }
 
 func (c *Controller) currentConfig() config.Config {
@@ -298,7 +295,7 @@ func (c *Controller) persistConfigExpected(expected, cfg *config.Config) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	_, err := c.runtime.Configuration.SaveExpected(expected, *cfg)
+	_, err := c.configuration.SaveExpected(expected, *cfg)
 	return err
 }
 

@@ -184,7 +184,9 @@ func (r *sseAudienceRig) loginClient(t *testing.T, username string) *http.Client
 func (r *sseAudienceRig) runFailingTask(t *testing.T, secretPath string) {
 	t.Helper()
 	const key = "scan_library_7"
-	err := r.controller.taskEngine.Run(libraryTask("scan_library", 7, variantSole), task.TriggerManual, RunSpec{
+	identity := libraryTask("scan_library", 7, variantSole)
+	rememberTaskKey(key, identity)
+	err := r.controller.taskEngine.Run(identity, task.TriggerManual, RunSpec{
 		Key:       key,
 		ScopeName: "资料库A",
 		Metadata:  map[string]string{"library_path": secretPath},

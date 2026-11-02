@@ -57,6 +57,7 @@ type Options struct {
 	ConfigPath  string
 	Scanner     *scanner.Scanner
 	Tasks       task.Config
+	Resources   *runtimecfg.Resources
 	Effects     Effects
 }
 
@@ -117,7 +118,10 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	}
 	options.Effects = e
 	r := &Runtime{store: store, cfg: cfg, options: options, group: newBackground()}
-	r.Resources = runtimecfg.NewResources()
+	r.Resources = options.Resources
+	if r.Resources == nil {
+		r.Resources = runtimecfg.NewResources()
+	}
 	r.Configuration = configuration.New(cfg, options.ConfigPath, r.Resources.Apply)
 	r.Tasks = taskstore.New(store.DB())
 	r.DiskWork = diskwork.NewRunner(cfg.Snapshot, storageio.Default)
