@@ -4,7 +4,7 @@ import { AlertTriangle, FolderOpen, HardDrive, LayoutDashboard, Link2, Palette, 
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useI18n } from '../i18n/LocaleProvider';
 import { useAuth } from '../auth/AuthProvider';
-import { SettingsProvider, useSettings } from './settings/SettingsContext';
+import { SettingsProvider, useSettings } from '../features/settings-editor';
 import { SettingsPublicationNotice } from './settings/SettingsPublicationNotice';
 
 type SettingsSectionKey = 'overview' | 'appearance' | 'library' | 'media' | 'ai' | 'koreader' | 'connections' | 'tags' | 'users' | 'maintenance';
@@ -26,13 +26,14 @@ function SettingsLayoutInner() {
   const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
-  const { loading, config, validation, hasSectionChanges } = useSettings();
+  const { loading, config, validation, hasSectionChanges, hasSectionConflict, discardSection } = useSettings();
   const { isAdmin } = useAuth();
   const navigationContext = useContext(UNSAFE_NavigationContext);
   const navigator = navigationContext.navigator as { block?: (cb: (tx: { retry: () => void }) => void) => () => void };
   const [pendingTransition, setPendingTransition] = useState<null | { retry: () => void }>(null);
 
   const currentSection = getSectionKey(location.pathname);
+  const editableSection = currentSection === 'library' || currentSection === 'media' || currentSection === 'ai' || currentSection === 'koreader' ? currentSection : null;
   const currentHasUnsaved = hasSectionChanges(currentSection);
 
   useEffect(() => {
@@ -165,6 +166,14 @@ function SettingsLayoutInner() {
         </div>
 
         <SettingsPublicationNotice />
+        {editableSection && hasSectionConflict(editableSection) ? (
+          <div role="alert" className="mb-4 space-y-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+            <p>{t('settings.editor.conflict')}</p>
+            <button type="button" onClick={() => void discardSection(editableSection)} className="rounded-lg border border-amber-400/40 px-3 py-2 hover:bg-amber-500/10">
+              {t('settings.editor.reloadSection')}
+            </button>
+          </div>
+        ) : null}
         <Outlet context={{ navigateSettingsSection }} />
       </div>
 

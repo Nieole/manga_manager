@@ -138,6 +138,7 @@ export default function LibraryPage() {
 
   // ===== 选择 =====
   const selection = useLibrarySelection({
+    libId,
     allSeries: allSeries,
     onChanged: refreshLoadedSeries,
     onError: showError,

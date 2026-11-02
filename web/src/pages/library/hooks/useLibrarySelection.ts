@@ -1,9 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLibraryInvalidation } from '../../../session/ApplicationSessionProvider';
 import { apiClient } from '../../../api/client';
 import type { Series } from '../types';
 import { useReadStateMutation } from '../../../reading/useReadStateMutation';
 
 interface UseLibrarySelectionParams {
+  libId?: string;
   allSeries: Series[];
   /** 操作完成后请求重取列表：无限滚动下选中项可能在前几屏，刷新范围由 useLibrarySeries 决定。 */
   onChanged: () => void;
@@ -33,10 +35,22 @@ interface UseLibrarySelectionResult {
  * 加合集由 LibraryHeader 直接打开 modal，不进这里。
  */
 export function useLibrarySelection({
+  libId,
   allSeries,
   onChanged,
   onError,
 }: UseLibrarySelectionParams): UseLibrarySelectionResult {
+  const invalidateLibrary = useLibraryInvalidation();
+  const active = useRef({ libId });
+  if (active.current.libId !== libId) active.current = { libId };
+  const scope = active.current;
+  useEffect(() => {
+    active.current = scope;
+    setSelectedSet(new Set());
+    setIsSelectionMode(false);
+    setBulkProgressUpdating(null);
+    return () => { if (active.current === scope) active.current = { libId: undefined }; };
+  }, [scope]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   // 内部以 Set 承载选择态：成员判定 O(1)，大选择集下逐卡判断不再是 O(n²)。selectedSeries 数组按需派生。
   const [selectedSet, setSelectedSet] = useState<Set<number>>(() => new Set());
@@ -94,14 +108,16 @@ export function useLibrarySelection({
           series_ids: selectedSeries,
           is_favorite: isFav,
         });
+        invalidateLibrary({ areas: ['catalog', 'collections', 'organize', 'stats'] });
+        if (active.current !== scope) return;
         clearSelection();
         onChanged();
       } catch (err) {
         console.error('Bulk favorite failed', err);
-        onError('home.bulkFavoriteFailed');
+        if (active.current === scope) onError('home.bulkFavoriteFailed');
       }
     },
-    [selectedSeries, clearSelection, onChanged, onError],
+    [selectedSeries, clearSelection, onChanged, onError, scope, invalidateLibrary],
   );
 
   const { markSeries } = useReadStateMutation();
@@ -110,18 +126,19 @@ export function useLibrarySelection({
       if (selectedSeries.length === 0) return;
       setBulkProgressUpdating(isRead ? 'read' : 'unread');
       try {
-        await markSeries(selectedSeries, isRead);
-        clearSelection();
-        onChanged();
+        const outcome = await markSeries(selectedSeries, isRead);
+        if (active.current !== scope) return;
+        if (outcome.committed || !outcome.incomplete) onChanged();
+        if (outcome.incomplete || outcome.warnings) onError('home.bulkProgressFailed');
+        if (!outcome.incomplete) clearSelection();
       } catch (err) {
         console.error('Bulk progress failed', err);
-        onChanged();
-        onError('home.bulkProgressFailed');
+        if (active.current === scope) onError('home.bulkProgressFailed');
       } finally {
-        setBulkProgressUpdating(null);
+        if (active.current === scope) setBulkProgressUpdating(null);
       }
     },
-    [selectedSeries, clearSelection, onChanged, onError, markSeries],
+    [selectedSeries, clearSelection, onChanged, onError, markSeries, scope],
   );
 
   return {
