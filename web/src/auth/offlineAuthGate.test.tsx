@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthGate } from './AuthGate';
 import { AuthProvider } from './AuthProvider';
-import { reconcileOfflineOwner } from '../pages/book-reader/offlineReader';
+import { reconcileOfflineOwner } from '../features/offline/offlineReader';
 
 const BOOKS_KEY = 'manga-manager:offline-books';
 const OWNER_KEY = 'manga-manager:offline-owner';

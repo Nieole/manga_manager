@@ -2,9 +2,9 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { apiClient } from '../../api/client';
-import { useReaderOffline } from './useReaderOffline';
+import { useReaderOffline } from '../../features/offline/useReaderOffline';
 import { useReaderProgressIndicator } from './useReaderProgressIndicator';
-import { getQueuedOfflineProgress } from './offlineReader';
+import { getQueuedOfflineProgress } from '../../features/offline/offlineReader';
 const adapter = apiClient.defaults.adapter;
 afterEach(() => { cleanup(); apiClient.defaults.adapter = adapter; vi.restoreAllMocks(); localStorage.clear(); });
 it('queues a late failed report for its original book without polluting the new book UI', async () => {

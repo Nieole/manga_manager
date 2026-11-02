@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthProvider, useAuth } from './AuthProvider';
 import { isOfflineReadableRoute } from './offlineAccess';
-import { queueOfflineProgress } from '../pages/book-reader/offlineReader';
+import { getQueuedOfflineProgress, hasOfflineOwner, queueOfflineProgress } from '../features/offline/offlineReader';
 
 const PROGRESS_KEY = 'manga-manager:offline-progress';
 const BOOKS_KEY = 'manga-manager:offline-books';
@@ -238,4 +238,21 @@ describe('真正换用户时仍然清干净', () => {
     expect(deleted).toEqual([BOOK_CACHE]);
     expect(localStorage.getItem('manga_reader_theme')).toBe(JSON.stringify('comimi'));
   });
+});
+
+
+it('explicit logout releases offline ownership even when upload and server logout fail', async () => {
+  stubCacheStorage();
+  seedOwnedOfflineData();
+  vi.stubGlobal('fetch', async () => { throw new TypeError('offline'); });
+  mocks.get.mockResolvedValue(AUTHENTICATED_A);
+  mocks.post.mockRejectedValue(networkError);
+  await renderProvider();
+
+  fireEvent.click(screen.getByText('logout'));
+
+  await waitFor(() => expect(screen.getByTestId('state').textContent).toBe('anonymous'));
+  expect(hasOfflineOwner()).toBe(false);
+  expect(getQueuedOfflineProgress('42')).toBeNull();
+  expect(isOfflineReadableRoute('/reader/42')).toBe(false);
 });
