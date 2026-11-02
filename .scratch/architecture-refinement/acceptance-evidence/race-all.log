@@ -1,0 +1,50 @@
+?   	manga-manager/cmd/queryplan	[no test files]
+?   	manga-manager/cmd/sampledata	[no test files]
+ok  	manga-manager/cmd/server	2.028s
+?   	manga-manager/cmd/storageiobench	[no test files]
+?   	manga-manager/cmd/tsgen	[no test files]
+?   	manga-manager/internal/accounts	[no test files]
+ok  	manga-manager/internal/api	723.912s
+ok  	manga-manager/internal/application	3.335s
+ok  	manga-manager/internal/application/configuration	2.293s
+ok  	manga-manager/internal/application/diskjobs	20.953s
+ok  	manga-manager/internal/application/intelligence	7.003s
+ok  	manga-manager/internal/application/libraries	23.822s
+ok  	manga-manager/internal/application/maintenance	12.127s
+ok  	manga-manager/internal/application/relocating	9.883s
+ok  	manga-manager/internal/application/runtime	20.855s
+ok  	manga-manager/internal/application/scanning	35.557s
+ok  	manga-manager/internal/application/seriesediting	7.343s
+ok  	manga-manager/internal/bookcontent	2.092s
+ok  	manga-manager/internal/bookidentity	2.378s
+ok  	manga-manager/internal/booksort	1.255s
+ok  	manga-manager/internal/bootstrap	39.527s
+?   	manga-manager/internal/catalogsearch	[no test files]
+ok  	manga-manager/internal/config	4.302s
+?   	manga-manager/internal/dashboard	[no test files]
+ok  	manga-manager/internal/database	180.963s
+ok  	manga-manager/internal/diskwork	2.114s
+ok  	manga-manager/internal/external	33.183s
+ok  	manga-manager/internal/images	30.036s
+ok  	manga-manager/internal/koreader	42.409s
+ok  	manga-manager/internal/logger	1.150s
+ok  	manga-manager/internal/metadata	3.851s
+ok  	manga-manager/internal/organize	50.741s
+ok  	manga-manager/internal/parser	2.421s
+ok  	manga-manager/internal/proposal	47.457s
+ok  	manga-manager/internal/reading	89.888s
+?   	manga-manager/internal/recommendation	[no test files]
+?   	manga-manager/internal/relocation	[no test files]
+ok  	manga-manager/internal/runhandle	1.458s
+ok  	manga-manager/internal/runtimecfg	1.341s
+ok  	manga-manager/internal/scanner	81.165s
+?   	manga-manager/internal/seriescontext	[no test files]
+ok  	manga-manager/internal/seriesmeta	32.806s
+?   	manga-manager/internal/seriesreview	[no test files]
+ok  	manga-manager/internal/storageio	3.060s
+ok  	manga-manager/internal/task	2.596s
+ok  	manga-manager/internal/taskcontrol	1.413s
+ok  	manga-manager/internal/taskstore	11.436s
+?   	manga-manager/internal/testfixture	[no test files]
+?   	manga-manager/web	[no test files]
+?   	manga-manager/web/node_modules/flatted/golang/pkg/flatted	[no test files]

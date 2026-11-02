@@ -1,0 +1,77 @@
+# runtime/cgo
+gcc_clearenv.c: In function 'x_cgo_clearenv':
+gcc_clearenv.c:16:9: error: implicit declaration of function 'clearenv'; did you mean 'clearerr'? [-Wimplicit-function-declaration]
+   16 |         clearenv();
+      |         ^~~~~~~~
+      |         clearerr
+# runtime/cgo
+gcc_mmap.c:10:10: fatal error: sys/mman.h: No such file or directory
+   10 | #include <sys/mman.h>
+      |          ^~~~~~~~~~~~
+compilation terminated.
+# runtime/cgo
+gcc_setenv.c: In function 'x_cgo_setenv':
+gcc_setenv.c:16:9: error: implicit declaration of function 'setenv'; did you mean 'getenv'? [-Wimplicit-function-declaration]
+   16 |         setenv(arg[0], arg[1], 1);
+      |         ^~~~~~
+      |         getenv
+gcc_setenv.c: In function 'x_cgo_unsetenv':
+gcc_setenv.c:25:9: error: implicit declaration of function 'unsetenv' [-Wimplicit-function-declaration]
+   25 |         unsetenv(arg[0]);
+      |         ^~~~~~~~
+# runtime/cgo
+gcc_linux_amd64.c: In function '_cgo_sys_thread_start':
+gcc_linux_amd64.c:57:9: error: unknown type name 'sigset_t'; did you mean '_sigset_t'?
+   57 |         sigset_t ign, oset;
+      |         ^~~~~~~~
+      |         _sigset_t
+gcc_linux_amd64.c:62:9: error: implicit declaration of function 'sigfillset' [-Wimplicit-function-declaration]
+   62 |         sigfillset(&ign);
+      |         ^~~~~~~~~~
+gcc_linux_amd64.c:57:23: error: unused variable 'oset' [-Werror=unused-variable]
+   57 |         sigset_t ign, oset;
+      |                       ^~~~
+cc1.exe: all warnings being treated as errors
+# runtime/cgo
+gcc_sigaction.c: In function 'x_cgo_sigaction':
+gcc_sigaction.c:39:26: error: storage size of 'act' isn't known
+   39 |         struct sigaction act;
+      |                          ^~~
+gcc_sigaction.c:40:26: error: storage size of 'oldact' isn't known
+   40 |         struct sigaction oldact;
+      |                          ^~~~~~
+gcc_sigaction.c:49:36: error: 'SA_SIGINFO' undeclared (first use in this function)
+   49 |                 if (goact->flags & SA_SIGINFO) {
+      |                                    ^~~~~~~~~~
+gcc_sigaction.c:49:36: note: each undeclared identifier is reported only once for each function it appears in
+gcc_sigaction.c:50:58: error: unknown type name 'siginfo_t'
+   50 |                         act.sa_sigaction = (void(*)(int, siginfo_t*, void*))(goact->handler);
+      |                                                          ^~~~~~~~~
+gcc_sigaction.c:50:77: error: expected ';' before '(' token
+   50 |                         act.sa_sigaction = (void(*)(int, siginfo_t*, void*))(goact->handler);
+      |                                                                             ^
+      |                                                                             ;
+gcc_sigaction.c:54:17: error: implicit declaration of function 'sigemptyset' [-Wimplicit-function-declaration]
+   54 |                 sigemptyset(&act.sa_mask);
+      |                 ^~~~~~~~~~~
+gcc_sigaction.c:57:33: error: implicit declaration of function 'sigaddset' [-Wimplicit-function-declaration]
+   57 |                                 sigaddset(&act.sa_mask, (int)(i+1));
+      |                                 ^~~~~~~~~
+gcc_sigaction.c:63:15: error: implicit declaration of function 'sigaction' [-Wimplicit-function-declaration]
+   63 |         ret = sigaction((int)signum, goact ? &act : NULL, oldgoact ? &oldact : NULL);
+      |               ^~~~~~~~~
+gcc_sigaction.c:78:29: error: implicit declaration of function 'sigismember' [-Wimplicit-function-declaration]
+   78 |                         if (sigismember(&oldact.sa_mask, (int)(i+1)) == 1) {
+      |                             ^~~~~~~~~~~
+gcc_sigaction.c:40:26: error: unused variable 'oldact' [-Werror=unused-variable]
+   40 |         struct sigaction oldact;
+      |                          ^~~~~~
+gcc_sigaction.c:39:26: error: unused variable 'act' [-Werror=unused-variable]
+   39 |         struct sigaction act;
+      |                          ^~~
+cc1.exe: all warnings being treated as errors
+# runtime/cgo
+linux_syscall.c:11:10: fatal error: grp.h: No such file or directory
+   11 | #include <grp.h>
+      |          ^~~~~~~
+compilation terminated.

@@ -1,0 +1,2351 @@
+[
+  {
+    "id": "US001",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US002",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US003",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US004",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US005",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US006",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US007",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US008",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US009",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US010",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US011",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US012",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US013",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US014",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US015",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBoundBookViewsKeepSubjectFactsNavigationAndUnknownCompletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US016",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBookViewRequiresExplicitValidSubject"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US017",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBoundBookViewsKeepSubjectFactsNavigationAndUnknownCompletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US018",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBoundBookViewsKeepSubjectFactsNavigationAndUnknownCompletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US019",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/recent_view_test.go",
+        "symbol": "TestRecentBooksBindsReaderAndPreservesAnonymousCompatibility"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US020",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBookViewRequiresExplicitValidSubject"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US021",
+    "group": "Q",
+    "tests": [
+      {
+        "path": "internal/reading/catalogue_view_test.go",
+        "symbol": "TestCataloguePageBindsReaderBeforeFilteringCountingOrderingAndPagination"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US022",
+    "group": "Q",
+    "tests": [
+      {
+        "path": "internal/reading/catalogue_view_test.go",
+        "symbol": "TestCataloguePageBindsReaderBeforeFilteringCountingOrderingAndPagination"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US023",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBoundBookViewsKeepSubjectFactsNavigationAndUnknownCompletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US024",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBoundBookViewsKeepSubjectFactsNavigationAndUnknownCompletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US025",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/position_test.go",
+        "symbol": "TestPositionAllowsNewerBackwardReadingAndRejectsDelayedReports"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US026",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/mark_test.go",
+        "symbol": "TestClearEvidenceSurvivesRestartForUserAndAnonymousReader"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US027",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/organize/reader_queries_test.go",
+        "symbol": "TestOrganizedReaderQueriesBindSubjectsAndKeepListFallbackSeparate"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US028",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/book_view_test.go",
+        "symbol": "TestBoundBookViewsKeepSubjectFactsNavigationAndUnknownCompletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US029",
+    "group": "Q",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestHTTPQueryCacheReceivesTheApplicationInvalidation"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US030",
+    "group": "R",
+    "tests": [
+      {
+        "path": "internal/reading/queries_test.go",
+        "symbol": "TestReaderViewsIsolateSubjectAndReflectBackwardPositionAndClear"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US031",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/atomic_store_test.go",
+        "symbol": "TestReadingWritesUseOnlyAtomicStorageCapabilities"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US032",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/mark_test.go",
+        "symbol": "TestMarkBatchFailureRollsBackProgressBasisAndAggregate"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US033",
+    "group": "M",
+    "tests": [
+      {
+        "path": "internal/application/seriesediting/manual_test.go",
+        "symbol": "TestManualSaveReturnsCommittedMetadataAndPreservesAbsentCollections"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US034",
+    "group": "M",
+    "tests": [
+      {
+        "path": "internal/application/seriesediting/manual_test.go",
+        "symbol": "TestManualSaveReturnsCommittedMetadataAndPreservesAbsentCollections"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US035",
+    "group": "M",
+    "tests": [
+      {
+        "path": "internal/seriesmeta/bulk_test.go",
+        "symbol": "TestSelectionPreservesRawScalarsAndRemovesAfterAdding"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US036",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/scanner/series_title_lock_test.go",
+        "symbol": "TestScanKeepsUserEditedSeriesTitleAndLocks"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US037",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/resolve_test.go",
+        "symbol": "TestApplyFiltersFieldsLockedAfterQueueing"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US038",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/resolve_test.go",
+        "symbol": "TestApplyFiltersFieldsLockedAfterQueueing"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US039",
+    "group": "M",
+    "tests": [
+      {
+        "path": "internal/application/seriesediting/manual_test.go",
+        "symbol": "TestManualSaveRollsBackRequiredStatisticsAndConflictingVersion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US040",
+    "group": "M",
+    "tests": [
+      {
+        "path": "internal/reading/catalogue_view_test.go",
+        "symbol": "TestCataloguePageBindsReaderBeforeFilteringCountingOrderingAndPagination"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US041",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/mark_test.go",
+        "symbol": "TestLaterMarkBatchFailureRetainsAndInvalidatesCommittedRange"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US042",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/mark_test.go",
+        "symbol": "TestLaterMarkBatchFailureRetainsAndInvalidatesCommittedRange"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US043",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/position_test.go",
+        "symbol": "TestActivityFailureKeepsCommittedPositionAndAttemptsUserProjection"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US044",
+    "group": "W",
+    "tests": [
+      {
+        "path": "internal/reading/atomic_store_test.go",
+        "symbol": "TestReadingWritesUseOnlyAtomicStorageCapabilities"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US045",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/concurrency_test.go",
+        "symbol": "TestPartialApplyConflictsWhenRejectCommitsBeforeItsTransaction"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US046",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/concurrency_test.go",
+        "symbol": "TestPartialApplyConflictsWhenRejectCommitsBeforeItsTransaction"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US047",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/concurrency_test.go",
+        "symbol": "TestPartialApplyFailureRollsBackMetadataFieldsAndProvenance"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US048",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/concurrency_test.go",
+        "symbol": "TestConcurrentPartialApplicationsDoNotReuseConsumedFields"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US049",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/resolve_test.go",
+        "symbol": "TestApplyFillEmptyKeepsUnappliedFields"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US050",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/concurrency_test.go",
+        "symbol": "TestApplySelectsUsingTransactionCurrentValuesAndLocks"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US051",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/concurrency_test.go",
+        "symbol": "TestConcurrentPartialApplicationsDoNotReuseConsumedFields"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US052",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/resolve_test.go",
+        "symbol": "TestApplyWritesEveryFieldAndClosesProposal"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US053",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/resolve_test.go",
+        "symbol": "TestApplyReportsAllFieldsLockedWhenEverythingIsFiltered"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US054",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/api/metadata_review_concurrency_test.go",
+        "symbol": "TestPartialApplyHTTPClassifiesTransactionCurrentOutcome"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/metadataReviewConcurrency.test.tsx",
+        "case": "shows conflicts, no changes and faults separately after a partial-apply request"
+      }
+    ]
+  },
+  {
+    "id": "US055",
+    "group": "P",
+    "tests": [
+      {
+        "path": "internal/proposal/concurrency_test.go",
+        "symbol": "TestConcurrentPartialApplicationsDoNotReuseConsumedFields"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US056",
+    "group": "C",
+    "tests": [
+      {
+        "path": "internal/organize/collections_test.go",
+        "symbol": "TestOnlyContinuouslyDerivedCollectionsRejectManualChanges"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US057",
+    "group": "C",
+    "tests": [
+      {
+        "path": "internal/organize/smart_collections_test.go",
+        "symbol": "TestSmartSnapshotIsOneTimeAndManuallyOwned"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US058",
+    "group": "C",
+    "tests": [
+      {
+        "path": "internal/organize/collections_test.go",
+        "symbol": "TestMemberBatchIsAtomicForMissingSeries"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US059",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/relations_test.go",
+        "symbol": "TestFranchiseMergeSplitKeepsUnaffectedIdentitiesAndTimes"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US060",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestRelationWriteRollsBackWhenDurableMarkFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US061",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestRelationWriteRollsBackWhenDurableMarkFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US062",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestRelationWriteRollsBackWhenDurableMarkFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US063",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_facts_test.go",
+        "symbol": "TestFranchiseCascadeSourcesRecoverAfterReopenWithStableIdentity"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US064",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_facts_test.go",
+        "symbol": "TestManualTitleEditPersistsFranchiseFactChange"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US065",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestFranchiseFailureKeepsOldProjectionAndHonorsBackoffAcrossReopen"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US066",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/application/runtime/franchise_repair_test.go",
+        "symbol": "TestRuntimeResumesDurableFranchiseRepairAndRetriesFailure"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US067",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestNewRelationChangeCannotBeClearedByOldRebuildCompletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US068",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestOldFranchiseFailureCannotReplaceNewerSuccess"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US069",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestFranchiseUpgradePreservesExistingResultAsStale"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/features/organize/FranchiseRepairStatus.test.tsx",
+        "case": "keeps old results identified as stale and retries immediately after a failure"
+      }
+    ]
+  },
+  {
+    "id": "US070",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestFranchiseRepairResponsibilitySurvivesWithoutBackgroundNotification"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/features/organize/FranchiseRepairStatus.test.tsx",
+        "case": "distinguishes a first unavailable projection from a successful empty projection"
+      }
+    ]
+  },
+  {
+    "id": "US071",
+    "group": "F",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_repair_test.go",
+        "symbol": "TestFranchiseRepairResponsibilitySurvivesWithoutBackgroundNotification"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/features/organize/FranchiseRepairStatus.test.tsx",
+        "case": "keeps old results identified as stale and retries immediately after a failure"
+      }
+    ]
+  },
+  {
+    "id": "US072",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/save_test.go",
+        "symbol": "TestCreateLibraryKeepsCommittedResultWhenInitialScanAdmissionFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US073",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/save_test.go",
+        "symbol": "TestLibraryValidationRejectsEquivalentRegisteredRootAcrossCreateAndUpdate"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US074",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/save_test.go",
+        "symbol": "TestCreateLibraryKeepsCommittedResultWhenInitialScanAdmissionFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US075",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/save_test.go",
+        "symbol": "TestUpdateLibraryPreservesIdentityAndRejectsOccupiedPathChange"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US076",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/scanning/scanning_test.go",
+        "symbol": "TestProtectedLibraryRejectsAutomaticScansAndEveryCleanup"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US077",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/task/library_reservation_test.go",
+        "symbol": "TestLibraryReservationBlocksQueueAndReleasesOtherLibraries"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US078",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/task/library_reservation_test.go",
+        "symbol": "TestLibraryReservationBlocksQueueAndReleasesOtherLibraries"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US079",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/delete_test.go",
+        "symbol": "TestDeleteCancelsLocalRunAndWaitsForItsActualExit"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US080",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/delete_test.go",
+        "symbol": "TestDeleteBusyLibraryPreservesRecordAndWatcherThenDeletesWhenReadExits"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US081",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/task/library_drain_test.go",
+        "symbol": "TestLibraryDrainCancelsOnlyEligibleIdentityAndActualCoverage"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US082",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/task/library_drain_test.go",
+        "symbol": "TestLibraryDrainCancelsOnlyEligibleIdentityAndActualCoverage"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US083",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/task/library_reservation_test.go",
+        "symbol": "TestLibraryReservationWaitsForBodyExitDespiteTerminalSnapshot"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US084",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/task/library_reservation_test.go",
+        "symbol": "TestLibraryReservationUpgradeNeverReopensReadAdmission"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US085",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/delete_test.go",
+        "symbol": "TestDeleteHoldsEngineExclusivityUntilCommitAndCancellationReleasesIt"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US086",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/delete_test.go",
+        "symbol": "TestDeleteFailureUsesCurrentWatchSettings"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US087",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/delete_test.go",
+        "symbol": "TestDeleteFailureRetainsQueuedCancellationFactsWithoutRestart"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US088",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/task/library_reservation_test.go",
+        "symbol": "TestLibraryReservationBlocksQueueAndReleasesOtherLibraries"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US089",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_facts_test.go",
+        "symbol": "TestFranchiseSeriesDeletionPersistsRepairResponsibility"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US090",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/bookcontent/page_test.go",
+        "symbol": "TestPageMaterializesBytesAndReleasesBorrowBeforeReturning"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US091",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/bookcontent/page_test.go",
+        "symbol": "TestPageMaterializesBytesAndReleasesBorrowBeforeReturning"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US092",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/bookcontent/page_test.go",
+        "symbol": "TestPageMaterializesBytesAndReleasesBorrowBeforeReturning"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US093",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/bookcontent/file_test.go",
+        "symbol": "TestWholeBookHandleRetainsAccessUntilClose"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US094",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/bookcontent/page_test.go",
+        "symbol": "TestPageMaterializesBytesAndReleasesBorrowBeforeReturning"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US095",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/bookcontent/page_test.go",
+        "symbol": "TestPassthroughAndUnavailableFilterStayOutOfProcessedCache"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US096",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/images/processor_process_test.go",
+        "symbol": "TestProcessImageRejectsDecodeBomb"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US097",
+    "group": "B",
+    "tests": [
+      {
+        "path": "internal/bookcontent/page_test.go",
+        "symbol": "TestDerivedPageCacheTracksVariantAndArchivePath"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US098",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/parser/publication_test.go",
+        "symbol": "TestComicInfoPublicationWaitsForEvictedBorrowAndBlocksNewReaders"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US099",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/parser/publication_test.go",
+        "symbol": "TestComicInfoPublicationWaitsForEvictedBorrowAndBlocksNewReaders"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US100",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/parser/publication_test.go",
+        "symbol": "TestComicInfoPublicationTimeoutCancelAndSourceChangePreserveOriginal"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US101",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/parser/publication_test.go",
+        "symbol": "TestComicInfoPublicationTimeoutCancelAndSourceChangePreserveOriginal"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US102",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/parser/publication_test.go",
+        "symbol": "TestComicInfoPublicationWaitsForEvictedBorrowAndBlocksNewReaders"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US103",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/bookcontent/publication_test.go",
+        "symbol": "TestPublicationRetainsCommittedFactWhenFactStoreFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US104",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/bookcontent/publication_test.go",
+        "symbol": "TestPublicationRetainsCommittedFactWhenFactStoreFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US105",
+    "group": "PUB",
+    "tests": [
+      {
+        "path": "internal/parser/publication_test.go",
+        "symbol": "TestComicInfoPublicationTimeoutCancelAndSourceChangePreserveOriginal"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US106",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/boundary_test.go",
+        "symbol": "TestExternalRootRejectsEveryRegisteredLibrary"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US107",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/boundary_test.go",
+        "symbol": "TestExternalRootRejectsEveryRegisteredLibrary"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US108",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/application/diskjobs/diskjobs_test.go",
+        "symbol": "TestQueuedExportRetainsCoverageAndCancellationNeverCopies"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US109",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/application/diskjobs/diskjobs_test.go",
+        "symbol": "TestTransferExternalCopiesAndRefreshesSession"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US110",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_test.go",
+        "symbol": "TestTransferCancellationKeepsCommittedBooksAndRemovesCurrentStaging"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US111",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_test.go",
+        "symbol": "TestTransferCancellationKeepsCommittedBooksAndRemovesCurrentStaging"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US112",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_test.go",
+        "symbol": "TestTransferCancellationKeepsCommittedBooksAndRemovesCurrentStaging"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US113",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_test.go",
+        "symbol": "TestTransferPreservesDestinationCreatedDuringCopy"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US114",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_pause_test.go",
+        "symbol": "TestTransferPausesWithinCurrentBookAndResumesSameStaging"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US115",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_pause_test.go",
+        "symbol": "TestTransferPausesWithinCurrentBookAndResumesSameStaging"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US116",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_pause_test.go",
+        "symbol": "TestPausedTransferRejectsChangedSourceOrStagingAndCleansUp"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US117",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_pause_test.go",
+        "symbol": "TestPausedTransferRejectsChangedSourceOrStagingAndCleansUp"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US118",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_test.go",
+        "symbol": "TestTransferCancellationKeepsCommittedBooksAndRemovesCurrentStaging"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US119",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_test.go",
+        "symbol": "TestTransferFailureKeepsSuccessfulRangeAndSessionProjection"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US120",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_test.go",
+        "symbol": "TestTransferCancellationKeepsCommittedBooksAndRemovesCurrentStaging"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US121",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/external/transfer_pause_test.go",
+        "symbol": "TestTransferPausedWhileQueuedForQuotaDoesNotStartRead"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US122",
+    "group": "X",
+    "tests": [
+      {
+        "path": "internal/application/diskjobs/diskjobs_test.go",
+        "symbol": "TestQueuedExportRetainsCoverageAndCancellationNeverCopies"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US123",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/scanner/ingestion_transaction_test.go",
+        "symbol": "TestScanDoesNotReportRolledBackRenameAsCommitted"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US124",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/scanner/ingestion_transaction_test.go",
+        "symbol": "TestScanDoesNotReportRolledBackRenameAsCommitted"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US125",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/application/scanning/watch_queue_test.go",
+        "symbol": "TestQueuedWatchCleanupRechecksInputAndChangeQualification"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US126",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/application/scanning/scanning_test.go",
+        "symbol": "TestWatchRenameCompletesBeforeCleanup"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US127",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/application/scanning/watch_queue_test.go",
+        "symbol": "TestQueuedWatchCleanupRechecksInputAndChangeQualification"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US128",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/scanner/watcher_rename_order_test.go",
+        "symbol": "TestCleanupSkippedWhenSameLibraryScanFails"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US129",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/application/scanning/cover_test.go",
+        "symbol": "TestApplicationScanCompletesWhileItsCoverRunStillWaits"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US130",
+    "group": "I",
+    "tests": [
+      {
+        "path": "internal/bookidentity/evidence_test.go",
+        "symbol": "TestQuickAndPathEvidenceKeepCompatibleByteConventions"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US131",
+    "group": "I",
+    "tests": [
+      {
+        "path": "internal/bookidentity/rebuild_test.go",
+        "symbol": "TestRebuildUsesEvidenceWithoutChangingBookIdentityAndSkipsUnreadableTail"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US132",
+    "group": "I",
+    "tests": [
+      {
+        "path": "internal/api/controller_test.go",
+        "symbol": "TestKOReaderSelfRegistrationCreatesAuthenticatableAccount"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US133",
+    "group": "I",
+    "tests": [
+      {
+        "path": "internal/koreader/fingerprint_extra_test.go",
+        "symbol": "TestNormalizeDocumentForMatchModes"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US134",
+    "group": "I",
+    "tests": [
+      {
+        "path": "internal/scanner/rehome_test.go",
+        "symbol": "TestRenameIndexRefusesAmbiguousMatch"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US135",
+    "group": "S",
+    "tests": [
+      {
+        "path": "internal/scanner/cleanup_guard_test.go",
+        "symbol": "TestCleanupCircuitBreakerStopsMassDeletion"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US136",
+    "group": "MOVE",
+    "tests": [
+      {
+        "path": "internal/application/relocating/relocating_test.go",
+        "symbol": "TestRuntimePolicyFailureKeepsAccessProtectedUntilRecovery"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US137",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/api/config_consistency_test.go",
+        "symbol": "TestConfigUpdatesSerializeSaveAndReload"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US138",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/config/effects_test.go",
+        "symbol": "TestFieldTimingCatalogCoversConfigurationAndKeepsStartupFieldsExplicit"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US139",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/application/intelligence/configuration_snapshot_test.go",
+        "symbol": "TestGroupingPinsSourceBeforeDeferredRunStarts"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US140",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/runtimecfg/runtimecfg_test.go",
+        "symbol": "TestOwnedResourcesKeepBorrowUsableAcrossUpdateAndRetirement"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US141",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/runtimecfg/runtimecfg_test.go",
+        "symbol": "TestOwnedResourcesKeepBorrowUsableAcrossUpdateAndRetirement"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US142",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/runtimecfg/runtimecfg_test.go",
+        "symbol": "TestRejectedConfigurationPreservesPublishedResources"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US143",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/config/config_extra_test.go",
+        "symbol": "TestMaskAndRestoreAllSecrets"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US144",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/application/runtime/resource_lifetime_test.go",
+        "symbol": "TestShutdownRetiresResourcesAfterAdmittedReaderExits"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US145",
+    "group": "CFG",
+    "tests": [
+      {
+        "path": "internal/application/runtime/resource_lifetime_test.go",
+        "symbol": "TestShutdownRetiresResourcesAfterAdmittedReaderExits"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US146",
+    "group": "V",
+    "tests": [
+      {
+        "path": "internal/api/metadata_capability_test.go",
+        "symbol": "TestMetadataSearchConsumesSearchOnlySource"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US147",
+    "group": "V",
+    "tests": [
+      {
+        "path": "internal/api/metadata_capability_test.go",
+        "symbol": "TestMetadataSearchConsumesSearchOnlySource"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US148",
+    "group": "V",
+    "tests": [
+      {
+        "path": "internal/api/metadata_capability_test.go",
+        "symbol": "TestMetadataSearchConsumesSearchOnlySource"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US149",
+    "group": "V",
+    "tests": [
+      {
+        "path": "internal/metadata/provider_budget_test.go",
+        "symbol": "TestProviderBudgetRespectsContextCancellation"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US150",
+    "group": "V",
+    "tests": [
+      {
+        "path": "internal/config/llm_connection_test.go",
+        "symbol": "TestLLMConnectionNormalizesLegacyEndpointWithoutApplicationConfig"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US151",
+    "group": "RT",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US152",
+    "group": "RT",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US153",
+    "group": "RT",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestFailedRecoveryReturnsNoHostAndOpensNoInputs"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US154",
+    "group": "RT",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestShutdownWaitsForHTTPConsumerBeforeStoppingEngine"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US155",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/application/runtime/runtime_test.go",
+        "symbol": "TestInterruptedCoverRunReplaysDeclaredDiscoveryThroughRegistry"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US156",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/application/scanning/cover_test.go",
+        "symbol": "TestCoverRestartReplaysBackfillIndependentlyOfTrigger"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US157",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/task/events_test.go",
+        "symbol": "TestEveryLossyCoalesceRetainsIncomingDeclaration"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US158",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/task/events_test.go",
+        "symbol": "TestRepeatedCoalescingLandsOneEvent"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US159",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/application/scanning/cover_test.go",
+        "symbol": "TestCoverRestartReplaysBackfillIndependentlyOfTrigger"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US160",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/application/runtime/runtime_test.go",
+        "symbol": "TestInterruptedCoverRunReplaysDeclaredDiscoveryThroughRegistry"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US161",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/task/pause_all_test.go",
+        "symbol": "TestPauseAllHoldsTheQueue"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US162",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/api/task_push_frames_test.go",
+        "symbol": "TestSnapshotFrameCarriesTheWholeRun"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US163",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/application/runtime/runtime_test.go",
+        "symbol": "TestInterruptedCoverRunReplaysDeclaredDiscoveryThroughRegistry"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US164",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/application/scanning/cover_test.go",
+        "symbol": "TestCoverWorkerLogsUseItsOwnRunAfterTheScanFinishes"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US165",
+    "group": "OFF",
+    "tests": [
+      {
+        "path": "internal/reading/sync_test.go",
+        "symbol": "TestReceivedFactsAtSameTickRetainRetryIdentity"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/features/offline/readerOfflineConsumer.test.tsx",
+        "case": "finishes a download for the original book after navigation without assigning it to the next book"
+      }
+    ]
+  },
+  {
+    "id": "US166",
+    "group": "OFF",
+    "tests": [
+      {
+        "path": "internal/reading/sync_test.go",
+        "symbol": "TestReceivedFactsAtSameTickRetainRetryIdentity"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/auth/sessionExpiryOffline.test.tsx",
+        "case": "401 / session expiry retention suite"
+      }
+    ]
+  },
+  {
+    "id": "US167",
+    "group": "OFF",
+    "tests": [
+      {
+        "path": "internal/reading/sync_test.go",
+        "symbol": "TestReceivedFactsAtSameTickRetainRetryIdentity"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/book-reader/offlineOwner.test.ts",
+        "case": "reconcileOfflineOwner ownership suite"
+      }
+    ]
+  },
+  {
+    "id": "US168",
+    "group": "OFF",
+    "tests": [
+      {
+        "path": "internal/reading/sync_test.go",
+        "symbol": "TestReceivedFactsAtSameTickRetainRetryIdentity"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/features/offline/readerOfflineConsumer.test.tsx",
+        "case": "reconnect uploads original facts for both books and an old acknowledgement cannot remove a new owner fact"
+      }
+    ]
+  },
+  {
+    "id": "US169",
+    "group": "EDIT",
+    "tests": [
+      {
+        "path": "internal/api/config_consistency_test.go",
+        "symbol": "TestConfigUpdatesSerializeSaveAndReload"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/settings/configVersion.test.tsx",
+        "case": "keeps edits made while saving and advances only to the acknowledged save baseline"
+      }
+    ]
+  },
+  {
+    "id": "US170",
+    "group": "EDIT",
+    "tests": [
+      {
+        "path": "internal/api/config_consistency_test.go",
+        "symbol": "TestConfigUpdatesSerializeSaveAndReload"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/settings/configVersion.test.tsx",
+        "case": "saves only the selected section and retains unsaved credentials across the refresh"
+      }
+    ]
+  },
+  {
+    "id": "US171",
+    "group": "EDIT",
+    "tests": [
+      {
+        "path": "internal/api/config_consistency_test.go",
+        "symbol": "TestConfigUpdatesSerializeSaveAndReload"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/settings/configVersion.test.tsx",
+        "case": "does not rebase a dirty section when an unrelated save refreshes an unchanged server section"
+      }
+    ]
+  },
+  {
+    "id": "US172",
+    "group": "EDIT",
+    "tests": [
+      {
+        "path": "internal/api/config_consistency_test.go",
+        "symbol": "TestConfigUpdatesSerializeSaveAndReload"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/settings/settingsLifecycle.test.tsx",
+        "case": "keeps the latest device diagnostics when earlier requests finish late"
+      }
+    ]
+  },
+  {
+    "id": "US173",
+    "group": "M",
+    "tests": [
+      {
+        "path": "internal/application/seriesediting/manual_test.go",
+        "symbol": "TestManualSaveReturnsCommittedMetadataAndPreservesAbsentCollections"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US174",
+    "group": "Q",
+    "tests": [
+      {
+        "path": "internal/reading/catalogue_view_test.go",
+        "symbol": "TestCataloguePageBindsReaderBeforeFilteringCountingOrderingAndPagination"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US175",
+    "group": "AI",
+    "tests": [
+      {
+        "path": "internal/organize/ai_grouping_test.go",
+        "symbol": "TestAIGroupingApplyCollectionOwnsIdentityAndAdjudication"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US176",
+    "group": "AI",
+    "tests": [
+      {
+        "path": "internal/organize/ai_grouping_test.go",
+        "symbol": "TestAIGroupingApplyCollectionOwnsIdentityAndAdjudication"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/aiGroupingReviewInbox.test.tsx",
+        "case": "终态离开 pending 筛选后仍消费动作返回的权威候选内容"
+      }
+    ]
+  },
+  {
+    "id": "US177",
+    "group": "FX",
+    "tests": [
+      {
+        "path": "internal/reading/mark_test.go",
+        "symbol": "TestLaterMarkBatchFailureRetainsAndInvalidatesCommittedRange"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/session/catalogConsumers.test.tsx",
+        "case": "ordinary series reload and retry do not declare catalog writes"
+      }
+    ]
+  },
+  {
+    "id": "US178",
+    "group": "FX",
+    "tests": [
+      {
+        "path": "internal/application/seriesediting/selection_test.go",
+        "symbol": "TestSelectionRetainsCommittedMetadataWhenStatisticsFail"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/session/proposalConsumers.test.tsx",
+        "case": "warns about committed %s with failed authoritative refresh, then retries only the query"
+      }
+    ]
+  },
+  {
+    "id": "US179",
+    "group": "T",
+    "tests": [
+      {
+        "path": "internal/application/runtime/runtime_test.go",
+        "symbol": "TestInterruptedCoverRunReplaysDeclaredDiscoveryThroughRegistry"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/features/task-observation/useTaskObservation.test.tsx",
+        "case": "recovers expanded history and backend totals on gaps/reconnect while preserving filters"
+      }
+    ]
+  },
+  {
+    "id": "US180",
+    "group": "L",
+    "tests": [
+      {
+        "path": "internal/application/libraries/save_test.go",
+        "symbol": "TestCreateLibraryKeepsCommittedResultWhenInitialScanAdmissionFails"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/features/libraries/useLibraryManagement.test.tsx",
+        "case": "keeps drafts and browser location after rejected save, then distinguishes committed save from failed navigation refresh"
+      }
+    ]
+  },
+  {
+    "id": "US181",
+    "group": "UI",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestHTTPQueryCacheReceivesTheApplicationInvalidation"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/QueryFailure.test.tsx",
+        "case": "Dashboard shows genuine zero totals and explicitly empty lists after successful requests"
+      }
+    ]
+  },
+  {
+    "id": "US182",
+    "group": "UI",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestHTTPQueryCacheReceivesTheApplicationInvalidation"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/QueryFailure.test.tsx",
+        "case": "Dashboard preserves labelled stale overview while optional failures are retryable, then clears stale on recovery"
+      }
+    ]
+  },
+  {
+    "id": "US183",
+    "group": "UI",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestHTTPQueryCacheReceivesTheApplicationInvalidation"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/pages/QueryFailure.test.tsx",
+        "case": "recommendations in flight cannot populate the next identity"
+      }
+    ]
+  },
+  {
+    "id": "US184",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/setup_atomic_test.go",
+        "symbol": "TestSetupAtomicallyCreatesOnlyOneAdministrator"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US185",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/setup_atomic_test.go",
+        "symbol": "TestSetupAtomicallyCreatesOnlyOneAdministrator"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US186",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/account_management_atomic_test.go",
+        "symbol": "TestConcurrentAccountDemotionsPreserveAdministrator"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US187",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/account_management_atomic_test.go",
+        "symbol": "TestAccountManagementFreshAuthorizationAndSelfDelete"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US188",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/setup_atomic_test.go",
+        "symbol": "TestSetupSessionFailurePreservesCommittedAccountAndExactUsername"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US189",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/password_transition_test.go",
+        "symbol": "TestPasswordCommitPreventsOldInFlightBasicCredentialsFromRepopulatingCache"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US190",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/setup_atomic_test.go",
+        "symbol": "TestSetupClaimsLegacyActivityAndDeviceAccountWithoutMergingCredentials"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US191",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/password_transition_test.go",
+        "symbol": "TestPasswordResetAuthorizationAndProtocolEligibility"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US192",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/security_p0_test.go",
+        "symbol": "TestSetupRoutesEnforcesSession"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US193",
+    "group": "ACC",
+    "tests": [
+      {
+        "path": "internal/api/account_management_atomic_test.go",
+        "symbol": "TestConcurrentCrossAccountDeletesAndStaleActorKeepAdministrator"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US194",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/reader_http_test.go",
+        "symbol": "TestBoundReaderPositionRatingAndProtocolConsumers"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US195",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/organize/franchise_facts_test.go",
+        "symbol": "TestFranchiseCascadeSourcesRecoverAfterReopenWithStableIdentity"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US196",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/application/diskjobs/transfer_pause_test.go",
+        "symbol": "TestTransferRunPauseResumeAndCancelKeepCommittedRange"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US197",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestShutdownWaitsForHTTPConsumerBeforeStoppingEngine"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US198",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/reader_http_test.go",
+        "symbol": "TestBoundReaderPositionRatingAndProtocolConsumers"
+      }
+    ],
+    "web": [
+      {
+        "path": "web/src/session/ApplicationRoutes.test.tsx",
+        "case": "actual navigation routes share the session, refresh the library and release it in reader and graph"
+      }
+    ]
+  },
+  {
+    "id": "US199",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/reader_http_test.go",
+        "symbol": "TestBoundReaderPositionRatingAndProtocolConsumers"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US200",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US201",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US202",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US203",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  },
+  {
+    "id": "US204",
+    "group": "A",
+    "tests": [
+      {
+        "path": "internal/bootstrap/bootstrap_test.go",
+        "symbol": "TestOpenUsesOneManagerQueueAndServesBoundHTTP"
+      }
+    ],
+    "web": []
+  }
+]

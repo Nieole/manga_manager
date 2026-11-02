@@ -1,0 +1,8 @@
+
+ RUN  v5.0.1 C:/Users/saber/dev/manga-refinement-48/web
+
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  23:48:31
+   Duration  279ms (transform 39%, import 30%, tests 27%, worker 5%)

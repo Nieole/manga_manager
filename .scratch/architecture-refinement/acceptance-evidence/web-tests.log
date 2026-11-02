@@ -1,0 +1,12 @@
+
+ RUN  v5.0.1 C:/Users/saber/dev/manga-refinement-48/web
+
+
+ Test Files  106 passed (106)
+      Tests  1008 passed (1008)
+   Start at  23:46:02
+   Duration  148.36s (import 52%, environment 33%, tests 12%, transform 2%)
+
+     Import  312 modules were evaluated 1330 times · 144.85s total, 52% of tracked time
+             ~46.67s faster with isolate: false — shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation

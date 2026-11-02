@@ -1,0 +1,18 @@
+{
+  "tree": "813d019e7fc785ea2868e83f3f6d7f8df11cb348",
+  "head": "46c20cbc936c664eae6c246cb20ed59c1ac1f9e5",
+  "source_digest": "eecd0b7d2c8cbdd17020ed5e2a8de171a4f0bbefcbec0ea3252ce325381827de",
+  "source_digest_algorithm": "SHA256 of sorted Git-tracked source paths + NUL + raw bytes + NUL (.go/.ts/.tsx/.sql/.yaml/.json), excluding .scratch/architecture-refinement/acceptance-evidence/ in every tracking state; HEAD/index/worktree must agree",
+  "source_count": 1094,
+  "production_go_imports_api": [
+    "cmd/server/main.go",
+    "cmd/tsgen/main.go",
+    "internal/bootstrap/bootstrap.go"
+  ],
+  "retired_production_declarations": [],
+  "compat_production_files": [],
+  "runtime_constructors": [
+    "internal/bootstrap/bootstrap.go"
+  ],
+  "scope": "Tracked source audit, no untracked node_modules. Declaration/import search supports manual review; it is not an architectural proof or behavioral test."
+}

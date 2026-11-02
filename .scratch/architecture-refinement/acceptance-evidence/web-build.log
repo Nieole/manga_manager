@@ -1,0 +1,70 @@
+[36mvite v8.3.0 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 3133 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                      1.63 kB │ gzip:  0.75 kB
+dist/assets/reactflow-DLioOiRN.css                  15.41 kB │ gzip:  2.56 kB
+dist/assets/index-DR7JkcV8.css                     167.00 kB │ gzip: 23.28 kB
+dist/assets/settings-editor-DzlOC9sL.js              0.33 kB │ gzip:  0.21 kB
+dist/assets/useRequestLifetime-Bd7X4PhL.js           0.46 kB │ gzip:  0.27 kB
+dist/assets/status-CbqQYsPd.js                       0.50 kB │ gzip:  0.29 kB
+dist/assets/cover-vWt1mDEt.js                        0.51 kB │ gzip:  0.33 kB
+dist/assets/useSettingsMaintenance-Dhxn9Z4A.js       0.56 kB │ gzip:  0.38 kB
+dist/assets/rolldown-runtime-hePW80VL.js             0.71 kB │ gzip:  0.42 kB
+dist/assets/useRelocationOperation-B7sxA4cK.js       0.80 kB │ gzip:  0.49 kB
+dist/assets/PageShell-DP2zZrio.js                    0.93 kB │ gzip:  0.50 kB
+dist/assets/AuthShell-J-nFVO3F.js                    1.22 kB │ gzip:  0.58 kB
+dist/assets/InsightNotice-BMyOA516.js                1.32 kB │ gzip:  0.71 kB
+dist/assets/ConnectionTestingProvider-B3vd7VjE.js    1.49 kB │ gzip:  0.83 kB
+dist/assets/shared-BTg6voxQ.js                       1.65 kB │ gzip:  0.81 kB
+dist/assets/LoginPage-DJwMAKOv.js                    1.72 kB │ gzip:  0.83 kB
+dist/assets/ForcePasswordChangePage-B_xK79rM.js      2.44 kB │ gzip:  1.01 kB
+dist/assets/Ops-TSSPlL9F.js                          2.52 kB │ gzip:  1.20 kB
+dist/assets/SetupPage-DFjgERwA.js                    2.55 kB │ gzip:  1.00 kB
+dist/assets/ReviewCenter-DZxnSnwt.js                 2.56 kB │ gzip:  1.20 kB
+dist/assets/DirectoryPicker-Dc_3O9vB.js              3.25 kB │ gzip:  1.08 kB
+dist/assets/SettingsAppearancePage-BxlSkZKV.js       3.73 kB │ gzip:  1.19 kB
+dist/assets/LocaleProvider-DIVBjwkS.js               4.10 kB │ gzip:  1.92 kB
+dist/assets/LibraryFormModal-DgLn3MrI.js             4.29 kB │ gzip:  1.37 kB
+dist/assets/SettingsMediaPage-Df_THvRk.js            4.80 kB │ gzip:  1.31 kB
+dist/assets/SettingsAIPage-Cuatp_wW.js               4.88 kB │ gzip:  1.32 kB
+dist/assets/SettingsOverviewPage-Cj1abvuP.js         5.15 kB │ gzip:  1.50 kB
+dist/assets/SearchModal-2QXlPvdw.js                  5.25 kB │ gzip:  1.75 kB
+dist/assets/SettingsTagsPage-BaO6n_N5.js             5.56 kB │ gzip:  1.92 kB
+dist/assets/KOReaderProvider-BDa26szx.js             5.92 kB │ gzip:  1.83 kB
+dist/assets/offlineReader-rPpLqKoW.js                6.36 kB │ gzip:  2.50 kB
+dist/assets/Stats-B3C26M4x.js                        6.52 kB │ gzip:  1.85 kB
+dist/assets/SettingsUsersPage-BoM0730_.js            6.70 kB │ gzip:  2.08 kB
+dist/assets/SettingsEditorProvider-BiZC-NSh.js       8.09 kB │ gzip:  2.78 kB
+dist/assets/Settings-DzreBH3v.js                     8.11 kB │ gzip:  2.53 kB
+dist/assets/franchise-graph-KcfDsLS3.js              8.63 kB │ gzip:  3.53 kB
+dist/assets/Logs-DVge4WoC.js                         9.80 kB │ gzip:  2.78 kB
+dist/assets/ReadingLists-BxqG9hzq.js                10.80 kB │ gzip:  3.28 kB
+dist/assets/RestorationModal-BO8Hw-G4.js            11.82 kB │ gzip:  3.48 kB
+dist/assets/OfflineShelf-C4daT95y.js                14.89 kB │ gzip:  3.36 kB
+dist/assets/SettingsMaintenancePage-BuJqdSAp.js     15.23 kB │ gzip:  2.77 kB
+dist/assets/RelocationModal-eD_tjzhL.js             16.46 kB │ gzip:  4.64 kB
+dist/assets/MetadataReviews-DC5cX8a0.js             17.07 kB │ gzip:  4.89 kB
+dist/assets/useReadStateMutation-B-3Zxt0u.js        17.94 kB │ gzip:  5.17 kB
+dist/assets/SettingsLibraryPage-BF65Ym9G.js         19.51 kB │ gzip:  3.36 kB
+dist/assets/SettingsConnectionsPage-GJeXiNBm.js     19.85 kB │ gzip:  4.96 kB
+dist/assets/AIGroupingReviews-DlrnxwbG.js           20.06 kB │ gzip:  5.07 kB
+dist/assets/Organize-DOX6Qb_Z.js                    20.22 kB │ gzip:  5.29 kB
+dist/assets/SettingsKOReaderPage-DQUp2j4r.js        20.79 kB │ gzip:  3.71 kB
+dist/assets/Dashboard-B59DKRh5.js                   21.86 kB │ gzip:  6.09 kB
+dist/assets/collections-DFoDPp9s.js                 28.86 kB │ gzip:  7.47 kB
+dist/assets/BackgroundTasks-Cjvg0J_c.js             40.78 kB │ gzip:  9.47 kB
+dist/assets/virtuoso-XZegNT3G.js                    59.78 kB │ gzip: 19.35 kB
+dist/assets/BookReader-DQRH-IpU.js                  76.71 kB │ gzip: 20.00 kB
+dist/assets/index-Be2oaE--.js                       77.57 kB │ gzip: 21.36 kB
+dist/assets/library-DSUCoOG8.js                     90.56 kB │ gzip: 22.51 kB
+dist/assets/series-detail-CJI9Tbze.js               95.70 kB │ gzip: 22.76 kB
+dist/assets/vendor-4dS24RYw.js                     142.14 kB │ gzip: 49.71 kB
+dist/assets/zh-CN-BFT2t81m.js                      148.21 kB │ gzip: 42.50 kB
+dist/assets/en-US-DDJbTnDA.js                      156.65 kB │ gzip: 39.39 kB
+dist/assets/reactflow-CjQQ6PfF.js                  177.92 kB │ gzip: 57.37 kB
+dist/assets/react-core-DzdA1lbi.js                 206.83 kB │ gzip: 64.79 kB
+dist/assets/comimi-B6vLJPNp.js                     211.48 kB │ gzip: 51.34 kB
+
+[32m✓ built in 490ms[39m

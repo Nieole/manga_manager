@@ -1,0 +1,127 @@
+{
+  "A": {
+    "implementation": "internal/bootstrap/bootstrap.go::Open; internal/api/host.go::Bind; internal/api/host_routes.go::SetupRoutes",
+    "consumer": "cmd/server/main.go::main",
+    "manual": "Changed/critical read: sole production assembly; four bound families plus content/catalogue/cover/provider/SSE tails share the same leaves. Full Store only at assembly, not an HTTP field; no new universal facade. Source search and import audit supplement, not substitute, consumer tests."
+  },
+  "R": {
+    "implementation": "internal/reading/book_view.go::Subject; internal/reading/book_view.go::BookView; internal/reading/queries.go::Continue",
+    "consumer": "internal/api/reader_http.go::currentReadingSubject",
+    "manual": "Changed/critical read: zero/negative subject is rejected, explicit anonymous remains separate. Facts are not mutable user projections; unknown completion does not invent page counts. Reader/OPDS/Mihon use the same bound queries."
+  },
+  "Q": {
+    "implementation": "internal/reading/catalogue_view.go::Search; internal/database/series_search.go::SearchSeriesPaged",
+    "consumer": "internal/api/reader_http.go::ReaderCapabilities; web/src/pages/library/hooks/useLibrarySeries.ts::useLibrarySeries",
+    "manual": "Changed/critical read: subject enters SeriesListFilters before SQL filtering/count/order/page; retains query-shaped rows and batch SQL rather than per-book entity hydration. Cache invalidation is application-bound; browser scope includes reader/session."
+  },
+  "W": {
+    "implementation": "internal/reading/position.go::RecordPosition; internal/reading/mark.go::MarkBooks; internal/reading/bookmarks.go::Save",
+    "consumer": "internal/api/reader_http.go::ReaderCapabilities; web/src/reading/useReadStateMutation.ts::useReadStateMutation",
+    "manual": "Changed/critical read: atomic write port exposes no DB/Queries escape. Committed book IDs survive later batch failure; soft activity error does not undo position. Original times/fact IDs and persisted clear basis survive retries/reopen; bookmark/time subject stays explicit."
+  },
+  "M": {
+    "implementation": "internal/application/seriesediting/manual.go::Save; internal/application/seriesediting/selection.go::Edit; internal/seriesmeta/manual.go::SaveManual",
+    "consumer": "internal/api/organization_http.go::MetadataEditor; web/src/features/series-metadata/useSeriesEdit.ts::useSeriesEdit",
+    "manual": "Changed/critical read: manual save includes required stats/read in the narrow transaction; absent vs empty collections remain distinct. Selection commits metadata atomically but later statistics are warnings. Source-specific seriesmeta policies remain separate."
+  },
+  "P": {
+    "implementation": "internal/proposal/resolve.go::Apply; internal/proposal/resolve.go::Reject",
+    "consumer": "internal/api/metadata_review_controller.go; web/src/pages/series-detail/hooks/useSeriesMetadataReview.ts::useSeriesMetadataReview",
+    "manual": "Changed/critical read: transaction rechecks pending state and current fields/locks/values, not just preflight. Partial fields/provenance roll back together; prior partial commit survives reject. Frontend waits authoritative reload, then finally publishes known commit; query retry never repeats adjudication."
+  },
+  "C": {
+    "implementation": "internal/organize/collections.go::AddMembers; internal/organize/smart_snapshot.go::Snapshot; internal/organize/reading_lists.go::Reorder",
+    "consumer": "internal/api/organization_http.go::ReadingListsCapability; web/src/pages/ReadingLists.tsx",
+    "manual": "Changed/selected read: continuously derived members reject manual edits; snapshot/AI output stays manually owned. Ordered writes use a narrow transaction and preserve item identity; all-read list fallback differs intentionally from ordinary continue reading."
+  },
+  "AI": {
+    "implementation": "internal/organize/ai_grouping.go::ApplyCollection; internal/organize/ai_grouping.go::RejectReview",
+    "consumer": "internal/api/organization_http.go::GroupingCapability; web/src/pages/AIGroupingReviewInbox.tsx",
+    "manual": "Changed/selected read: backend returns authoritative candidate and whole-review outcome. Existing applied members survive remaining rejection; frontend merges rather than guessing terminal state and retains selection/scroll."
+  },
+  "F": {
+    "implementation": "internal/organize/franchise_state.go::RepairDue; internal/organize/franchise.go::Rebuild; internal/application/runtime/lifecycle.go::repairFranchises",
+    "consumer": "internal/api/organization_http.go::RelationsCapability; web/src/features/organize/FranchiseRepairStatus.tsx::FranchiseRepairStatus",
+    "manual": "Changed/critical read: global desired/applied versions, not per-library graph; facts/cascade triggers mark in the same transaction. Stable identities and version guarded completion/failure prevent old attempts overwriting new success. Reopen/backoff and first-unavailable vs stale-success are separate witnesses; retry retains durable responsibility."
+  },
+  "L": {
+    "implementation": "internal/application/libraries/delete.go::Delete; internal/task/library_reservation.go::ReserveLibrary; internal/task/library_drain.go::Drain",
+    "consumer": "internal/api/library_http.go; web/src/features/libraries/useLibraryManagement.ts::useLibraryManagement",
+    "manual": "Changed/critical read: reserve closes starts/reads/queued admission, cancellation outside Engine lock, actual coverage and task identity determine eligibility. Upgrade checks real occupiers under same lock; defer releases/resumes queue and restores current watcher after failure. Cancellations are not automatically replayed. Create/update distinguish save from scan/watch/navigation effects."
+  },
+  "B": {
+    "implementation": "internal/bookcontent/file.go::ReadHandle; internal/bookcontent/page.go::Page; internal/bookcontent/source.go::List",
+    "consumer": "internal/api/content_http.go; internal/api/reader_http.go::serveBookFile",
+    "manual": "Changed/critical read: same content source/cache/lease supports page and whole-book/protocol reads. Close ends file lease; materialized page bytes release archive borrow. Processing/pass-through and cache eligibility remain distinct; parser/images retain technical format, size and memory guards."
+  },
+  "PUB": {
+    "implementation": "internal/bookcontent/publication.go::Publish; internal/parser/comicinfo_writeback.go::PrepareComicInfo; internal/application/diskjobs/comicinfo.go::WriteComicInfoPrepared",
+    "consumer": "internal/api/library_http.go; internal/api/comicinfo_publication_test.go::TestComicInfoCommittedFileSurvivesFactStoreFailure",
+    "manual": "Changed/critical read: stage first, return own source handle, bounded final borrow exclusion/revalidation, then replacement. File commit is recorded before bounded uncancelled fact/cache handoff. Warning is not write failure; the HTTP regression checks the next source read, not only a toast/run status."
+  },
+  "X": {
+    "implementation": "internal/external/copy.go::copyFile; internal/external/transfer.go::Transfer; internal/application/diskjobs/transfer.go::TransferPrepared",
+    "consumer": "internal/api/library_http.go; web/src/features/external-library/useExternalLibrary.ts::useExternalLibrary",
+    "manual": "Changed/critical read: every registered library boundary is checked; each copy block passes pause and short IO lease. Resume checks source/staging identity, bytes/time, physical parent and destination eligibility. Atomic missing-target publication never clobbers a concurrent target. Committed IDs precede projection failure; cancellation removes only owned staging. No cross-process resume or forced OS IO interruption promised."
+  },
+  "S": {
+    "implementation": "internal/scanner/ingestion_writer.go::persist; internal/scanner/ingestion_coordinator.go::scanFinished; internal/application/scanning/scanning.go::ScanLibrary",
+    "consumer": "internal/application/runtime/lifecycle.go::watchLibraries; internal/api/library_http.go",
+    "manual": "Changed/selected read: ingestion owns discovery/identity/commit, successful reassociation effects occur after commit. Watcher coordinates actual scan completion/generation before cleanup, failed/uncertain work requeues; stop joins handed-off work. Scanner remains outside protocol ownership; asynchronous covers retain their own run."
+  },
+  "I": {
+    "implementation": "internal/bookidentity/evidence.go::FingerprintFile; internal/bookidentity/rebuild.go::Rebuild",
+    "consumer": "internal/scanner/ingestion.go; internal/koreader/service.go::SaveProgress",
+    "manual": "Changed/selected read: neutral byte/path evidence consumed by scan/maintenance, device document key and account remain protocol concerns. Retain size+mtime ambiguity and matching algorithms; evidence equality is not permission to merge book identity."
+  },
+  "MOVE": {
+    "implementation": "internal/application/relocating/service.go::Recover; internal/application/relocating/runs.go::Confirm",
+    "consumer": "internal/api/library_http.go::relocationHTTP; internal/application/runtime/lifecycle.go::Start",
+    "manual": "Changed/critical boundary read: persistent domain owns path/compensation/protection; application owns Engine exclusivity and watcher/cache handoff. Recover precedes input opening. Post-path-commit effects are not a fictitious database rollback."
+  },
+  "CFG": {
+    "implementation": "internal/application/configuration/publication.go::SaveExpected; internal/application/configuration/publication.go::Reload; internal/config/effects.go::FieldEffects",
+    "consumer": "internal/api/administration.go::AdministrationStore; internal/bootstrap/bootstrap.go::Open",
+    "manual": "Changed/critical read: API and reload share Manager but retain separate compensation; startup facts identify active database and pending restart. Published is not all fields live. Fixed operation snapshots and FieldEffects retain next-operation semantics."
+  },
+  "V": {
+    "implementation": "internal/metadata/provider.go::Fetcher; internal/metadata/provider.go::Searcher; internal/application/intelligence/intelligence.go::Sources",
+    "consumer": "internal/api/tail_http.go::providerHTTP; internal/application/intelligence/grouping.go::GroupLibrary",
+    "manual": "Changed/selected boundary review: consumers request fetch/search/group/connection capabilities, not the provider superset. Adapters retain upstream format, paging, retry, cancellation and redaction; deterministic provider fixtures are not real-provider acceptance."
+  },
+  "RT": {
+    "implementation": "internal/bootstrap/bootstrap.go::Open; internal/application/runtime/lifecycle.go::Start; internal/application/runtime/lifecycle.go::Shutdown",
+    "consumer": "cmd/server/main.go::main; internal/api/host.go::Lifecycle",
+    "manual": "Changed/critical read: bind leaves before Start; Recover and resources/RecoverRuns before background. StopEvents precedes HTTP drain; Close joins task/watcher/background before resources retire. Runtime is an assembly result, not a handler field. Real routed SSE shutdown is a separate final-tree witness."
+  },
+  "T": {
+    "implementation": "internal/task/start.go::Start; internal/task/start.go::coalesceLocked; internal/application/scanning/restart.go::Restarts",
+    "consumer": "internal/api/task_model.go::taskFilters; web/src/features/task-observation/useTaskObservation.ts::useTaskObservation",
+    "manual": "Changed/selected boundary review: input Args, environmental Labels, Limits and metrics remain distinct. Lossy coalesces record each discarded input, lossless first-event suppression remains; restart does not infer behavior from trigger. Task/store/HTTP projections and context logs remain separate."
+  },
+  "OFF": {
+    "implementation": "web/src/features/offline/offlineReader.ts::queueOfflineProgress; web/src/features/offline/offlineReader.ts::reconcileOfflineOwner; web/src/features/offline/offlineSession.ts::endOfflineSession",
+    "consumer": "web/src/auth/AuthProvider.tsx::AuthProvider; web/src/pages/OfflineShelf.tsx::OfflineShelf",
+    "manual": "Changed/critical consumer read: expiry/network failure clear auth but not owned bytes/queue; explicit logout uploads while authorized then releases ownership even on failure. New owner reconciles before new CSRF. Stable fact/time survives ACK/retry; browser mocks are not physical-device storage proof."
+  },
+  "EDIT": {
+    "implementation": "web/src/features/settings-editor/EditSession.ts::EditSession; web/src/features/koreader-settings/KOReaderProvider.tsx::KOReaderProvider",
+    "consumer": "web/src/features/settings-editor/SettingsProvider.tsx::SettingsProvider",
+    "manual": "Changed/critical read: each partition retains baseline/version, prepare merges only that section with published server state, dirty receive does not rebase silently, acknowledgement retains edits after send. KOReader diagnostic request scope is separate from draft lifecycle."
+  },
+  "FX": {
+    "implementation": "web/src/session/ApplicationSessionProvider.tsx::useLibraryInvalidation; web/src/pages/series-detail/hooks/useSeriesMetadataReview.ts::useSeriesMetadataReview",
+    "consumer": "web/src/pages/series-detail/hooks/useSeriesContext.ts::useSeriesContext; web/src/reading/useReadStateMutation.ts::useReadStateMutation",
+    "manual": "Changed/critical consumer read: plain query/retry does not assert mutation. Known commit invalidation happens in finally after local authoritative reload settles, including refresh failure/navigation. Scope fencing protects the new view without suppressing shared effects of an old commit."
+  },
+  "UI": {
+    "implementation": "web/src/pages/Dashboard.tsx::Dashboard; web/src/pages/Stats.tsx::Stats",
+    "consumer": "web/src/App.tsx::App; web/src/session/ApplicationSessionProvider.tsx::ApplicationSessionProvider",
+    "manual": "Changed/selected consumer review: unavailable/first failure, actual empty/zero and stale success remain separate. Identity/target and request generation fence late replies. Supplementary panel degradation does not pretend a required query succeeded."
+  },
+  "ACC": {
+    "implementation": "internal/accounts/initialization.go::Setup; internal/accounts/management.go::Update; internal/accounts/management.go::Delete; internal/accounts/password.go::Change",
+    "consumer": "internal/api/administration.go::administrationHTTP; internal/api/auth_controller.go::userFromContext; web/src/auth/AuthProvider.tsx::AuthProvider",
+    "manual": "Changed/critical read: fresh actor and last-admin guard inside private write capability, self-delete forbidden and usernames byte exact. Password/session revocation commit precedes cache invalidation; replacement browser session can fail independently. Cookie/CSRF/rate/protocol auth stays transport owned."
+  }
+}
