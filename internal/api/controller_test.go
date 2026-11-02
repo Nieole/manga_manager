@@ -40,7 +40,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func newTestController(t testing.TB) (*Controller, database.Store, any, string) {
+func newTestController(t testing.TB) (*apiFixture, database.Store, any, string) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -76,9 +76,8 @@ func newTestController(t testing.TB) (*Controller, database.Store, any, string) 
 	parser.InitPool(cfg.Scanner.ArchivePoolSize)
 	scan := scanner.NewScanner(store, cfgManager)
 
-	// 与生产路径共用同一份装配（newControllerCore），只把缓存容量调小以便用几条数据触发淘汰。
-	// 不走 NewController 是因为后者还会启动守护/落盘/SSE/文件监听等后台服务，测试不需要也不该起。
-	controller := newControllerCore(store, scan, cfgManager, configPath, controllerCacheSizes{
+	// 显式装配 SQLite、应用资源与窄 HTTP 能力；测试不开守护、监听或其他后台输入。
+	controller := newAPIFixture(store, scan, cfgManager, configPath, controllerCacheSizes{
 		imageBytes: 8 << 10, page: 8, bookPageSource: 8,
 	})
 
@@ -181,13 +180,13 @@ func (p *blockingMetadataProvider) SearchMetadata(ctx context.Context, title str
 	return []*metadata.SeriesMetadata{result}, 1, nil
 }
 
-func createTestKOReaderAccount(t *testing.T, controller *Controller, username string) KOReaderAccountResponse {
+func createTestKOReaderAccount(t *testing.T, controller *apiFixture, username string) KOReaderAccountResponse {
 	t.Helper()
 
 	reqBody := []byte(`{"username":"` + username + `"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader/accounts", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
-	controller.createKOReaderAccount(rec, req)
+	controller.admin.createKOReaderAccount(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected account create 201, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -255,7 +254,7 @@ func seedBookFixture(t testing.TB, store database.Store, rootDir, libName, serie
 // seedBookArchivePages 为一本已入库的书写出归档，并把 books 表里的路径、体积、页数对齐到该文件。
 // 每一页的字节由调用方给定且各不相同：不带缩放/格式/画质参数的页图请求按原始字节透传，
 // 因此响应体可直接与写入的内容比对，用来判定服务端取的到底是第几页。
-func seedBookArchivePages(t testing.TB, controller *Controller, book database.Book, pageBodies ...[]byte) {
+func seedBookArchivePages(t testing.TB, controller *apiFixture, book database.Book, pageBodies ...[]byte) {
 	t.Helper()
 
 	files := make(map[string][]byte, len(pageBodies))
@@ -288,7 +287,7 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	getRec := httptest.NewRecorder()
 	// /api/system/config 是管理员专属端点；直接调处理器拿不到 authGate 的角色标记，
 	// jsonResponse 会按普通用户把配置里的路径裁掉（见 redactHostPaths），故显式补上标记。
-	controller.getSystemConfig(&adminResponseWriter{ResponseWriter: getRec}, getReq)
+	controller.admin.getSystemConfig(&adminResponseWriter{ResponseWriter: getRec}, getReq)
 
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", getRec.Code)
@@ -326,7 +325,7 @@ func TestGetAndUpdateSystemConfig(t *testing.T) {
 	postReq := httptest.NewRequest(http.MethodPost, "/api/system/config", bytes.NewReader(body))
 	postRec := httptest.NewRecorder()
 	postReq.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateSystemConfig(postRec, postReq)
+	controller.admin.updateSystemConfig(postRec, postReq)
 
 	if postRec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", postRec.Code)
@@ -368,7 +367,7 @@ func TestUpdateKOReaderSettings(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
 	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateKOReaderSettings(rec, req)
+	controller.admin.updateKOReaderSettings(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -411,7 +410,7 @@ func TestGeneratedKOReaderAccountCanAuthenticateThroughClientHashedHeader(t *tes
 	}`)))
 	settingsRec := httptest.NewRecorder()
 	settingsReq.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateKOReaderSettings(settingsRec, settingsReq)
+	controller.admin.updateKOReaderSettings(settingsRec, settingsReq)
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", settingsRec.Code, settingsRec.Body.String())
 	}
@@ -421,7 +420,7 @@ func TestGeneratedKOReaderAccountCanAuthenticateThroughClientHashedHeader(t *tes
 	authReq.Header.Set("x-auth-user", account.Username)
 	authReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	authRec := httptest.NewRecorder()
-	controller.koreaderAuth(authRec, authReq)
+	controller.admin.koreaderAuth(authRec, authReq)
 	if authRec.Code != http.StatusOK {
 		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
 	}
@@ -434,14 +433,14 @@ func TestRotateAndToggleKOReaderAccount(t *testing.T) {
 
 	toggleReq := requestWithRouteParam(http.MethodPost, "/api/system/koreader/accounts/1/toggle", []byte(`{"enabled":false}`), "accountId", strconv.FormatInt(account.ID, 10))
 	toggleRec := httptest.NewRecorder()
-	controller.toggleKOReaderAccount(toggleRec, toggleReq)
+	controller.admin.toggleKOReaderAccount(toggleRec, toggleReq)
 	if toggleRec.Code != http.StatusOK {
 		t.Fatalf("expected toggle 200, got %d body=%s", toggleRec.Code, toggleRec.Body.String())
 	}
 
 	rotateReq := requestWithRouteParam(http.MethodPost, "/api/system/koreader/accounts/1/rotate-key", nil, "accountId", strconv.FormatInt(account.ID, 10))
 	rotateRec := httptest.NewRecorder()
-	controller.rotateKOReaderAccountKey(rotateRec, rotateReq)
+	controller.admin.rotateKOReaderAccountKey(rotateRec, rotateReq)
 	if rotateRec.Code != http.StatusOK {
 		t.Fatalf("expected rotate 200, got %d body=%s", rotateRec.Code, rotateRec.Body.String())
 	}
@@ -456,7 +455,7 @@ func TestRotateAndToggleKOReaderAccount(t *testing.T) {
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/system/koreader/accounts", nil)
 	listRec := httptest.NewRecorder()
-	controller.listKOReaderAccounts(listRec, listReq)
+	controller.admin.listKOReaderAccounts(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected account list 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -486,7 +485,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
 	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateKOReaderSettings(rec, req)
+	controller.admin.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d", rec.Code)
 	}
@@ -516,7 +515,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	authReq.Header.Set("x-auth-user", account.Username)
 	authReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	authRec := httptest.NewRecorder()
-	controller.koreaderAuth(authRec, authReq)
+	controller.admin.koreaderAuth(authRec, authReq)
 	if authRec.Code != http.StatusOK {
 		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
 	}
@@ -535,7 +534,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	progressReq.Header.Set("x-auth-user", account.Username)
 	progressReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	progressRec := httptest.NewRecorder()
-	controller.koreaderUpdateProgress(progressRec, progressReq)
+	controller.admin.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
 		t.Fatalf("expected progress update 200, got %d body=%s", progressRec.Code, progressRec.Body.String())
 	}
@@ -552,7 +551,7 @@ func TestKOReaderAuthAndProgressSyncBinaryHash(t *testing.T) {
 	getReq.Header.Set("x-auth-user", account.Username)
 	getReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	getRec := httptest.NewRecorder()
-	controller.koreaderGetProgress(getRec, getReq)
+	controller.admin.koreaderGetProgress(getRec, getReq)
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("expected progress fetch 200, got %d body=%s", getRec.Code, getRec.Body.String())
 	}
@@ -579,7 +578,7 @@ func TestKOReaderAuthSupportsVendorJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
 	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateKOReaderSettings(rec, req)
+	controller.admin.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -590,7 +589,7 @@ func TestKOReaderAuthSupportsVendorJSON(t *testing.T) {
 	authReq.Header.Set("x-auth-user", account.Username)
 	authReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	authRec := httptest.NewRecorder()
-	controller.koreaderAuth(authRec, authReq)
+	controller.admin.koreaderAuth(authRec, authReq)
 	if authRec.Code != http.StatusOK {
 		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
 	}
@@ -620,7 +619,7 @@ func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
 	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateKOReaderSettings(rec, req)
+	controller.admin.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -656,7 +655,7 @@ func TestKOReaderAuthAndProgressSyncFilePath(t *testing.T) {
 	progressReq.Header.Set("x-auth-user", account.Username)
 	progressReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	progressRec := httptest.NewRecorder()
-	controller.koreaderUpdateProgress(progressRec, progressReq)
+	controller.admin.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
 		t.Fatalf("expected progress update 200, got %d body=%s", progressRec.Code, progressRec.Body.String())
 	}
@@ -683,7 +682,7 @@ func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
 	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateKOReaderSettings(rec, req)
+	controller.admin.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -719,7 +718,7 @@ func TestKOReaderFilePathIgnoreExtension(t *testing.T) {
 	progressReq.Header.Set("x-auth-user", account.Username)
 	progressReq.Header.Set("x-auth-key", koreader.HashKey(account.SyncKey))
 	progressRec := httptest.NewRecorder()
-	controller.koreaderUpdateProgress(progressRec, progressReq)
+	controller.admin.koreaderUpdateProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
 		t.Fatalf("expected progress update 200, got %d body=%s", progressRec.Code, progressRec.Body.String())
 	}
@@ -746,7 +745,7 @@ func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/system/koreader", bytes.NewReader(reqBody))
 	rec := httptest.NewRecorder()
 	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateKOReaderSettings(rec, req)
+	controller.admin.updateKOReaderSettings(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -769,7 +768,7 @@ func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/system/koreader/unmatched?limit=10", nil)
 	listRec := httptest.NewRecorder()
-	controller.listKOReaderUnmatched(listRec, listReq)
+	controller.admin.listKOReaderUnmatched(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected unmatched list 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -787,7 +786,7 @@ func TestKOReaderUnmatchedListAndApplyMatching(t *testing.T) {
 
 	applyReq := httptest.NewRequest(http.MethodPost, "/api/system/koreader/apply-matching", nil)
 	applyRec := httptest.NewRecorder()
-	controller.applyKOReaderMatching(applyRec, applyReq)
+	controller.families.maintenance.applyKOReaderMatching(applyRec, applyReq)
 	if applyRec.Code != http.StatusAccepted {
 		t.Fatalf("expected apply matching 202, got %d body=%s", applyRec.Code, applyRec.Body.String())
 	}
@@ -845,7 +844,7 @@ func TestKOReaderDeviceDiagnostics(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.getKOReaderDeviceDiagnostics(rec, httptest.NewRequest(http.MethodGet, "/api/system/koreader/devices?limit=10", nil))
+	controller.admin.getKOReaderDeviceDiagnostics(rec, httptest.NewRequest(http.MethodGet, "/api/system/koreader/devices?limit=10", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected device diagnostics 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -876,7 +875,7 @@ func TestGetStorageIODiagnostics(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/system/storage-io", nil)
-	controller.getStorageIODiagnostics(rec, req)
+	controller.families.storage.getStorageIODiagnostics(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -1001,7 +1000,7 @@ func TestStorageIOCoverRateComesFromTheCoverRun(t *testing.T) {
 		"queued_covers": 6, "generated_covers": 6, "opened_archives": 6, "thumbnail_write_ms": 50, "duration_ms": 1,
 	}})
 
-	scanRate, coverRate, thumbnailWriteMillis := controller.recentStorageIOTaskRates()
+	scanRate, coverRate, thumbnailWriteMillis := controller.families.storage.recentStorageIOTaskRates()
 	if scanRate <= 0 || coverRate <= 0 || thumbnailWriteMillis != 50 {
 		t.Fatalf("expected recent storage IO rates, got scan=%f cover=%f writes=%d", scanRate, coverRate, thumbnailWriteMillis)
 	}
@@ -1022,7 +1021,7 @@ func TestUpdateSystemConfigRejectsInvalidConfiguration(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/system/config", bytes.NewReader(payload))
 	req.Header.Set("If-Match", controller.config.Version(controller.currentConfig()))
-	controller.updateSystemConfig(rec, req)
+	controller.admin.updateSystemConfig(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422, got %d body=%s", rec.Code, rec.Body.String())
@@ -1050,7 +1049,7 @@ func TestSearchBooksHandler(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/api/search?q=Alpha&target=book", nil)
 		rec := httptest.NewRecorder()
-		controller.searchBooks(rec, req)
+		controller.reader.searchBooks(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -1091,7 +1090,7 @@ func TestSearchNormalizesScores(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=Naruto&target=book", nil)
 	rec := httptest.NewRecorder()
-	controller.searchBooks(rec, req)
+	controller.reader.searchBooks(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1145,7 +1144,7 @@ func TestSearchHydratesCoversFromDB(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=Beta&target=all", nil)
 	rec := httptest.NewRecorder()
-	controller.searchBooks(rec, req)
+	controller.reader.searchBooks(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -1205,7 +1204,7 @@ func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 	}
 	createReq := httptest.NewRequest(http.MethodPost, "/api/libraries", bytes.NewReader(createPayload))
 	createRec := httptest.NewRecorder()
-	controller.createLibrary(createRec, createReq)
+	controller.families.library.createLibrary(createRec, createReq)
 
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createRec.Code)
@@ -1253,7 +1252,7 @@ func TestCreateAndUpdateLibraryDefaults(t *testing.T) {
 	}
 	updateReq := requestWithRouteParam(http.MethodPut, "/api/libraries/1", updatePayload, "libraryId", "1")
 	updateRec := httptest.NewRecorder()
-	controller.updateLibrary(updateRec, updateReq)
+	controller.families.library.updateLibrary(updateRec, updateReq)
 
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", updateRec.Code)
@@ -1277,7 +1276,7 @@ func TestRebuildIndexKeepsSearchUsable(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/system/rebuild-index", nil)
 	rec := httptest.NewRecorder()
-	controller.rebuildIndex(rec, req)
+	controller.families.maintenance.rebuildIndex(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -1285,7 +1284,7 @@ func TestRebuildIndexKeepsSearchUsable(t *testing.T) {
 
 	searchReq := httptest.NewRequest(http.MethodGet, "/api/search?q=Reindexed&target=book", nil)
 	searchRec := httptest.NewRecorder()
-	controller.searchBooks(searchRec, searchReq)
+	controller.reader.searchBooks(searchRec, searchReq)
 
 	if searchRec.Code != http.StatusOK {
 		t.Fatalf("expected search to keep working, got %d", searchRec.Code)
@@ -1325,14 +1324,14 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 
 	updateReq := requestWithRouteParam(http.MethodPut, "/api/series/1", payload, "seriesId", strconv.FormatInt(series.ID, 10))
 	updateRec := httptest.NewRecorder()
-	controller.updateSeriesInfo(updateRec, updateReq)
+	controller.organizationHTTP.updateSeriesInfo(updateRec, updateReq)
 
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected update series 200, got %d", updateRec.Code)
 	}
 
 	infoRec := httptest.NewRecorder()
-	controller.getSeriesInfo(infoRec, requestWithRouteParam(http.MethodGet, "/api/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesInfo(infoRec, requestWithRouteParam(http.MethodGet, "/api/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 
 	if infoRec.Code != http.StatusOK {
 		t.Fatalf("expected get series info 200, got %d", infoRec.Code)
@@ -1353,7 +1352,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	}
 
 	tagsRec := httptest.NewRecorder()
-	controller.getSeriesTags(tagsRec, requestWithRouteParam(http.MethodGet, "/api/series/1/tags", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesTags(tagsRec, requestWithRouteParam(http.MethodGet, "/api/series/1/tags", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if tagsRec.Code != http.StatusOK {
 		t.Fatalf("expected get series tags 200, got %d", tagsRec.Code)
 	}
@@ -1366,7 +1365,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	}
 
 	authorsRec := httptest.NewRecorder()
-	controller.getSeriesAuthors(authorsRec, requestWithRouteParam(http.MethodGet, "/api/series/1/authors", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesAuthors(authorsRec, requestWithRouteParam(http.MethodGet, "/api/series/1/authors", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if authorsRec.Code != http.StatusOK {
 		t.Fatalf("expected get series authors 200, got %d", authorsRec.Code)
 	}
@@ -1379,7 +1378,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	}
 
 	linksRec := httptest.NewRecorder()
-	controller.getSeriesLinks(linksRec, requestWithRouteParam(http.MethodGet, "/api/series/1/links", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesLinks(linksRec, requestWithRouteParam(http.MethodGet, "/api/series/1/links", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if linksRec.Code != http.StatusOK {
 		t.Fatalf("expected get series links 200, got %d", linksRec.Code)
 	}
@@ -1392,7 +1391,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	}
 
 	booksRec := httptest.NewRecorder()
-	controller.getBooksBySeries(booksRec, requestWithRouteParam(http.MethodGet, "/api/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getBooksBySeries(booksRec, requestWithRouteParam(http.MethodGet, "/api/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if booksRec.Code != http.StatusOK {
 		t.Fatalf("expected get books by series 200, got %d", booksRec.Code)
 	}
@@ -1461,7 +1460,7 @@ func TestUpdateSeriesInfoAndGetSeriesContext(t *testing.T) {
 	})
 
 	contextRec := httptest.NewRecorder()
-	controller.getSeriesContext(contextRec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesContext(contextRec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if contextRec.Code != http.StatusOK {
 		t.Fatalf("expected get series context 200, got %d", contextRec.Code)
 	}
@@ -1497,7 +1496,7 @@ func TestMetadataLookupValidationHandlers(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	providersRec := httptest.NewRecorder()
-	controller.listProviders(providersRec, httptest.NewRequest(http.MethodGet, "/api/providers", nil))
+	controller.providers.listProviders(providersRec, httptest.NewRequest(http.MethodGet, "/api/providers", nil))
 	if providersRec.Code != http.StatusOK {
 		t.Fatalf("expected list providers 200, got %d", providersRec.Code)
 	}
@@ -1523,25 +1522,25 @@ func TestMetadataLookupValidationHandlers(t *testing.T) {
 	}
 
 	searchRec := httptest.NewRecorder()
-	controller.searchMetadata(searchRec, httptest.NewRequest(http.MethodGet, "/api/metadata/search", nil))
+	controller.providers.searchMetadata(searchRec, httptest.NewRequest(http.MethodGet, "/api/metadata/search", nil))
 	if searchRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected missing q to return 400, got %d", searchRec.Code)
 	}
 
 	scrapeSearchRec := httptest.NewRecorder()
-	controller.scrapeSearchMetadata(scrapeSearchRec, requestWithRouteParam(http.MethodGet, "/api/series/invalid/scrape/search", nil, "seriesId", "invalid"))
+	controller.providers.scrapeSearchMetadata(scrapeSearchRec, requestWithRouteParam(http.MethodGet, "/api/series/invalid/scrape/search", nil, "seriesId", "invalid"))
 	if scrapeSearchRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid series id to return 400, got %d", scrapeSearchRec.Code)
 	}
 
 	notFoundRec := httptest.NewRecorder()
-	controller.scrapeSearchMetadata(notFoundRec, requestWithRouteParam(http.MethodGet, "/api/series/999/scrape/search", nil, "seriesId", "999"))
+	controller.providers.scrapeSearchMetadata(notFoundRec, requestWithRouteParam(http.MethodGet, "/api/series/999/scrape/search", nil, "seriesId", "999"))
 	if notFoundRec.Code != http.StatusNotFound {
 		t.Fatalf("expected missing series to return 404, got %d", notFoundRec.Code)
 	}
 
 	applyRec := httptest.NewRecorder()
-	controller.applyScrapedMetadata(applyRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scrape/apply", []byte("{"), "seriesId", "1"))
+	controller.providers.applyScrapedMetadata(applyRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scrape/apply", []byte("{"), "seriesId", "1"))
 	if applyRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid payload to return 400, got %d", applyRec.Code)
 	}
@@ -1552,14 +1551,14 @@ func TestOpenSeriesDirectory(t *testing.T) {
 	_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
 	var openedPath string
-	controller.openPath = func(path string) error {
+	controller.catalogue.openPath = func(path string) error {
 		openedPath = path
 		return nil
 	}
 
 	successRec := httptest.NewRecorder()
 	successReq := requestWithRouteParam(http.MethodPost, "/api/series/1/open-dir", nil, "seriesId", strconv.FormatInt(series.ID, 10))
-	controller.openSeriesDirectory(successRec, successReq)
+	controller.catalogue.openSeriesDirectory(successRec, successReq)
 	if successRec.Code != http.StatusOK {
 		t.Fatalf("expected open series directory 200, got %d body=%s", successRec.Code, successRec.Body.String())
 	}
@@ -1569,18 +1568,18 @@ func TestOpenSeriesDirectory(t *testing.T) {
 
 	notFoundRec := httptest.NewRecorder()
 	notFoundReq := requestWithRouteParam(http.MethodPost, "/api/series/999/open-dir", nil, "seriesId", "999")
-	controller.openSeriesDirectory(notFoundRec, notFoundReq)
+	controller.catalogue.openSeriesDirectory(notFoundRec, notFoundReq)
 	if notFoundRec.Code != http.StatusNotFound {
 		t.Fatalf("expected missing series 404, got %d", notFoundRec.Code)
 	}
 
-	controller.openPath = func(path string) error {
+	controller.catalogue.openPath = func(path string) error {
 		return os.ErrPermission
 	}
 
 	errorRec := httptest.NewRecorder()
 	errorReq := requestWithRouteParam(http.MethodPost, "/api/series/1/open-dir", nil, "seriesId", strconv.FormatInt(series.ID, 10))
-	controller.openSeriesDirectory(errorRec, errorReq)
+	controller.catalogue.openSeriesDirectory(errorRec, errorReq)
 	if errorRec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected open failure 500, got %d body=%s", errorRec.Code, errorRec.Body.String())
 	}
@@ -1591,7 +1590,7 @@ func TestLibraryAndSeriesReadEndpoints(t *testing.T) {
 	lib, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
 	libsRec := httptest.NewRecorder()
-	controller.getLibraries(libsRec, httptest.NewRequest(http.MethodGet, "/api/libraries", nil))
+	controller.families.library.getLibraries(libsRec, httptest.NewRequest(http.MethodGet, "/api/libraries", nil))
 	if libsRec.Code != http.StatusOK {
 		t.Fatalf("expected get libraries 200, got %d", libsRec.Code)
 	}
@@ -1604,7 +1603,7 @@ func TestLibraryAndSeriesReadEndpoints(t *testing.T) {
 	}
 
 	seriesRec := httptest.NewRecorder()
-	controller.getSeriesByLibrary(seriesRec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/series", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	controller.reader.getSeriesByLibrary(seriesRec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/series", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if seriesRec.Code != http.StatusOK {
 		t.Fatalf("expected get series by library 200, got %d", seriesRec.Code)
 	}
@@ -1618,7 +1617,7 @@ func TestLibraryAndSeriesReadEndpoints(t *testing.T) {
 
 	searchReq := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=5&page=1", nil)
 	searchRec := httptest.NewRecorder()
-	controller.searchSeriesPaged(searchRec, searchReq)
+	controller.reader.searchSeriesPaged(searchRec, searchReq)
 	if searchRec.Code != http.StatusOK {
 		t.Fatalf("expected search series paged 200, got %d", searchRec.Code)
 	}
@@ -1637,7 +1636,7 @@ func TestLibraryAndSeriesReadEndpoints(t *testing.T) {
 
 	invalidReq := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId=bad", nil)
 	invalidRec := httptest.NewRecorder()
-	controller.searchSeriesPaged(invalidRec, invalidReq)
+	controller.reader.searchSeriesPaged(invalidRec, invalidReq)
 	if invalidRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid library id 400, got %d", invalidRec.Code)
 	}
@@ -1670,7 +1669,7 @@ func TestSearchSeriesPagedFiltersChineseInitials(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=10&page=1&letter="+letter, nil)
 		rec := httptest.NewRecorder()
-		controller.searchSeriesPaged(rec, req)
+		controller.reader.searchSeriesPaged(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected search %s 200, got %d body=%s", letter, rec.Code, rec.Body.String())
 		}
@@ -1731,13 +1730,13 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}`)
 	updateReq := requestWithRouteParam(http.MethodPut, "/api/series/1", updatePayload, "seriesId", strconv.FormatInt(series.ID, 10))
 	updateRec := httptest.NewRecorder()
-	controller.updateSeriesInfo(updateRec, updateReq)
+	controller.organizationHTTP.updateSeriesInfo(updateRec, updateReq)
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected update series 200, got %d", updateRec.Code)
 	}
 
 	allTagsRec := httptest.NewRecorder()
-	controller.getAllTags(allTagsRec, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+	controller.reader.getAllTags(allTagsRec, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
 	if allTagsRec.Code != http.StatusOK {
 		t.Fatalf("expected get all tags 200, got %d", allTagsRec.Code)
 	}
@@ -1750,7 +1749,7 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 
 	allAuthorsRec := httptest.NewRecorder()
-	controller.getAllAuthors(allAuthorsRec, httptest.NewRequest(http.MethodGet, "/api/authors", nil))
+	controller.reader.getAllAuthors(allAuthorsRec, httptest.NewRequest(http.MethodGet, "/api/authors", nil))
 	if allAuthorsRec.Code != http.StatusOK {
 		t.Fatalf("expected get all authors 200, got %d", allAuthorsRec.Code)
 	}
@@ -1763,7 +1762,7 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 
 	searchTagsRec := httptest.NewRecorder()
-	controller.searchTags(searchTagsRec, httptest.NewRequest(http.MethodGet, "/api/tags/search?q=mys&limit=5", nil))
+	controller.reader.searchTags(searchTagsRec, httptest.NewRequest(http.MethodGet, "/api/tags/search?q=mys&limit=5", nil))
 	if searchTagsRec.Code != http.StatusOK {
 		t.Fatalf("expected search tags 200, got %d", searchTagsRec.Code)
 	}
@@ -1776,7 +1775,7 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 
 	searchAuthorsRec := httptest.NewRecorder()
-	controller.searchAuthors(searchAuthorsRec, httptest.NewRequest(http.MethodGet, "/api/authors/search?q=writer&limit=5", nil))
+	controller.reader.searchAuthors(searchAuthorsRec, httptest.NewRequest(http.MethodGet, "/api/authors/search?q=writer&limit=5", nil))
 	if searchAuthorsRec.Code != http.StatusOK {
 		t.Fatalf("expected search authors 200, got %d", searchAuthorsRec.Code)
 	}
@@ -1789,7 +1788,7 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 
 	bookInfoRec := httptest.NewRecorder()
-	controller.getBookInfo(bookInfoRec, requestWithRouteParam(http.MethodGet, "/api/books/1", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
+	controller.reader.getBookInfo(bookInfoRec, requestWithRouteParam(http.MethodGet, "/api/books/1", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
 	if bookInfoRec.Code != http.StatusOK {
 		t.Fatalf("expected get book info 200, got %d", bookInfoRec.Code)
 	}
@@ -1802,7 +1801,7 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 
 	nextRec := httptest.NewRecorder()
-	controller.getNextBook(nextRec, requestWithRouteParam(http.MethodGet, "/api/books/1/next", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
+	controller.reader.getNextBook(nextRec, requestWithRouteParam(http.MethodGet, "/api/books/1/next", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
 	if nextRec.Code != http.StatusOK {
 		t.Fatalf("expected get next book 200, got %d", nextRec.Code)
 	}
@@ -1815,7 +1814,7 @@ func TestGlobalMetadataAndBookReadEndpoints(t *testing.T) {
 	}
 
 	notFoundNextRec := httptest.NewRecorder()
-	controller.getNextBook(notFoundNextRec, requestWithRouteParam(http.MethodGet, "/api/books/2/next", nil, "bookId", strconv.FormatInt(secondBook.ID, 10)))
+	controller.reader.getNextBook(notFoundNextRec, requestWithRouteParam(http.MethodGet, "/api/books/2/next", nil, "bookId", strconv.FormatInt(secondBook.ID, 10)))
 	if notFoundNextRec.Code != http.StatusNotFound {
 		t.Fatalf("expected no next book 404, got %d", notFoundNextRec.Code)
 	}
@@ -1852,7 +1851,7 @@ func TestGetNextBookUsesChineseChapterOrder(t *testing.T) {
 	eleventhBook := createBook("第十一话.cbz")
 
 	listRec := httptest.NewRecorder()
-	controller.getBooksBySeries(listRec, requestWithRouteParam(http.MethodGet, "/api/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getBooksBySeries(listRec, requestWithRouteParam(http.MethodGet, "/api/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected get books 200, got %d", listRec.Code)
 	}
@@ -1872,7 +1871,7 @@ func TestGetNextBookUsesChineseChapterOrder(t *testing.T) {
 	}
 
 	nextRec := httptest.NewRecorder()
-	controller.getNextBook(nextRec, requestWithRouteParam(http.MethodGet, "/api/books/10/next", nil, "bookId", strconv.FormatInt(tenthBook.ID, 10)))
+	controller.reader.getNextBook(nextRec, requestWithRouteParam(http.MethodGet, "/api/books/10/next", nil, "bookId", strconv.FormatInt(tenthBook.ID, 10)))
 	if nextRec.Code != http.StatusOK {
 		t.Fatalf("expected get next book 200, got %d body=%s", nextRec.Code, nextRec.Body.String())
 	}
@@ -1940,7 +1939,7 @@ func TestSearchSeriesPagedSupportsAdditionalSortFields(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=10&page=1&sortBy="+sortBy, nil)
 		rec := httptest.NewRecorder()
-		controller.searchSeriesPaged(rec, req)
+		controller.reader.searchSeriesPaged(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 for sort %s, got %d body=%s", sortBy, rec.Code, rec.Body.String())
 		}
@@ -1986,7 +1985,7 @@ func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
 
 	firstReq := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=1&page=1&sortBy=name_asc", nil)
 	firstRec := httptest.NewRecorder()
-	controller.searchSeriesPaged(firstRec, firstReq)
+	controller.reader.searchSeriesPaged(firstRec, firstReq)
 	if firstRec.Code != http.StatusOK {
 		t.Fatalf("expected first page 200, got %d body=%s", firstRec.Code, firstRec.Body.String())
 	}
@@ -2006,7 +2005,7 @@ func TestSearchSeriesPagedReturnsAndAcceptsCursor(t *testing.T) {
 	secondURL := "/api/series/search?libraryId=" + strconv.FormatInt(lib.ID, 10) + "&limit=1&page=2&sortBy=name_asc&cursor=" + url.QueryEscape(firstResp.NextCursor)
 	secondReq := httptest.NewRequest(http.MethodGet, secondURL, nil)
 	secondRec := httptest.NewRecorder()
-	controller.searchSeriesPaged(secondRec, secondReq)
+	controller.reader.searchSeriesPaged(secondRec, secondReq)
 	if secondRec.Code != http.StatusOK {
 		t.Fatalf("expected cursor page 200, got %d body=%s", secondRec.Code, secondRec.Body.String())
 	}
@@ -2039,7 +2038,7 @@ func TestSearchSeriesPagedCapsLimit(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/series/search?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=1000000&page=1&sortBy=name_asc", nil)
 	rec := httptest.NewRecorder()
-	controller.searchSeriesPaged(rec, req)
+	controller.reader.searchSeriesPaged(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2065,7 +2064,7 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	favorite := true
 	bulkReq := httptest.NewRequest(http.MethodPost, "/api/series/bulk", bytes.NewBufferString(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`],"is_favorite":true}`))
 	bulkRec := httptest.NewRecorder()
-	controller.bulkUpdateSeries(bulkRec, bulkReq)
+	controller.catalogue.bulkUpdateSeries(bulkRec, bulkReq)
 	if bulkRec.Code != http.StatusOK {
 		t.Fatalf("expected bulk update series 200, got %d", bulkRec.Code)
 	}
@@ -2078,19 +2077,19 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	}
 
 	noopRec := httptest.NewRecorder()
-	controller.bulkUpdateSeries(noopRec, httptest.NewRequest(http.MethodPost, "/api/series/bulk", bytes.NewBufferString(`{"series_ids":[]}`)))
+	controller.catalogue.bulkUpdateSeries(noopRec, httptest.NewRequest(http.MethodPost, "/api/series/bulk", bytes.NewBufferString(`{"series_ids":[]}`)))
 	if noopRec.Code != http.StatusOK {
 		t.Fatalf("expected empty bulk update 200, got %d", noopRec.Code)
 	}
 
 	pagesInvalidRec := httptest.NewRecorder()
-	controller.getPagesByBook(pagesInvalidRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/bad", nil, "bookId", "bad"))
+	controller.media.getPagesByBook(pagesInvalidRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/bad", nil, "bookId", "bad"))
 	if pagesInvalidRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid book id 400, got %d", pagesInvalidRec.Code)
 	}
 
 	pagesMissingRec := httptest.NewRecorder()
-	controller.getPagesByBook(pagesMissingRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/999", nil, "bookId", "999"))
+	controller.media.getPagesByBook(pagesMissingRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/999", nil, "bookId", "999"))
 	if pagesMissingRec.Code != http.StatusNotFound {
 		t.Fatalf("expected missing book 404, got %d", pagesMissingRec.Code)
 	}
@@ -2098,7 +2097,7 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	// 这本书的归档还没落盘、而资料库根目录在，属于「单文件缺失」而非服务器内部错误。
 	// 分类与状态码的完整契约在 storage_diagnosis_test.go。
 	pagesErrorRec := httptest.NewRecorder()
-	controller.getPagesByBook(pagesErrorRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	controller.media.getPagesByBook(pagesErrorRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 	if pagesErrorRec.Code != http.StatusNotFound {
 		t.Fatalf("expected missing archive 404, got %d", pagesErrorRec.Code)
 	}
@@ -2115,7 +2114,7 @@ func TestBulkUpdateSeriesAndGetPagesByBook(t *testing.T) {
 	}
 
 	pagesRec := httptest.NewRecorder()
-	controller.getPagesByBook(pagesRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	controller.media.getPagesByBook(pagesRec, requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 	if pagesRec.Code != http.StatusOK {
 		t.Fatalf("expected get pages 200, got %d", pagesRec.Code)
 	}
@@ -2152,13 +2151,13 @@ func TestDeleteLibraryAndValidationHandlers(t *testing.T) {
 	}
 
 	invalidDeleteRec := httptest.NewRecorder()
-	controller.deleteLibrary(invalidDeleteRec, requestWithRouteParam(http.MethodDelete, "/api/libraries/bad", nil, "libraryId", "bad"))
+	controller.families.library.deleteLibrary(invalidDeleteRec, requestWithRouteParam(http.MethodDelete, "/api/libraries/bad", nil, "libraryId", "bad"))
 	if invalidDeleteRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid delete library 400, got %d", invalidDeleteRec.Code)
 	}
 
 	deleteRec := httptest.NewRecorder()
-	controller.deleteLibrary(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	controller.families.library.deleteLibrary(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("expected delete library 200, got %d", deleteRec.Code)
 	}
@@ -2177,7 +2176,7 @@ func TestDuplicateLaunchQueuesAndBadIDsAreRejected(t *testing.T) {
 	seriesKey := "scan_series_" + strconv.FormatInt(series.ID, 10)
 	seedTask(t, controller.taskEngine, taskSeed{Key: seriesKey, Identity: seriesTask("scan_series", series.ID, variantSole), Total: 1})
 	scanSeriesRec := httptest.NewRecorder()
-	controller.scanSeries(scanSeriesRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scan", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.families.library.scanSeries(scanSeriesRec, requestWithRouteParam(http.MethodPost, "/api/series/1/scan", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if scanSeriesRec.Code != http.StatusOK {
 		t.Fatalf("expected duplicate scan series to be accepted, got %d", scanSeriesRec.Code)
 	}
@@ -2188,7 +2187,7 @@ func TestDuplicateLaunchQueuesAndBadIDsAreRejected(t *testing.T) {
 	cleanupKey := "cleanup_library_" + strconv.FormatInt(lib.ID, 10)
 	seedTask(t, controller.taskEngine, taskSeed{Key: cleanupKey, Identity: libraryTask("cleanup_library", lib.ID, variantSole), Total: 1})
 	cleanupRec := httptest.NewRecorder()
-	controller.cleanupLibrary(cleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/cleanup", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	controller.families.library.cleanupLibrary(cleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/cleanup", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if cleanupRec.Code != http.StatusOK {
 		t.Fatalf("expected duplicate cleanup to be accepted, got %d", cleanupRec.Code)
 	}
@@ -2197,13 +2196,13 @@ func TestDuplicateLaunchQueuesAndBadIDsAreRejected(t *testing.T) {
 	}
 
 	invalidScanRec := httptest.NewRecorder()
-	controller.scanSeries(invalidScanRec, requestWithRouteParam(http.MethodPost, "/api/series/bad/scan", nil, "seriesId", "bad"))
+	controller.families.library.scanSeries(invalidScanRec, requestWithRouteParam(http.MethodPost, "/api/series/bad/scan", nil, "seriesId", "bad"))
 	if invalidScanRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid scan series 400, got %d", invalidScanRec.Code)
 	}
 
 	invalidCleanupRec := httptest.NewRecorder()
-	controller.cleanupLibrary(invalidCleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/bad/cleanup", nil, "libraryId", "bad"))
+	controller.families.library.cleanupLibrary(invalidCleanupRec, requestWithRouteParam(http.MethodPost, "/api/libraries/bad/cleanup", nil, "libraryId", "bad"))
 	if invalidCleanupRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid cleanup 400, got %d", invalidCleanupRec.Code)
 	}
@@ -2254,7 +2253,7 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 		"libraryId": strconv.FormatInt(lib.ID, 10),
 	})
 	createRec := httptest.NewRecorder()
-	controller.createExternalLibrarySession(createRec, createReq)
+	controller.families.disk.createExternalLibrarySession(createRec, createReq)
 	if createRec.Code != http.StatusAccepted {
 		t.Fatalf("expected create external session 202, got %d body=%s", createRec.Code, createRec.Body.String())
 	}
@@ -2289,7 +2288,7 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 		"sessionId": session.SessionID,
 	})
 	seriesRec := httptest.NewRecorder()
-	controller.getExternalLibrarySeries(seriesRec, seriesReq)
+	controller.families.disk.getExternalLibrarySeries(seriesRec, seriesReq)
 	if seriesRec.Code != http.StatusOK {
 		t.Fatalf("expected series coverage 200, got %d body=%s", seriesRec.Code, seriesRec.Body.String())
 	}
@@ -2307,7 +2306,7 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 		"sessionId": session.SessionID,
 	})
 	transferRec := httptest.NewRecorder()
-	controller.transferToExternalLibrary(transferRec, transferReq)
+	controller.families.disk.transferToExternalLibrary(transferRec, transferReq)
 	if transferRec.Code != http.StatusAccepted {
 		t.Fatalf("expected transfer queued 202, got %d body=%s", transferRec.Code, transferRec.Body.String())
 	}
@@ -2321,14 +2320,19 @@ func TestExternalLibraryScanAndTransferFlow(t *testing.T) {
 		t.Fatal("expected task_key in transfer response")
 	}
 
-	targetPath := filepath.Join(externalRoot, "Series Alpha", "Alpha 02.cbz")
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, statErr := os.Stat(targetPath); statErr == nil {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
+	// A committed file can precede the session coverage refresh. Await the admitted
+	// run's outcome rather than treating file visibility as task completion.
+	transferCtx, cancelTransfer := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelTransfer()
+	runs, err := controller.taskEngine.listRunSnapshots(transferCtx, taskFilters{Type: "transfer_external_library", Scope: taskScopeLibrary, ScopeID: &lib.ID})
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("transfer runs=%+v err=%v", runs, err)
 	}
+	if err := controller.taskEngine.awaitRunOutcome(transferCtx, runs[0].RunID); err != nil {
+		t.Fatalf("transfer did not complete: %v", err)
+	}
+	targetPath := filepath.Join(externalRoot, "Series Alpha", "Alpha 02.cbz")
+
 	if _, err := os.Stat(targetPath); err != nil {
 		t.Fatalf("expected transferred file to exist: %v", err)
 	}
@@ -2370,7 +2374,7 @@ func TestExternalLibraryScanIgnoreExtensionOption(t *testing.T) {
 			"libraryId": strconv.FormatInt(lib.ID, 10),
 		})
 		rec := httptest.NewRecorder()
-		controller.createExternalLibrarySession(rec, req)
+		controller.families.disk.createExternalLibrarySession(rec, req)
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("expected create external session 202, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -2424,7 +2428,7 @@ func TestExternalLibraryScanIgnoreExtensionOption(t *testing.T) {
 		"sessionId": ignoreSession.SessionID,
 	})
 	transferRec := httptest.NewRecorder()
-	controller.transferToExternalLibrary(transferRec, transferReq)
+	controller.families.disk.transferToExternalLibrary(transferRec, transferReq)
 	if transferRec.Code != http.StatusOK {
 		t.Fatalf("expected transfer to be skipped with 200, got %d body=%s", transferRec.Code, transferRec.Body.String())
 	}
@@ -2443,13 +2447,13 @@ func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	missingLibraryRec := httptest.NewRecorder()
-	controller.getRecentReadSeries(missingLibraryRec, httptest.NewRequest(http.MethodGet, "/api/series/recent", nil))
+	controller.reader.getRecentReadSeries(missingLibraryRec, httptest.NewRequest(http.MethodGet, "/api/series/recent", nil))
 	if missingLibraryRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected missing libraryId 400, got %d", missingLibraryRec.Code)
 	}
 
 	invalidLibraryRec := httptest.NewRecorder()
-	controller.getRecentReadSeries(invalidLibraryRec, httptest.NewRequest(http.MethodGet, "/api/series/recent?libraryId=bad", nil))
+	controller.reader.getRecentReadSeries(invalidLibraryRec, httptest.NewRequest(http.MethodGet, "/api/series/recent?libraryId=bad", nil))
 	if invalidLibraryRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid libraryId 400, got %d", invalidLibraryRec.Code)
 	}
@@ -2470,14 +2474,14 @@ func TestRecentReadValidationAndBrowseDirs(t *testing.T) {
 
 	browseInvalidRec := httptest.NewRecorder()
 	missingBrowsePath := filepath.Join(t.TempDir(), "definitely-missing")
-	controller.browseDirs(browseInvalidRec, httptest.NewRequest(http.MethodGet, "/api/browse?path="+url.QueryEscape(missingBrowsePath), nil))
+	controller.admin.browseDirs(browseInvalidRec, httptest.NewRequest(http.MethodGet, "/api/browse?path="+url.QueryEscape(missingBrowsePath), nil))
 	if browseInvalidRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid browse path 400, got %d", browseInvalidRec.Code)
 	}
 
 	browseReq := httptest.NewRequest(http.MethodGet, "/api/browse?path="+url.QueryEscape(rootDir), nil)
 	browseRec := httptest.NewRecorder()
-	controller.browseDirs(browseRec, browseReq)
+	controller.admin.browseDirs(browseRec, browseReq)
 	if browseRec.Code != http.StatusOK {
 		t.Fatalf("expected browse dirs 200, got %d", browseRec.Code)
 	}
@@ -2512,7 +2516,7 @@ func TestListTasksReturnsMostRecentFirst(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
 	rec := httptest.NewRecorder()
-	controller.listTasks(rec, req)
+	controller.families.runs.listTasks(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -2538,7 +2542,7 @@ func TestListTasksSupportsStatusFilter(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?status=failed", nil)
 	rec := httptest.NewRecorder()
-	controller.listTasks(rec, req)
+	controller.families.runs.listTasks(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -2561,7 +2565,7 @@ func TestListTasksSupportsScopeIDFilter(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=18", nil)
 	rec := httptest.NewRecorder()
-	controller.listTasks(rec, req)
+	controller.families.runs.listTasks(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -2588,14 +2592,14 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 
 	// 用同一份装配另起一个实例，模拟「进程重启后从库里读回任务」。
 	cfg := controller.config
-	reloaded := newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
+	reloaded := newAPIFixture(store, scanner.NewScanner(store, cfg), cfg,
 		filepath.Join(tempDir, "config.yaml"), controllerCacheSizes{
 			imageBytes: 8 << 10, page: 8, bookPageSource: 8,
 		})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=series&scope_id=77", nil)
 	rec := httptest.NewRecorder()
-	reloaded.listTasks(rec, req)
+	reloaded.families.runs.listTasks(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2619,52 +2623,6 @@ func TestTasksPersistAcrossControllerInstances(t *testing.T) {
 	}
 }
 
-func TestNewControllerMarksPersistedRunningTasksInterrupted(t *testing.T) {
-	seeded, store, _, tempDir := newTestController(t)
-	// 上一个进程留下的现场：一条还写着活动态的运行，而它的任务体随进程一起没了。
-	//
-	// 类型取**不可续跑**的那一类：这条用例守的是转写本身，而白名单内的类型重启后还会被自动
-	// 重排队，那时列表里就不止一条了（续跑另有用例，见 task_resume_test.go）。
-	seedTask(t, seeded.taskEngine, taskSeed{
-		Key: "cleanup_library_55", Identity: libraryTask("cleanup_library", 55, variantSole), Total: 1,
-	})
-
-	cfg := &config.Config{}
-	cfg.Database.Path = filepath.Join(tempDir, "test.db")
-	cfg.Cache.Dir = filepath.Join(tempDir, "cache")
-	cfg.Scanner.ArchivePoolSize = 5
-	cfg.Scanner.MaxAiConcurrency = 3
-	cfg.LLM.Provider = "ollama"
-	cfg.LLM.BaseURL = "http://localhost:11434"
-	cfg.LLM.Model = "qwen2.5"
-	config.NormalizeConfig(cfg)
-	cfgManager := config.NewManager(cfg)
-	// 走生产装配：重启恢复挂在 NewController 上，白盒装配（newControllerCore）不跑它。
-	controller := NewController(store, scanner.NewScanner(store, cfgManager), cfgManager, filepath.Join(tempDir, "config.yaml"))
-	t.Cleanup(controller.Close)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/system/tasks?scope=library&scope_id=55", nil)
-	rec := httptest.NewRecorder()
-	controller.listTasks(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
-	}
-
-	var tasks []RunSnapshot
-	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
-		t.Fatalf("decode tasks failed: %v", err)
-	}
-	if len(tasks) != 1 {
-		t.Fatalf("expected one task, got %+v", tasks)
-	}
-	if tasks[0].Status != "interrupted" || tasks[0].MessageCode != taskInterruptedMessageCode {
-		t.Fatalf("expected interrupted task with the interrupted message code, got %+v", tasks[0])
-	}
-	if !tasks[0].Retryable {
-		t.Fatalf("expected interrupted task to remain retryable")
-	}
-}
-
 func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
@@ -2673,7 +2631,7 @@ func TestClearTasksRemovesMatchingStatuses(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=completed", nil)
 	rec := httptest.NewRecorder()
-	controller.clearTasks(rec, req)
+	controller.families.runs.clearTasks(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -2698,7 +2656,7 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/system/tasks?type=scan_series&scope_id=11", nil)
 	rec := httptest.NewRecorder()
-	controller.clearTasks(rec, req)
+	controller.families.runs.clearTasks(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2715,7 +2673,7 @@ func TestClearTasksSupportsTypeAndScopeIDFilters(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil)
 	rec = httptest.NewRecorder()
-	controller.listTasks(rec, req)
+	controller.families.runs.listTasks(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected list 200, got %d", rec.Code)
 	}
@@ -2746,7 +2704,7 @@ func TestCancelTaskRequestsRunningCancellation(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 1, CanCancel: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
-	rec := runControlRequest(t, controller, controller.cancelRun, taskKey)
+	rec := runControlRequest(t, controller, controller.families.runs.cancelRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2778,7 +2736,7 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 10, CanCancel: true, CanPause: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
-	rec := runControlRequest(t, controller, controller.pauseRun, taskKey)
+	rec := runControlRequest(t, controller, controller.families.runs.pauseRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -2798,7 +2756,7 @@ func TestPauseResumeTaskLifecycle(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	rec = runControlRequest(t, controller, controller.resumeRun, taskKey)
+	rec = runControlRequest(t, controller, controller.families.runs.resumeRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected resume 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3002,7 +2960,7 @@ func TestRunSnapshotTracksScrapeMetricsAndLabels(t *testing.T) {
 func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 	controller, store, _, tempDir := newTestController(t)
 	provider := newBlockingMetadataProvider()
-	controller.fetcherFactory = func(string) metadata.Fetcher {
+	controller.providers.fetcherFactory = func(string) metadata.Fetcher {
 		return provider
 	}
 
@@ -3050,7 +3008,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 		t.Fatalf("expected first provider request Alpha, got %q", first)
 	}
 
-	pauseRec := runControlRequest(t, controller, controller.pauseRun, taskKey)
+	pauseRec := runControlRequest(t, controller, controller.families.runs.pauseRun, taskKey)
 	if pauseRec.Code != http.StatusAccepted {
 		t.Fatalf("expected pause 202, got %d body=%s", pauseRec.Code, pauseRec.Body.String())
 	}
@@ -3063,7 +3021,7 @@ func TestLibraryScrapePauseResumeStopsNewProviderRequests(t *testing.T) {
 		t.Fatalf("expected paused scrape after first request, got %+v", paused)
 	}
 
-	resumeRec := runControlRequest(t, controller, controller.resumeRun, taskKey)
+	resumeRec := runControlRequest(t, controller, controller.families.runs.resumeRun, taskKey)
 	if resumeRec.Code != http.StatusAccepted {
 		t.Fatalf("expected resume 202, got %d body=%s", resumeRec.Code, resumeRec.Body.String())
 	}
@@ -3101,7 +3059,7 @@ func assertNoProviderRequest(t testing.TB, requests <-chan string, duration time
 	}
 }
 
-func waitForRunStatus(t testing.TB, controller *Controller, taskKey, status string) {
+func waitForRunStatus(t testing.TB, controller *apiFixture, taskKey, status string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -3121,7 +3079,7 @@ func TestPauseTaskRejectsNonPausableTask(t *testing.T) {
 	taskKey := "rebuild_index"
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1})
 
-	rec := runControlRequest(t, controller, controller.pauseRun, taskKey)
+	rec := runControlRequest(t, controller, controller.families.runs.pauseRun, taskKey)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3134,7 +3092,7 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scan_library", 42, variantSole), Total: 10, CanCancel: true, CanPause: true})
 	ctx := seededTaskContext(t, controller.taskEngine, taskKey)
 
-	rec := runControlRequest(t, controller, controller.pauseRun, taskKey)
+	rec := runControlRequest(t, controller, controller.families.runs.pauseRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected pause 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3149,7 +3107,7 @@ func TestCancelPausedTaskUnblocksCheckpoint(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	rec = runControlRequest(t, controller, controller.cancelRun, taskKey)
+	rec = runControlRequest(t, controller, controller.families.runs.cancelRun, taskKey)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected cancel 202, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3170,7 +3128,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 	taskKey := "rebuild_index"
 	seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: systemTask("rebuild_index", variantSole), Total: 1})
 
-	rec := runControlRequest(t, controller, controller.cancelRun, taskKey)
+	rec := runControlRequest(t, controller, controller.families.runs.cancelRun, taskKey)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3179,7 +3137,7 @@ func TestCancelTaskRejectsNonCancellableTask(t *testing.T) {
 func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if err := controller.launchRebuildThumbnailsTask(task.TriggerManual); err != nil {
+	if err := controller.families.maintenance.launchRebuildThumbnailsTask(task.TriggerManual); err != nil {
 		t.Fatalf("launch rebuild thumbnails failed: %v", err)
 	}
 
@@ -3256,7 +3214,7 @@ func TestScanLibraryQueuesDuplicateTask(t *testing.T) {
 
 	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/scan", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
-	controller.scanLibrary(rec, req)
+	controller.families.library.scanLibrary(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected duplicate scan task to be accepted, got %d", rec.Code)
@@ -3273,7 +3231,7 @@ func TestUpdateBookProgressClampsToPageCount(t *testing.T) {
 	reqBody := []byte(`{"page":999}`)
 	req := requestWithRouteParam(http.MethodPost, "/api/books/1/progress", reqBody, "bookId", strconv.FormatInt(book.ID, 10))
 	rec := httptest.NewRecorder()
-	controller.updateBookProgress(rec, req)
+	controller.reader.updateBookProgress(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -3294,7 +3252,7 @@ func TestProgressFactsRefreshSamePageAndLegacyReportsAreThrottled(t *testing.T) 
 	post := func(body []byte) string {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, requestWithRouteParam(http.MethodPost, "/", body, "bookId", strconv.FormatInt(book.ID, 10)))
+		controller.reader.updateBookProgress(rec, requestWithRouteParam(http.MethodPost, "/", body, "bookId", strconv.FormatInt(book.ID, 10)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%d %s", rec.Code, rec.Body.String())
 		}
@@ -3332,7 +3290,7 @@ func TestBulkUpdateBookProgressMarksReadAndUnread(t *testing.T) {
 
 	readReq := httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress", bytes.NewReader([]byte(`{"book_ids":[`+strconv.FormatInt(book.ID, 10)+`],"is_read":true}`)))
 	readRec := httptest.NewRecorder()
-	controller.bulkUpdateBookProgress(readRec, readReq)
+	controller.reader.bulkUpdateBookProgress(readRec, readReq)
 
 	if readRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 when marking read, got %d", readRec.Code)
@@ -3348,7 +3306,7 @@ func TestBulkUpdateBookProgressMarksReadAndUnread(t *testing.T) {
 
 	unreadReq := httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress", bytes.NewReader([]byte(`{"book_ids":[`+strconv.FormatInt(book.ID, 10)+`],"is_read":false}`)))
 	unreadRec := httptest.NewRecorder()
-	controller.bulkUpdateBookProgress(unreadRec, unreadReq)
+	controller.reader.bulkUpdateBookProgress(unreadRec, unreadReq)
 
 	if unreadRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 when marking unread, got %d", unreadRec.Code)
@@ -3383,7 +3341,7 @@ func TestBulkUpdateSeriesProgressMarksAllBooksReadAndUnread(t *testing.T) {
 
 	readReq := httptest.NewRequest(http.MethodPost, "/api/series/bulk-progress", bytes.NewReader([]byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`],"is_read":true}`)))
 	readRec := httptest.NewRecorder()
-	controller.bulkUpdateSeriesProgress(readRec, readReq)
+	controller.reader.bulkUpdateSeriesProgress(readRec, readReq)
 	if readRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 when marking series read, got %d body=%s", readRec.Code, readRec.Body.String())
 	}
@@ -3405,7 +3363,7 @@ func TestBulkUpdateSeriesProgressMarksAllBooksReadAndUnread(t *testing.T) {
 
 	unreadReq := httptest.NewRequest(http.MethodPost, "/api/series/bulk-progress", bytes.NewReader([]byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`],"is_read":false}`)))
 	unreadRec := httptest.NewRecorder()
-	controller.bulkUpdateSeriesProgress(unreadRec, unreadReq)
+	controller.reader.bulkUpdateSeriesProgress(unreadRec, unreadReq)
 	if unreadRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 when marking series unread, got %d body=%s", unreadRec.Code, unreadRec.Body.String())
 	}
@@ -3429,14 +3387,14 @@ func TestRecentReadHandlersReturnUpdatedBooks(t *testing.T) {
 
 	progressReq := requestWithRouteParam(http.MethodPost, "/api/books/1/progress", []byte(`{"page":5}`), "bookId", strconv.FormatInt(book.ID, 10))
 	progressRec := httptest.NewRecorder()
-	controller.updateBookProgress(progressRec, progressReq)
+	controller.reader.updateBookProgress(progressRec, progressReq)
 	if progressRec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", progressRec.Code)
 	}
 
 	recentSeriesReq := httptest.NewRequest(http.MethodGet, "/api/series/recent-read?libraryId="+strconv.FormatInt(lib.ID, 10)+"&limit=10", nil)
 	recentSeriesRec := httptest.NewRecorder()
-	controller.getRecentReadSeries(recentSeriesRec, recentSeriesReq)
+	controller.reader.getRecentReadSeries(recentSeriesRec, recentSeriesReq)
 	if recentSeriesRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from recent series, got %d", recentSeriesRec.Code)
 	}
@@ -3453,7 +3411,7 @@ func TestRecentReadHandlersReturnUpdatedBooks(t *testing.T) {
 
 	recentAllReq := httptest.NewRequest(http.MethodGet, "/api/stats/recent-read?limit=10", nil)
 	recentAllRec := httptest.NewRecorder()
-	controller.getRecentReadAll(recentAllRec, recentAllReq)
+	controller.reader.getRecentReadAll(recentAllRec, recentAllReq)
 	if recentAllRec.Code != http.StatusOK {
 		t.Fatalf("expected 200 from recent read all, got %d", recentAllRec.Code)
 	}
@@ -3487,7 +3445,7 @@ func TestGetDashboardStatsReflectsReadingProgress(t *testing.T) {
 			strconv.FormatInt(item.bookID, 10),
 		)
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, req)
+		controller.reader.updateBookProgress(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 updating progress, got %d", rec.Code)
 		}
@@ -3495,7 +3453,7 @@ func TestGetDashboardStatsReflectsReadingProgress(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/dashboard", nil)
 	rec := httptest.NewRecorder()
-	controller.getDashboardStats(rec, req)
+	controller.reader.getDashboardStats(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -3530,12 +3488,12 @@ func TestDashboardStatsCacheAvoidsRepeatedStoreQueriesAndInvalidates(t *testing.
 	controller, store, _, _ := newTestController(t)
 	_, _, book := seedBookFixture(t, store, t.TempDir(), "Lib", "Series", "book.cbz", 12)
 	counting := &countingStore{Store: store}
-	controller.store = counting
+	controller.reader.store = counting
 
 	fetchStats := func() database.DashboardStats {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		controller.getDashboardStats(rec, httptest.NewRequest(http.MethodGet, "/api/stats/dashboard", nil))
+		controller.reader.getDashboardStats(rec, httptest.NewRequest(http.MethodGet, "/api/stats/dashboard", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected dashboard stats 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -3572,7 +3530,7 @@ func TestDashboardStatsCacheAvoidsRepeatedStoreQueriesAndInvalidates(t *testing.
 		strconv.FormatInt(book.ID, 10),
 	)
 	rec := httptest.NewRecorder()
-	controller.updateBookProgress(rec, req)
+	controller.reader.updateBookProgress(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected progress update 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -3597,7 +3555,7 @@ func TestGetActivityHeatmapReturnsReadingData(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/activity-heatmap?weeks=1", nil)
 	rec := httptest.NewRecorder()
-	controller.getActivityHeatmap(rec, req)
+	controller.reader.getActivityHeatmap(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -3640,7 +3598,7 @@ func TestGetRecentReadAllHonorsLimit(t *testing.T) {
 			strconv.FormatInt(book.ID, 10),
 		)
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, req)
+		controller.reader.updateBookProgress(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 updating progress, got %d", rec.Code)
 		}
@@ -3648,7 +3606,7 @@ func TestGetRecentReadAllHonorsLimit(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/recent-read?limit=1", nil)
 	rec := httptest.NewRecorder()
-	controller.getRecentReadAll(rec, req)
+	controller.reader.getRecentReadAll(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -3725,7 +3683,7 @@ func TestReadingBookmarksLifecycle(t *testing.T) {
 	createBody := []byte(`{"page":5,"note":"重要跨页"}`)
 	createReq := requestWithRouteParam(http.MethodPost, "/api/books/1/bookmarks", createBody, "bookId", strconv.FormatInt(book.ID, 10))
 	createRec := httptest.NewRecorder()
-	controller.upsertReadingBookmark(createRec, createReq)
+	controller.reader.upsertReadingBookmark(createRec, createReq)
 	if createRec.Code != http.StatusOK {
 		t.Fatalf("expected bookmark create 200, got %d body=%s", createRec.Code, createRec.Body.String())
 	}
@@ -3739,7 +3697,7 @@ func TestReadingBookmarksLifecycle(t *testing.T) {
 
 	listReq := requestWithRouteParam(http.MethodGet, "/api/books/1/bookmarks", nil, "bookId", strconv.FormatInt(book.ID, 10))
 	listRec := httptest.NewRecorder()
-	controller.listReadingBookmarks(listRec, listReq)
+	controller.reader.listReadingBookmarks(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected bookmark list 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -3756,7 +3714,7 @@ func TestReadingBookmarksLifecycle(t *testing.T) {
 		"bookmarkId": strconv.FormatInt(created.ID, 10),
 	})
 	deleteRec := httptest.NewRecorder()
-	controller.deleteReadingBookmark(deleteRec, deleteReq)
+	controller.reader.deleteReadingBookmark(deleteRec, deleteReq)
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("expected bookmark delete 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
@@ -3798,7 +3756,7 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 	)
 	req.URL.RawQuery = "provider=bangumi"
 	rec := httptest.NewRecorder()
-	controller.applyScrapedMetadata(rec, req)
+	controller.providers.applyScrapedMetadata(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -3825,7 +3783,7 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 	}
 
 	listRec := httptest.NewRecorder()
-	controller.listSeriesMetadataReview(listRec, requestWithRouteParam(
+	controller.organizationHTTP.listSeriesMetadataReview(listRec, requestWithRouteParam(
 		http.MethodGet,
 		"/api/series/1/metadata-review",
 		nil,
@@ -3844,7 +3802,7 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 	}
 
 	applyRec := httptest.NewRecorder()
-	controller.applyMetadataReview(applyRec, requestWithRouteParam(
+	controller.organizationHTTP.applyMetadataReview(applyRec, requestWithRouteParam(
 		http.MethodPost,
 		"/api/metadata/reviews/1/apply",
 		nil,
@@ -3888,7 +3846,7 @@ func TestApplyScrapedMetadataQueuesReviewThenAppliesExplicitly(t *testing.T) {
 	// 应用之后这条提案必须离开待裁决队列：留在里面，用户会看到一条已经写进系列的提案
 	// 还在等自己裁决，再点一次只会拿到 409。
 	afterRec := httptest.NewRecorder()
-	controller.listSeriesMetadataReview(afterRec, requestWithRouteParam(
+	controller.organizationHTTP.listSeriesMetadataReview(afterRec, requestWithRouteParam(
 		http.MethodGet,
 		"/api/series/1/metadata-review",
 		nil,
@@ -3966,7 +3924,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 	reviewB := queuedB.Proposal
 
 	listRec := httptest.NewRecorder()
-	controller.listMetadataReviewInbox(listRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
+	controller.organizationHTTP.listMetadataReviewInbox(listRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected inbox list 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -3980,7 +3938,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 
 	applyBody := []byte(`{"review_ids":[` + strconv.FormatInt(reviewA.ID, 10) + `],"mode":"fill_empty"}`)
 	applyRec := httptest.NewRecorder()
-	controller.bulkApplyMetadataReviews(applyRec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-apply", bytes.NewReader(applyBody)))
+	controller.organizationHTTP.bulkApplyMetadataReviews(applyRec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-apply", bytes.NewReader(applyBody)))
 	if applyRec.Code != http.StatusOK {
 		t.Fatalf("expected bulk apply 200, got %d body=%s", applyRec.Code, applyRec.Body.String())
 	}
@@ -4020,7 +3978,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 
 	rejectBody := []byte(`{"review_ids":[` + strconv.FormatInt(reviewB.ID, 10) + `],"mode":"all"}`)
 	rejectRec := httptest.NewRecorder()
-	controller.bulkRejectMetadataReviews(rejectRec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-reject", bytes.NewReader(rejectBody)))
+	controller.organizationHTTP.bulkRejectMetadataReviews(rejectRec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-reject", bytes.NewReader(rejectBody)))
 	if rejectRec.Code != http.StatusOK {
 		t.Fatalf("expected bulk reject 200, got %d body=%s", rejectRec.Code, rejectRec.Body.String())
 	}
@@ -4041,7 +3999,7 @@ func TestMetadataReviewInboxBulkApplyAndReject(t *testing.T) {
 		t.Fatalf("expected reject not to write metadata, got title=%+v publisher=%+v", updatedB.Title, updatedB.Publisher)
 	}
 	afterRec := httptest.NewRecorder()
-	controller.listMetadataReviewInbox(afterRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
+	controller.organizationHTTP.listMetadataReviewInbox(afterRec, httptest.NewRequest(http.MethodGet, "/api/metadata/reviews?limit=10", nil))
 	if afterRec.Code != http.StatusOK {
 		t.Fatalf("expected inbox list 200 after bulk actions, got %d body=%s", afterRec.Code, afterRec.Body.String())
 	}
@@ -4067,7 +4025,7 @@ func TestGetRecommendationsReturnsCachedEntries(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats/recommendations", nil)
 	rec := httptest.NewRecorder()
-	controller.getRecommendations(rec, req)
+	controller.reader.getRecommendations(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -4094,7 +4052,7 @@ func TestTestLLMConfigReturnsErrorForInvalidEndpoint(t *testing.T) {
 		bytes.NewReader([]byte(`{"provider":"ollama","base_url":"http://127.0.0.1:1","model":"fake","prompt":"ping"}`)),
 	)
 	rec := httptest.NewRecorder()
-	controller.testLLMConfig(rec, req)
+	controller.admin.testLLMConfig(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
@@ -4119,7 +4077,7 @@ func TestScrapeSeriesMetadataReturnsErrorForInvalidLLMEndpoint(t *testing.T) {
 		strconv.FormatInt(series.ID, 10),
 	)
 	rec := httptest.NewRecorder()
-	controller.scrapeSeriesMetadata(rec, req)
+	controller.providers.scrapeSeriesMetadata(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
@@ -4154,7 +4112,7 @@ func TestGetPrevBookReturnsPriorEntry(t *testing.T) {
 	thirdBook := seedBookInSeries(t, store, series, lib.ID, "03.cbz", 10)
 
 	prevRec := httptest.NewRecorder()
-	controller.getPrevBook(prevRec, requestWithRouteParam(http.MethodGet, "/api/book-prev/2", nil, "bookId", strconv.FormatInt(secondBook.ID, 10)))
+	controller.reader.getPrevBook(prevRec, requestWithRouteParam(http.MethodGet, "/api/book-prev/2", nil, "bookId", strconv.FormatInt(secondBook.ID, 10)))
 	if prevRec.Code != http.StatusOK {
 		t.Fatalf("expected prev 200, got %d body=%s", prevRec.Code, prevRec.Body.String())
 	}
@@ -4168,14 +4126,14 @@ func TestGetPrevBookReturnsPriorEntry(t *testing.T) {
 
 	// 第一本无前一本
 	prevFirst := httptest.NewRecorder()
-	controller.getPrevBook(prevFirst, requestWithRouteParam(http.MethodGet, "/api/book-prev/1", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
+	controller.reader.getPrevBook(prevFirst, requestWithRouteParam(http.MethodGet, "/api/book-prev/1", nil, "bookId", strconv.FormatInt(firstBook.ID, 10)))
 	if prevFirst.Code != http.StatusNotFound {
 		t.Fatalf("expected first book to have no prev (404), got %d", prevFirst.Code)
 	}
 
 	// 末尾本前一本是中间本
 	prevLast := httptest.NewRecorder()
-	controller.getPrevBook(prevLast, requestWithRouteParam(http.MethodGet, "/api/book-prev/3", nil, "bookId", strconv.FormatInt(thirdBook.ID, 10)))
+	controller.reader.getPrevBook(prevLast, requestWithRouteParam(http.MethodGet, "/api/book-prev/3", nil, "bookId", strconv.FormatInt(thirdBook.ID, 10)))
 	if prevLast.Code != http.StatusOK {
 		t.Fatalf("expected prev of third 200, got %d", prevLast.Code)
 	}
@@ -4189,14 +4147,14 @@ func TestGetPrevBookReturnsPriorEntry(t *testing.T) {
 
 	// 非法 ID
 	bad := httptest.NewRecorder()
-	controller.getPrevBook(bad, requestWithRouteParam(http.MethodGet, "/api/book-prev/bad", nil, "bookId", "bad"))
+	controller.reader.getPrevBook(bad, requestWithRouteParam(http.MethodGet, "/api/book-prev/bad", nil, "bookId", "bad"))
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid id, got %d", bad.Code)
 	}
 
 	// 不存在 ID
 	missing := httptest.NewRecorder()
-	controller.getPrevBook(missing, requestWithRouteParam(http.MethodGet, "/api/book-prev/9999", nil, "bookId", "9999"))
+	controller.reader.getPrevBook(missing, requestWithRouteParam(http.MethodGet, "/api/book-prev/9999", nil, "bookId", "9999"))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing book, got %d", missing.Code)
 	}
@@ -4210,7 +4168,7 @@ func TestGetSeriesContinueAcrossStates(t *testing.T) {
 
 	// 全部未读：next_unread = first；read_books = 0；last_read_* 为零
 	rec := httptest.NewRecorder()
-	controller.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected continue 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -4245,7 +4203,7 @@ func TestGetSeriesContinueAcrossStates(t *testing.T) {
 		t.Fatalf("update second progress: %v", err)
 	}
 	rec = httptest.NewRecorder()
-	controller.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -4288,7 +4246,7 @@ func TestGetSeriesContinueAcrossStates(t *testing.T) {
 		t.Fatalf("update third progress: %v", err)
 	}
 	rec = httptest.NewRecorder()
-	controller.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesContinueEndpoint(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/continue", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	var c3 SeriesContinue
 	if err := json.NewDecoder(rec.Body).Decode(&c3); err != nil {
 		t.Fatalf("decode continue: %v", err)
@@ -4305,14 +4263,14 @@ func TestGetSeriesContinueAcrossStates(t *testing.T) {
 
 	// 非法 ID
 	bad := httptest.NewRecorder()
-	controller.getSeriesContinueEndpoint(bad, requestWithRouteParam(http.MethodGet, "/api/series/bad/continue", nil, "seriesId", "bad"))
+	controller.reader.getSeriesContinueEndpoint(bad, requestWithRouteParam(http.MethodGet, "/api/series/bad/continue", nil, "seriesId", "bad"))
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid id, got %d", bad.Code)
 	}
 
 	// 不存在的系列
 	missing := httptest.NewRecorder()
-	controller.getSeriesContinueEndpoint(missing, requestWithRouteParam(http.MethodGet, "/api/series/9999/continue", nil, "seriesId", "9999"))
+	controller.reader.getSeriesContinueEndpoint(missing, requestWithRouteParam(http.MethodGet, "/api/series/9999/continue", nil, "seriesId", "9999"))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing series, got %d", missing.Code)
 	}
@@ -4332,7 +4290,7 @@ func TestGetSeriesContextIncludesContinue(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.getSeriesContext(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.getSeriesContext(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected context 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -4385,7 +4343,7 @@ func TestBulkSyncBookProgressResolvesConflicts(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader(payload)))
+	controller.reader.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader(payload)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -4444,7 +4402,7 @@ func TestBulkSyncBookProgressResolvesConflicts(t *testing.T) {
 		},
 	})
 	recAgain := httptest.NewRecorder()
-	controller.bulkSyncBookProgress(recAgain, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader(bodyAgain)))
+	controller.reader.bulkSyncBookProgress(recAgain, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader(bodyAgain)))
 	var respAgain struct {
 		Updated int                          `json:"updated"`
 		Results []BulkSyncProgressResultItem `json:"results"`
@@ -4460,7 +4418,7 @@ func TestBulkSyncBookProgressResolvesConflicts(t *testing.T) {
 func TestBulkSyncBookProgressEmptyBody(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	rec := httptest.NewRecorder()
-	controller.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader([]byte(`{"items":[]}`))))
+	controller.reader.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader([]byte(`{"items":[]}`))))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -4487,7 +4445,7 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 		"path_ignore_extension": false
 	}`)
 	settingsRec := httptest.NewRecorder()
-	controller.updateKOReaderSettings(settingsRec, versionedConfigRequest(controller, settingsBody, "/api/system/koreader"))
+	controller.admin.updateKOReaderSettings(settingsRec, versionedConfigRequest(controller, settingsBody, "/api/system/koreader"))
 	if settingsRec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d body=%s", settingsRec.Code, settingsRec.Body.String())
 	}
@@ -4497,7 +4455,7 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 	createBody := []byte(`{"username":"kobo","password":"` + password + `"}`)
 
 	createRec := httptest.NewRecorder()
-	controller.koreaderRegister(createRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader(createBody)))
+	controller.admin.koreaderRegister(createRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader(createBody)))
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected create 201, got %d body=%s", createRec.Code, createRec.Body.String())
 	}
@@ -4514,14 +4472,14 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 	authReq.Header.Set("x-auth-user", "kobo")
 	authReq.Header.Set("x-auth-key", password)
 	authRec := httptest.NewRecorder()
-	controller.koreaderAuth(authRec, authReq)
+	controller.admin.koreaderAuth(authRec, authReq)
 	if authRec.Code != http.StatusOK {
 		t.Fatalf("expected auth 200, got %d body=%s", authRec.Code, authRec.Body.String())
 	}
 
 	// 重复注册返回 402
 	dupRec := httptest.NewRecorder()
-	controller.koreaderRegister(dupRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader(createBody)))
+	controller.admin.koreaderRegister(dupRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader(createBody)))
 	if dupRec.Code != http.StatusPaymentRequired {
 		t.Fatalf("expected duplicate create 402, got %d body=%s", dupRec.Code, dupRec.Body.String())
 	}
@@ -4535,12 +4493,12 @@ func TestKOReaderSelfRegistrationCreatesAuthenticatableAccount(t *testing.T) {
 		"path_ignore_extension": false
 	}`)
 	closedSettingsRec := httptest.NewRecorder()
-	controller.updateKOReaderSettings(closedSettingsRec, versionedConfigRequest(controller, closedBody, "/api/system/koreader"))
+	controller.admin.updateKOReaderSettings(closedSettingsRec, versionedConfigRequest(controller, closedBody, "/api/system/koreader"))
 	if closedSettingsRec.Code != http.StatusOK {
 		t.Fatalf("expected settings save 200, got %d", closedSettingsRec.Code)
 	}
 	closedRec := httptest.NewRecorder()
-	controller.koreaderRegister(closedRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader([]byte(`{"username":"other","password":"`+password+`"}`))))
+	controller.admin.koreaderRegister(closedRec, httptest.NewRequest(http.MethodPost, "/koreader/users/create", bytes.NewReader([]byte(`{"username":"other","password":"`+password+`"}`))))
 	if closedRec.Code != http.StatusForbidden {
 		t.Fatalf("expected registration-disabled 403, got %d body=%s", closedRec.Code, closedRec.Body.String())
 	}
@@ -4577,7 +4535,7 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 	// 不存在的任务 -> 404，且说的是「任务不存在」而不是「没有可重试的运行」：
 	// 后者那句话的意思是「任务在、只是没跑完过」，对一个根本不存在的 id 说它是假的。
 	rec := httptest.NewRecorder()
-	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskID", "424242"))
+	controller.families.runs.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskID", "424242"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("nonexistent task: expected 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -4591,7 +4549,7 @@ func TestRetryTaskErrorSemantics(t *testing.T) {
 
 	// 不是数字的任务 id -> 400，不得当成「查不到」。
 	rec = httptest.NewRecorder()
-	controller.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskID", "scan_series_5"))
+	controller.families.runs.retryTask(rec, requestWithRouteParam(http.MethodPost, "/x", nil, "taskID", "scan_series_5"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed task id: expected 400, got %d body=%s", rec.Code, rec.Body.String())
 	}

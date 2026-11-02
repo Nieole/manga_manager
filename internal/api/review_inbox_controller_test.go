@@ -27,7 +27,7 @@ func TestReviewInboxSummaryAggregatesCounts(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.getReviewInboxSummary(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox/summary", nil))
+	controller.organizationHTTP.getReviewInboxSummary(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox/summary", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -56,7 +56,7 @@ func TestReviewInboxDispatchesByType(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.listReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox?type=ai-grouping&status=pending", nil))
+	controller.organizationHTTP.listReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox?type=ai-grouping&status=pending", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -69,7 +69,7 @@ func TestReviewInboxDispatchesByType(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	controller.listReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox?type=metadata", nil))
+	controller.organizationHTTP.listReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox?type=metadata", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for metadata inbox, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -82,7 +82,7 @@ func TestReviewInboxDispatchesByType(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	controller.listReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox?type=bogus", nil))
+	controller.organizationHTTP.listReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox?type=bogus", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unsupported type, got %d", rec.Code)
 	}

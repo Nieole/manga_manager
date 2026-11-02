@@ -22,7 +22,7 @@ func TestCreateCollectionNameHygiene(t *testing.T) {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, "/api/collections/", bytes.NewBufferString(body))
 		rec := httptest.NewRecorder()
-		controller.createCollection(rec, req)
+		controller.organizationHTTP.createCollection(rec, req)
 		return rec
 	}
 

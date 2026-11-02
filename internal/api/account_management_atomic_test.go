@@ -31,13 +31,13 @@ func TestConcurrentAccountDemotionsPreserveAdministrator(t *testing.T) {
 	b := mkTestUser(t, store, "b", "admin")
 	barrier := &adminCountBarrier{Store: store}
 	barrier.arrived.Add(2)
-	c.store = barrier
+	c.admin.management = accounts.NewManagement(barrier, hashPassword)
 	codes := make(chan int, 2)
 	for _, user := range []database.User{a, b} {
 		go func(user database.User) {
 			rec := httptest.NewRecorder()
 			req := requestWithRouteParam(http.MethodPatch, "/", []byte(`{"role":"regular"}`), "userId", strconv.FormatInt(user.ID, 10))
-			c.updateUser(rec, withUserContext(req, user))
+			c.admin.updateUser(rec, withUserContext(req, user))
 			codes <- rec.Code
 		}(user)
 	}
@@ -55,7 +55,7 @@ func TestAccountManagementAuthorizesActorWithoutRouteMiddleware(t *testing.T) {
 	actor := mkTestUser(t, store, "regular", "regular")
 	target := mkTestUser(t, store, "target", "regular")
 	rec := httptest.NewRecorder()
-	c.updateUser(rec, withUserContext(requestWithRouteParam(http.MethodPatch, "/", []byte(`{"display_name":"changed"}`), "userId", strconv.FormatInt(target.ID, 10)), actor))
+	c.admin.updateUser(rec, withUserContext(requestWithRouteParam(http.MethodPatch, "/", []byte(`{"display_name":"changed"}`), "userId", strconv.FormatInt(target.ID, 10)), actor))
 	if rec.Code != 403 {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}

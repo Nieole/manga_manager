@@ -21,7 +21,7 @@ func TestGetHealthReport(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.getHealthReport(rec, httptest.NewRequest(http.MethodGet, "/api/health/report?limit=5", nil))
+	controller.admin.getHealthReport(rec, httptest.NewRequest(http.MethodGet, "/api/health/report?limit=5", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected health report 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -42,7 +42,7 @@ func TestGetHealthReport(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	controller.getHealthReport(rec, httptest.NewRequest(http.MethodGet, "/api/health/report?library_id=bad", nil))
+	controller.admin.getHealthReport(rec, httptest.NewRequest(http.MethodGet, "/api/health/report?library_id=bad", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected bad library id 400, got %d", rec.Code)
 	}

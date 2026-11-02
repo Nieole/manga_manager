@@ -26,7 +26,7 @@ import (
 //
 // 会话不能省：建立首个管理员之前，鉴权闸门对**所有**非公开端点一律 401（见 authGate 那段
 // 关于 setup 窗口的说明），而建管理员这一步顺带就登录了，回话里带着 CSRF 令牌。
-func scanRoute(t *testing.T, c *Controller) (*httptest.Server, *http.Client, string) {
+func scanRoute(t *testing.T, c *apiFixture) (*httptest.Server, *http.Client, string) {
 	t.Helper()
 	r := chi.NewRouter()
 	c.SetupRoutes(r)

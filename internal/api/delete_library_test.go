@@ -36,7 +36,7 @@ func TestDeleteLibraryInvalidatesCaches(t *testing.T) {
 
 	req := requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
-	controller.deleteLibrary(rec, req)
+	controller.families.library.deleteLibrary(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deleteLibrary = %d, body=%s", rec.Code, rec.Body.String())
@@ -63,7 +63,7 @@ func TestDeleteLibraryWaitsForScopedTask(t *testing.T) {
 
 	req := requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
-	controller.deleteLibrary(rec, req)
+	controller.families.library.deleteLibrary(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("deleteLibrary = %d, body=%s", rec.Code, rec.Body.String())
@@ -89,7 +89,7 @@ func TestDeleteLibraryWithoutActiveTaskStillSucceeds(t *testing.T) {
 
 	req := requestWithRouteParam(http.MethodDelete, "/api/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
-	controller.deleteLibrary(rec, req)
+	controller.families.library.deleteLibrary(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deleteLibrary = %d, body=%s", rec.Code, rec.Body.String())

@@ -42,7 +42,7 @@ func (s *aiGroupingCountingStore) GetSeriesNamesByIDs(ctx context.Context, ids [
 }
 
 // seedManyAIGroupingReviews 造 n 条各带 2 个候选合集的待审记录。
-func seedManyAIGroupingReviews(t *testing.T, controller *Controller, libraryID int64, seriesA, seriesB database.Series, n int) {
+func seedManyAIGroupingReviews(t *testing.T, controller *apiFixture, libraryID int64, seriesA, seriesB database.Series, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
 		if _, _, err := controller.createAIGroupingReview(context.Background(), libraryID, "ollama",
@@ -67,7 +67,7 @@ func TestListAIGroupingReviewsBatchesDetailQueries(t *testing.T) {
 	controller.organizationHTTP.groupingQueries = counting
 
 	rec := httptest.NewRecorder()
-	controller.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews", nil))
+	controller.organizationHTTP.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}
@@ -108,7 +108,7 @@ func TestListAIGroupingReviewsPropagatesDetailErrors(t *testing.T) {
 	controller.organizationHTTP.groupingQueries = &aiGroupingCountingStore{Store: store, failSeriesNames: true}
 
 	rec := httptest.NewRecorder()
-	controller.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews", nil))
+	controller.organizationHTTP.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews", nil))
 	if rec.Code == http.StatusOK {
 		t.Fatalf("明细查询失败却返回了 200：%s —— 候选合集静默显示为空，"+
 			"用户会以为 AI 一个分组都没分出来，而不是加载出错", rec.Body.String())

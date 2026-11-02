@@ -91,7 +91,7 @@ func TestRemoveBooksRefreshesSeriesDerivedData(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{"book_ids": []int64{second.ID}})
 	req := httptest.NewRequest(http.MethodPost, "/api/books/remove", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
-	controller.removeBooks(rec, req)
+	controller.families.removal.removeBooks(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("removeBooks want 200 got %d: %s", rec.Code, rec.Body.String())
 	}

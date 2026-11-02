@@ -1,7 +1,4 @@
-// 本文件把服务端事件推送（SSE）从 Controller 上帝对象里抽成独立组件。sseBroker 用「单 goroutine
-// 事件循环 + channel」的 actor 模式管理订阅者集合：run() 是唯一读写 clients 的 goroutine，故无需加锁；
-// serveHTTP 通过 channel 注册/注销自己，publish 非阻塞投递事件，背压时主动断开卡死的消费者让其自动重连。
-// Controller 仅持有 *sseBroker 引用并做请求编排（PublishEvent 保留为薄委托，供 Scanner / FileWatcher 调用）。
+// SSE fan-out owns role-filtered subscriptions and pre-drain stream termination.
 
 package api
 
@@ -58,7 +55,7 @@ func (b *sseBroker) closeClients() {
 	b.shutdownOnce.Do(func() { close(b.shutdown) })
 }
 
-// run 驱动 broker 事件循环直至 done 关闭。经 Controller.runBackground 登记，随 Close 一同退出。
+// run 驱动 broker 事件循环直至 done 关闭。由应用登记后台生命周期，停机时退出。
 // clients 仅在本 goroutine 内被读写，故整个集合无需加锁。
 func (b *sseBroker) run(done <-chan struct{}) {
 	for {
@@ -93,7 +90,7 @@ func (b *sseBroker) run(done <-chan struct{}) {
 }
 
 // publish 非阻塞投递一帧所有角色都能看的事件。供 Scanner / FileWatcher 等外部经
-// Controller.PublishEvent 调用。载荷带宿主机路径或任务细节的事件必须走 publishAdmin。
+// 载荷带宿主机路径或任务细节的事件必须走 publishAdmin。
 func (b *sseBroker) publish(event string) {
 	b.enqueue(sseEvent{data: event})
 }
@@ -196,4 +193,9 @@ func (b *sseBroker) serveHTTP(w http.ResponseWriter, r *http.Request, admin bool
 			return
 		}
 	}
+}
+
+func (c *sseBroker) serveEvents(w http.ResponseWriter, r *http.Request) {
+	user, ok := userFromContext(r.Context())
+	c.serveHTTP(w, r, ok && user.IsAdmin())
 }

@@ -22,10 +22,10 @@ func TestSeriesReaderQueriesRejectInvalidSubject(t *testing.T) {
 		url, param string
 		id         int64
 	}{
-		{"search", c.searchSeriesPaged, "/?libraryId=" + strconv.FormatInt(lib.ID, 10), "", 0},
-		{"recent", c.getRecentReadSeries, "/?libraryId=" + strconv.FormatInt(lib.ID, 10), "", 0},
-		{"context", c.getSeriesContext, "/", "seriesId", series.ID},
-		{"continue", c.getSeriesContinueEndpoint, "/", "seriesId", series.ID},
+		{"search", c.reader.searchSeriesPaged, "/?libraryId=" + strconv.FormatInt(lib.ID, 10), "", 0},
+		{"recent", c.reader.getRecentReadSeries, "/?libraryId=" + strconv.FormatInt(lib.ID, 10), "", 0},
+		{"context", c.reader.getSeriesContext, "/", "seriesId", series.ID},
+		{"continue", c.reader.getSeriesContinueEndpoint, "/", "seriesId", series.ID},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := withUserContext(requestWithRouteParam(http.MethodGet, test.url, nil, test.param, strconv.FormatInt(test.id, 10)), database.User{ID: -1})
@@ -76,7 +76,7 @@ func TestSeriesSearchPagesOnlyTheCurrentReadersUnknownPageCompletions(t *testing
 	} {
 		target := "/?libraryId=" + strconv.FormatInt(lib.ID, 10) + "&q=reader&readState=completed&limit=1&sortBy=name_asc&page=" + test.page + "&cursor=invalid"
 		rec := httptest.NewRecorder()
-		c.searchSeriesPaged(rec, withUserContext(httptest.NewRequest(http.MethodGet, target, nil), test.user))
+		c.reader.searchSeriesPaged(rec, withUserContext(httptest.NewRequest(http.MethodGet, target, nil), test.user))
 		var result struct {
 			Items []database.SearchSeriesPagedRow `json:"items"`
 			Total int                             `json:"total"`

@@ -8,6 +8,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"manga-manager/internal/config"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -15,16 +16,15 @@ import (
 	"testing"
 	"time"
 
-	"manga-manager/internal/config"
 	"manga-manager/internal/task"
 )
 
 // runSamplesOf 走端点取一条运行的吞吐曲线。
-func runSamplesOf(t *testing.T, c *Controller, runID int64) RunSamplesResponse {
+func runSamplesOf(t *testing.T, c *apiFixture, runID int64) RunSamplesResponse {
 	t.Helper()
 	req := requestWithRouteParam(http.MethodGet, "/api/system/runs/1/samples", nil, "runID", strconv.FormatInt(runID, 10))
 	rec := httptest.NewRecorder()
-	c.getRunSamples(rec, req)
+	c.families.runs.getRunSamples(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("取采样返回 %d，想要 200（body=%s）", rec.Code, rec.Body.String())
 	}
@@ -42,7 +42,7 @@ func runSamplesOf(t *testing.T, c *Controller, runID int64) RunSamplesResponse {
 func TestRunSamplesDrawTheThroughputOfThisRun(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	engine, _ := newClockedTestEngine(t, runTaskBodySynchronously, nil, clock.Now)
-	controller := &Controller{taskEngine: engine}
+	controller := &apiFixture{Host: &Host{families: httpFamilies{runs: &runsHTTP{taskEngine: engine, currentConfig: func() config.Config { return config.Config{} }}}}, taskEngine: engine}
 	ctx := context.Background()
 
 	handle := seedTask(t, engine, taskSeed{
@@ -215,7 +215,7 @@ func TestRunSamplesEndpointContract(t *testing.T) {
 	t.Run("运行不存在", func(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/system/runs/4242/samples", nil, "runID", "4242")
 		rec := httptest.NewRecorder()
-		controller.getRunSamples(rec, req)
+		controller.families.runs.getRunSamples(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404（body=%s）", rec.Code, rec.Body.String())
 		}
@@ -224,7 +224,7 @@ func TestRunSamplesEndpointContract(t *testing.T) {
 	t.Run("路径参数不是运行 id", func(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/system/runs//samples", nil, "runID", "")
 		rec := httptest.NewRecorder()
-		controller.getRunSamples(rec, req)
+		controller.families.runs.getRunSamples(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400（body=%s）", rec.Code, rec.Body.String())
 		}

@@ -97,12 +97,12 @@ func TestEnforcePageCacheBudgetEvictsOldestFirst(t *testing.T) {
 	cfg.Cache.PageDiskCacheMaxBytes = 10 << 10 // 10 KiB
 	controller.config.Replace(&cfg)
 
-	dir := controller.processedImageCacheDir()
+	dir := controller.media.processedImageCacheDir()
 	const fileCount = 30
 	const fileSize = 1 << 10
 	paths := seedCacheFiles(t, dir, fileCount, fileSize)
 
-	controller.enforcePageCacheBudget()
+	controller.media.enforcePageCacheBudget()
 
 	var remaining int64
 	survivors := 0
@@ -136,10 +136,10 @@ func TestEnforcePageCacheBudgetSkipsWhenUnderLimit(t *testing.T) {
 	cfg.Cache.PageDiskCacheMaxBytes = 1 << 20 // 1 MiB，远大于我们写入的量
 	controller.config.Replace(&cfg)
 
-	dir := controller.processedImageCacheDir()
+	dir := controller.media.processedImageCacheDir()
 	paths := seedCacheFiles(t, dir, 20, 1<<10)
 
-	controller.enforcePageCacheBudget()
+	controller.media.enforcePageCacheBudget()
 
 	for _, p := range paths {
 		if _, err := os.Stat(p); err != nil {

@@ -60,7 +60,7 @@ func captureLogsInto(t *testing.T, path string) {
 }
 
 // newScanFailureRig 装一个「扫描必定失败」的控制器：任务体同步执行，日志落到查看接口会读的那个文件。
-func newScanFailureRig(t *testing.T) (*Controller, string) {
+func newScanFailureRig(t *testing.T) (*apiFixture, string) {
 	t.Helper()
 
 	controller, store, _, _ := newTestController(t)
@@ -78,12 +78,12 @@ func newScanFailureRig(t *testing.T) (*Controller, string) {
 }
 
 // queryLogsByTaskKey 走查看接口按任务键过滤，口径与「查看日志」按钮完全一致。
-func queryLogsByTaskKey(t *testing.T, controller *Controller, taskKey string) LogsResponse {
+func queryLogsByTaskKey(t *testing.T, controller *apiFixture, taskKey string) LogsResponse {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/logs?level=ALL&task_key="+taskKey, nil)
 	rec := httptest.NewRecorder()
-	controller.getSystemLogs(rec, req)
+	controller.admin.getSystemLogs(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("日志接口返回 %d: %s", rec.Code, rec.Body.String())
 	}
@@ -99,7 +99,7 @@ func TestFailedLibraryScanLogsAreFilterableByTaskKey(t *testing.T) {
 	controller, _ := newScanFailureRig(t)
 
 	lib := database.Library{ID: 7, Name: "Main", Path: filepath.Join(t.TempDir(), "main")}
-	if err := controller.launchLibraryScanTask(lib, true, task.TriggerManual); err != nil {
+	if err := controller.families.library.launchLibraryScanTask(lib, true, task.TriggerManual); err != nil {
 		t.Fatalf("启动资料库扫描失败: %v", err)
 	}
 

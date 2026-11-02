@@ -40,7 +40,7 @@ type Process struct {
 // The caller retains ownership of the supplied database connection and process log file.
 func Open(ctx context.Context, store database.Store, cfg *config.Manager, options Options) (*Process, error) {
 	resources := runtimecfg.NewResources()
-	transport := api.NewTransport(store, cfg, options.ConfigPath)
+	transport := api.NewTransport(cfg)
 	memory := bookcontent.NewMemoryCache(bookcontent.DefaultImageCacheBytes)
 	content := bookcontent.New(func(ctx context.Context, id int64) (bookcontent.Source, error) {
 		book, err := store.GetBook(ctx, id)
@@ -55,15 +55,16 @@ func Open(ctx context.Context, store database.Store, cfg *config.Manager, option
 	stats := dashboard.New()
 	reader := api.NewReaderCapabilities(store, app.Relations, app.Proposals, app.Engine, func() { stats.InvalidateVolatile("reading") })
 	host := transport.Bind(api.HostDependencies{
-		Reading: api.ReadingDependencies{Capabilities: reader, Content: content, ImageCache: memory, Statistics: stats, Recommendations: recommendation.New(24 * time.Hour), KOReader: app.KOReader},
+		Catalogue: store, CoverQueries: store,
+		Reading: api.ReadingDependencies{ContentQueries: store, StatisticsQueries: store, Capabilities: reader, Content: content, ImageCache: memory, Statistics: stats, Recommendations: recommendation.New(24 * time.Hour)},
 		Organization: api.OrganizationDependencies{
-			Relations: app.Relations, Proposals: app.Proposals,
+			Relations: app.Relations, Proposals: app.Proposals, ProposalQueue: app.Proposals,
 			Collections: organize.NewCollections(store), Shelves: organize.NewSmartCollections(store), ReadingLists: organize.NewReadingLists(store),
 			Grouping: organize.NewAIGrouping(store, func() { effects.Publish("refresh") }), GroupingQueries: store, Series: store, StaticCollections: store,
 			Metadata: seriesediting.New(seriesediting.NewSQLStore(store)), Selection: seriesediting.NewSelection(seriesediting.NewSQLStore(store), func() { effects.InvalidateStats("bulk_edit") }),
 			UnmatchedCount: store.CountUnmatchedKOReaderProgress, KOReaderEnabled: func() bool { return cfg.Snapshot().KOReader.Enabled }, Publish: effects.Publish,
 		},
-		Libraries:      api.LibraryDependencies{Removal: store, Initials: store, Queries: store, ComicInfo: store, Management: app.LibraryManagement, Scans: app.Scans, Maintenance: app.Maintenance, Moves: app.Moves, Disk: app.Disk, Intelligence: app.Intelligence, External: app.External, Relocation: app.Relocation, Scanner: app.Scanner, Watcher: app.Watcher, WatcherError: app.WatcherError, DiskWork: app.DiskWork, Runs: api.RunDependencies{Engine: app.Engine, Runs: app.Runs, Store: app.Tasks, Registry: app.Registry}},
+		Libraries:      api.LibraryDependencies{Removal: store, Initials: store, Queries: store, ComicInfo: store, Management: app.LibraryManagement, Scans: app.Scans, Maintenance: app.Maintenance, Moves: app.Moves, Disk: app.Disk, Intelligence: app.Intelligence, External: app.External, Relocation: app.Relocation, Scanner: app.Scanner, Runs: api.RunDependencies{Engine: app.Engine, Runs: app.Runs, Store: app.Tasks, Registry: app.Registry}},
 		Administration: api.AdministrationDependencies{Configuration: app.Configuration, Store: store, Manager: cfg, KOReader: app.KOReader},
 		Lifecycle:      app,
 	})

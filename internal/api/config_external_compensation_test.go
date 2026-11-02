@@ -14,7 +14,7 @@ func TestConfigFailedUpdatePreservesConcurrentExternalEditor(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			c, _, _, _ := newTestController(t)
 			original := c.currentConfig()
-			if err := c.persistConfig(&original); err != nil {
+			if err := c.admin.persistConfig(&original); err != nil {
 				t.Fatal(err)
 			}
 			failure := errors.New("runtime failed")

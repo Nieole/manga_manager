@@ -73,7 +73,7 @@ func TestPublicationWindowRejectsNewHTTPDownloads(t *testing.T) {
 	defer release()
 	id := strconv.FormatInt(book.ID, 10)
 	rec := httptest.NewRecorder()
-	c.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/file", nil, "bookId", id))
+	c.media.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/file", nil, "bookId", id))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("publication download: %d %s", rec.Code, rec.Body.String())
 	}

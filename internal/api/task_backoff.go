@@ -32,17 +32,7 @@ func backoffMaxDelay(hours int) time.Duration {
 	return runtime.BackoffPolicy(cfg).MaxDelay
 }
 
-// taskBackoffPolicy 读此刻生效的三个阈值，理由同 taskSlots。
-func (c *Controller) taskBackoffPolicy() task.BackoffPolicy {
-	return backoffPolicyOf(c.currentConfig())
-}
-
-// setTaskAutoLaunch 生成禁用 / 启用两个端点：它们只差一个布尔值与成功文案。
-//
-// 寻址用**任务 id** 而不是**任务键**：禁用是一条长期属性，挂在身份上（规格关键决定 6），
-// 而外部库那两类的键带着会话 id——同一身份的两次运行键并不相同，按键寻址会禁用不到它。
-//
-// **重试合并不进来**，尽管它如今也按任务 id 寻址；为什么合并不进来写在 runControlHandler 上。
+// setTaskAutoLaunch switches automatic admission by persistent task identity.
 func (c *runsHTTP) setTaskAutoLaunch(disabled bool, okMessage string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskID, err := parseID(r, "taskID")

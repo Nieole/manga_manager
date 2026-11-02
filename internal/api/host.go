@@ -16,12 +16,11 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/dashboard"
 	"manga-manager/internal/database"
-	"manga-manager/internal/diskwork"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
-	"manga-manager/internal/metadata"
-	"manga-manager/internal/organize"
-	"manga-manager/internal/proposal"
+	"sync"
+	"time"
+
 	"manga-manager/internal/recommendation"
 	"manga-manager/internal/relocation"
 	"manga-manager/internal/scanner"
@@ -40,12 +39,13 @@ type Lifecycle interface {
 
 // ReadingDependencies supplies content and reader query projections.
 type ReadingDependencies struct {
-	Capabilities    *ReaderCapabilities
-	Content         *bookcontent.Service
-	ImageCache      *bookcontent.MemoryCache
-	Statistics      *dashboard.Service
-	Recommendations *recommendation.Service
-	KOReader        *koreader.Service
+	ContentQueries    ContentQueries
+	StatisticsQueries dashboard.Store
+	Capabilities      *ReaderCapabilities
+	Content           *bookcontent.Service
+	ImageCache        *bookcontent.MemoryCache
+	Statistics        *dashboard.Service
+	Recommendations   *recommendation.Service
 }
 
 // RunDependencies joins the transport projection to the same admitted queue.
@@ -71,9 +71,6 @@ type LibraryDependencies struct {
 	External     *external.Manager
 	Relocation   *relocation.Service
 	Scanner      *scanner.Scanner
-	Watcher      *scanner.FileWatcher
-	WatcherError error
-	DiskWork     *diskwork.Runner
 	Runs         RunDependencies
 }
 
@@ -85,9 +82,12 @@ type AdministrationDependencies struct {
 	KOReader      *koreader.Service
 }
 
-// HostDependencies groups capability inputs by the families migrating off Controller.
-// Legacy handlers consume these bindings until their family migration removes them.
+// HostDependencies supplies explicit family capabilities and shared transport leaves.
 type HostDependencies struct {
+	Catalogue    CatalogueMaintenanceStore
+	CoverQueries interface {
+		GetBook(context.Context, int64) (database.Book, error)
+	}
 	Reading        ReadingDependencies
 	Organization   OrganizationDependencies
 	Libraries      LibraryDependencies
@@ -95,35 +95,50 @@ type HostDependencies struct {
 	Lifecycle      Lifecycle
 }
 
-// Transport owns HTTP-only authentication, push projection and legacy route state.
-// Construction does not create, recover or start an application.
-type Transport struct{ legacy *Controller }
-
-// NewTransport creates transport leaf state. Store is restricted to the retained
-// Controller adapter until the HTTP family migrations remove its compatibility surface.
-func NewTransport(store database.Store, cfg *config.Manager, configPath string) *Transport {
-	c := &Controller{store: store, config: cfg, configPath: configPath, sse: newSSEBroker(), auth: newAuthState(), openPath: openPathInDefaultFileManager}
-	c.taskEngine = &taskEngine{slots: c.taskSlots, backoff: c.taskBackoffPolicy, sampleInterval: c.runSampleInterval, resumeEnabled: c.taskResumeEnabled, identities: make(map[int64]TaskIdentity)}
-	c.taskEngine.configSnapshot = c.currentConfig
-	c.taskEngine.libraryIDs = c.taskLibraries
-	return &Transport{legacy: c}
+// Transport owns independent technical HTTP leaves, not an application graph.
+// Bind installs effect consumers before recovery or background inputs open.
+type Transport struct {
+	cfg        *config.Manager
+	auth       *authState
+	warning    sync.Once
+	events     *sseBroker
+	projection *taskEngine
+	effects    transportEffects
+	clients    *providerClients
+	media      *contentHTTP
 }
 
-// RuntimeEffects exposes transport-owned leaf operations for the composition root.
-// Bind must finish before recovery or background inputs can invoke these leaves.
+func NewTransport(cfg *config.Manager) *Transport {
+	t := &Transport{cfg: cfg, auth: newAuthState(), events: newSSEBroker()}
+	snapshot := cfg.Snapshot
+	t.clients = &providerClients{currentConfig: snapshot}
+	t.projection = &taskEngine{configSnapshot: snapshot, identities: make(map[int64]TaskIdentity),
+		slots:          func() int { return snapshot().Tasks.RunSlots },
+		backoff:        func() task.BackoffPolicy { return backoffPolicyOf(snapshot()) },
+		sampleInterval: func() time.Duration { return sampleIntervalOf(snapshot()) },
+		resumeEnabled:  func() bool { b := snapshot().Tasks.ResumeAfterRestart; return b == nil || *b },
+	}
+	return t
+}
 func (t *Transport) RuntimeEffects() appruntime.Effects {
-	c := t.legacy
-	return appruntime.Effects{Publish: c.PublishEvent, PurgeReadingPaths: c.purgeReadingPathCaches, InvalidateStats: c.invalidateDashboardStatsCache, WarmStats: c.warmDashboardStatsCacheAsync, InvalidateRecommendations: c.purgeRecommendationCache, InvalidateReading: func() { c.invalidateVolatileStatsCache("koreader_progress") }, RunEvents: c.sse.run, StopEvents: c.sse.closeClients, TrimPageCache: c.enforcePageCacheBudget, ObserveIdentity: c.taskEngine.observeIdentity, Sources: intelligence.Sources{Metadata: c.getMetadataFetcher}}
+	e := &t.effects
+	return appruntime.Effects{Publish: t.events.publish, PurgeReadingPaths: func() { t.media.content.PurgeSources() },
+		InvalidateStats: func(reason string) { e.stats.InvalidateAll(reason) }, WarmStats: e.warm,
+		InvalidateRecommendations: func() { e.recommendations.Purge() },
+		InvalidateReading:         func() { e.stats.InvalidateVolatile("koreader_progress") },
+		RunEvents:                 t.events.run, StopEvents: t.events.closeClients,
+		TrimPageCache: func() { t.media.enforcePageCacheBudget() }, ObserveIdentity: t.projection.observeIdentity,
+		Sources: intelligence.Sources{Metadata: t.clients.getMetadataFetcher}}
 }
 
 // TaskOptions attaches transport projections while retaining caller-controlled clocks and scheduling.
 func (t *Transport) TaskOptions(options task.Config) task.Config {
-	e, c := t.legacy.taskEngine, t.legacy
+	e, c := t.projection, t.events
 	if options.Publish == nil {
-		options.Publish = e.publisher(c.sse.publishAdmin)
+		options.Publish = e.publisher(c.publishAdmin)
 	}
 	if options.PublishLive == nil {
-		options.PublishLive = e.livePublisher(c.sse.publishAdmin)
+		options.PublishLive = e.livePublisher(c.publishAdmin)
 	}
 	if options.RunBackground == nil {
 		options.RunBackground = func(fn func()) { e.runBackground(fn) }
@@ -143,41 +158,48 @@ func (t *Transport) TaskOptions(options task.Config) task.Config {
 	return options
 }
 
-// Host mounts feature adapters. Its compatibility controller is removed by the
-// reader, organization, library and administration migration tickets.
+// Host owns only bound HTTP adapters and their single route composition.
 type Host struct {
-	compatibility  *Controller
-	families       httpFamilies
-	administration *administrationHTTP
+	reader           *ReaderHTTP
+	organizationHTTP *organizationHTTP
+	families         httpFamilies
+	administration   *administrationHTTP
+	content          *contentHTTP
+	catalogue        *catalogMaintenanceHTTP
+	covers           *coverHTTP
+	providers        *providerHTTP
+	events           *sseBroker
 }
 
-// Bind installs capabilities without constructing or starting another application.
+// Bind installs capability ports before the composition root recovers or opens inputs.
 func (t *Transport) Bind(d HostDependencies) *Host {
-	c := t.legacy
-	c.process = d.Lifecycle
-	c.configuration = d.Administration.Configuration
-	c.content, c.imageCache = d.Reading.Content, d.Reading.ImageCache
-	c.stats, c.recommendations = d.Reading.Statistics, d.Reading.Recommendations
-	c.koreader = d.Reading.KOReader
-	c.organizationHTTP = newOrganizationHTTP(d.Organization)
-	c.relations, _ = d.Organization.Relations.(*organize.Relations)
-	c.proposals, _ = d.Organization.Proposals.(*proposal.Service)
-	// Retained scrape/cover consumers use compatibility bindings until 47. No library
-	// application graph is mirrored back onto the compatibility controller.
-	c.intelligence = d.Libraries.Intelligence
-	c.scanner = d.Libraries.Scanner
-	e := c.taskEngine
+	snapshot := t.cfg.Snapshot
+	e := t.projection
 	e.engine, e.runs, e.runStore, e.registry = d.Libraries.Runs.Engine, d.Libraries.Runs.Runs, d.Libraries.Runs.Store, d.Libraries.Runs.Registry
 	e.runBackground = d.Lifecycle.Go
-	if d.Reading.Capabilities != nil {
-		c.reader = c.bindReaderHTTP(d.Reading.Capabilities)
+	series := d.Organization.Series
+	e.libraryIDs = func(ctx context.Context, id TaskIdentity) ([]int64, error) {
+		return taskLibraries(ctx, series, id)
 	}
-	cfg := c.config
-	return &Host{compatibility: c, administration: newAdministration(d.Administration, c.auth, &c.untrustedProtoWarnOnce), families: bindHTTPFamilies(d.Libraries, d.Reading.Content, cfg.Snapshot, e, func(name string) metadata.Fetcher { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }, d.Administration.Configuration.DatabasePath, c.invalidateDashboardStatsCache)}
+	t.effects = transportEffects{stats: d.Reading.Statistics, recommendations: d.Reading.Recommendations, store: d.Reading.StatisticsQueries, background: d.Lifecycle.Go}
+	t.media = &contentHTTP{store: d.Reading.ContentQueries, content: d.Reading.Content, imageCache: d.Reading.ImageCache, currentConfig: snapshot, engine: e.engine}
+	providers := &providerHTTP{providerClients: t.clients, store: d.Organization.Series, proposals: d.Organization.ProposalQueue}
+	admin := newAdministration(d.Administration, t.auth, &t.warning)
+	organization := newOrganizationHTTP(d.Organization)
+	media := t.media
+	reader := &ReaderHTTP{ReaderCapabilities: d.Reading.Capabilities, store: d.Reading.Capabilities.queries,
+		stats: d.Reading.Statistics, recommendations: d.Reading.Recommendations, content: d.Reading.Content,
+		currentConfig: snapshot, failedRuns: e.statusesFrom,
+		requireProtocolEnabled: admin.requireProtocolEnabled, requireBasicAuth: admin.requireBasicAuth,
+		serveBookFile: media.serveBookFile, serveCoverImage: media.serveCoverImage, serveThumbnailImage: media.serveThumbnailImage,
+		servePageImage: media.servePageImage, servePageImageByNumber: media.servePageImageByNumber, guardBookRead: media.guardBookRead,
+		readingLists: organization.readingLists, loadCollectionViews: organization.loadCollectionViews,
+		loadStaticCollectionSeries: organization.loadStaticCollectionSeries, loadSmartCollectionSeries: organization.loadSmartCollectionSeries, getSmartFilterByID: organization.getSmartFilterByID}
+	invalidate := d.Reading.Statistics.InvalidateAll
+	return &Host{reader: reader, organizationHTTP: organization, administration: admin, content: media, events: t.events,
+		catalogue: &catalogMaintenanceHTTP{store: d.Catalogue, engine: e.engine, openPath: openPathInDefaultFileManager, invalidateDashboardStatsCache: invalidate},
+		covers:    &coverHTTP{store: d.CoverQueries, scanner: d.Libraries.Scanner, invalidateDashboardStatsCache: invalidate}, providers: providers,
+		families: bindHTTPFamilies(d.Libraries, d.Reading.Content, snapshot, e, t.clients.getMetadataFetcher, d.Administration.Configuration.DatabasePath, invalidate)}
 }
-
-func (h *Host) SetupRoutes(r chi.Router) {
-	h.compatibility.setupRoutes(r, h.families, h.administration)
-}
-func (h *Host) SetupOPDSRoutes(r chi.Router)     { h.compatibility.SetupOPDSRoutes(r) }
-func (h *Host) SetupKOReaderRoutes(r chi.Router) { h.compatibility.SetupKOReaderRoutes(r) }
+func (h *Host) SetupOPDSRoutes(r chi.Router)     { h.reader.SetupOPDSRoutes(r) }
+func (h *Host) SetupKOReaderRoutes(r chi.Router) { h.administration.SetupKOReaderRoutes(r) }

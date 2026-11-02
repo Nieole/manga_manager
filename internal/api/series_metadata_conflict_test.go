@@ -15,10 +15,10 @@ import (
 )
 
 // seriesMetadataVersionOf 走 GET /context 读出这一刻的元数据版本，即用户打开编辑器时手里那份。
-func seriesMetadataVersionOf(t *testing.T, controller *Controller, seriesID int64) string {
+func seriesMetadataVersionOf(t *testing.T, controller *apiFixture, seriesID int64) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.getSeriesContext(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(seriesID, 10)))
+	controller.reader.getSeriesContext(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/context", nil, "seriesId", strconv.FormatInt(seriesID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected series context 200, got %d", rec.Code)
 	}
@@ -35,10 +35,10 @@ func seriesMetadataVersionOf(t *testing.T, controller *Controller, seriesID int6
 }
 
 // putSeriesInfo 打一次手工保存，返回状态码与响应体。
-func putSeriesInfo(t *testing.T, controller *Controller, seriesID int64, payload string) (int, map[string]any) {
+func putSeriesInfo(t *testing.T, controller *apiFixture, seriesID int64, payload string) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.updateSeriesInfo(rec, requestWithRouteParam(http.MethodPut, "/api/series/info/1", []byte(payload), "seriesId", strconv.FormatInt(seriesID, 10)))
+	controller.organizationHTTP.updateSeriesInfo(rec, requestWithRouteParam(http.MethodPut, "/api/series/info/1", []byte(payload), "seriesId", strconv.FormatInt(seriesID, 10)))
 	var body map[string]any
 	_ = json.NewDecoder(rec.Body).Decode(&body)
 	return rec.Code, body
@@ -120,7 +120,7 @@ func TestUpdateSeriesInfoConcurrentEditConflict(t *testing.T) {
 			t.Fatalf("queue proposal failed: status=%q err=%v", queued.Status, err)
 		}
 		applyRec := httptest.NewRecorder()
-		controller.applyMetadataReview(applyRec, requestWithRouteParam(http.MethodPost, "/api/reviews/1/apply", nil,
+		controller.organizationHTTP.applyMetadataReview(applyRec, requestWithRouteParam(http.MethodPost, "/api/reviews/1/apply", nil,
 			"reviewId", strconv.FormatInt(queued.Proposal.ID, 10)))
 		if applyRec.Code != http.StatusOK {
 			t.Fatalf("expected apply proposal 200, got %d: %s", applyRec.Code, applyRec.Body.String())

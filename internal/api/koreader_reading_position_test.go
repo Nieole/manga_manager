@@ -32,7 +32,7 @@ func TestMatchedKOReaderProtocolUpdatesPositionAndInvalidatesDashboard(t *testin
 	dashboard := func() database.DashboardStats {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		c.getDashboardStats(rec, httptest.NewRequest(http.MethodGet, "/api/dashboard/stats", nil))
+		c.reader.getDashboardStats(rec, httptest.NewRequest(http.MethodGet, "/api/dashboard/stats", nil))
 		if rec.Code != 200 {
 			t.Fatalf("%d %s", rec.Code, rec.Body.String())
 		}
@@ -52,7 +52,7 @@ func TestMatchedKOReaderProtocolUpdatesPositionAndInvalidatesDashboard(t *testin
 		req.Header.Set("x-auth-key", koreader.HashKey("secret"))
 		req.Header.Set("Accept", "application/vnd.koreader.v1+json")
 		rec := httptest.NewRecorder()
-		c.koreaderUpdateProgress(rec, req)
+		c.admin.koreaderUpdateProgress(rec, req)
 		if rec.Code != 200 || rec.Header().Get("Content-Type") != "application/vnd.koreader.v1+json" || strings.Contains(rec.Body.String(), "received_at_ns") {
 			t.Fatalf("protocol response=%d %s", rec.Code, rec.Body.String())
 		}

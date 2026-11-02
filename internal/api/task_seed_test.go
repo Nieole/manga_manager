@@ -500,13 +500,19 @@ func controlByKey(e *taskEngine, key string, action func(int64) error) error {
 	return action(run.ID)
 }
 
-func pauseByKey(e *taskEngine, key string) error  { return controlByKey(e, key, e.pauseRun) }
-func resumeByKey(e *taskEngine, key string) error { return controlByKey(e, key, e.resumeRun) }
-func cancelByKey(e *taskEngine, key string) error { return controlByKey(e, key, e.cancelRun) }
+func pauseByKey(e *taskEngine, key string) error {
+	return controlByKey(e, key, e.pauseRun)
+}
+func resumeByKey(e *taskEngine, key string) error {
+	return controlByKey(e, key, e.resumeRun)
+}
+func cancelByKey(e *taskEngine, key string) error {
+	return controlByKey(e, key, e.cancelRun)
+}
 
 // runControlRequest 向暂停 / 恢复 / 取消三个端点之一发一次请求，寻址用这个**任务键**最近那次
-// 运行的 id——端点按运行 id 寻址（见 Controller.pauseRun），而用例手里往往只有键。
-func runControlRequest(t testing.TB, c *Controller, handler http.HandlerFunc, key string) *httptest.ResponseRecorder {
+// 运行的 id——端点按运行 id 寻址（见 Controller.families.runs.pauseRun），而用例手里往往只有键。
+func runControlRequest(t testing.TB, c *apiFixture, handler http.HandlerFunc, key string) *httptest.ResponseRecorder {
 	t.Helper()
 	run, err := latestRunForKey(context.Background(), c.taskEngine, key)
 	if err != nil {

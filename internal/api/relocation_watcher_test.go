@@ -75,7 +75,7 @@ func TestRelocationKeepsIndependentNestedLibraryWatching(t *testing.T) {
 				c.watcher.Start(func(string) {})
 				body, _ := json.Marshal(map[string]string{"source_root": filepath.Clean(strings.Replace(lib.Path, "/SOURCE", "/source", 1)), "target_root": target})
 				rec := httptest.NewRecorder()
-				c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+				c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 				var started RelocationPlan
 				if err = json.Unmarshal(rec.Body.Bytes(), &started); err != nil || rec.Code != http.StatusAccepted {
 					t.Fatalf("check explicit native source root: %d %s %v", rec.Code, rec.Body.String(), err)

@@ -64,7 +64,7 @@ func readerPageJPEG(t testing.TB, width, height int) []byte {
 
 // seedReaderPageBook 落一本单页归档，并把书表的 path/size/mtime/page_count 对齐到磁盘现状。
 // 归档内的条目名决定这一页的 MediaType，进而决定转码链继承哪个编码器——扩展名必须与字节相符。
-func seedReaderPageBook(t testing.TB, entryName string, pageData []byte) (*Controller, int64) {
+func seedReaderPageBook(t testing.TB, entryName string, pageData []byte) (*apiFixture, int64) {
 	t.Helper()
 	controller, store, _, rootDir := newTestController(t)
 	_, _, book := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 1)
@@ -89,12 +89,12 @@ func seedReaderPageBook(t testing.TB, entryName string, pageData []byte) (*Contr
 }
 
 // fetchReaderPage 按给定查询串取第一页，返回响应体。
-func fetchReaderPage(t testing.TB, controller *Controller, bookID int64, query string) []byte {
+func fetchReaderPage(t testing.TB, controller *apiFixture, bookID int64, query string) []byte {
 	t.Helper()
 	req := requestWithRouteParam(http.MethodGet, "/api/pages/1/1"+query, nil, "bookId", strconv.FormatInt(bookID, 10))
 	req = withRouteParam(req, "pageNumber", "1")
 	rec := httptest.NewRecorder()
-	controller.servePageImage(rec, req)
+	controller.media.servePageImage(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("query %q: expected 200, got %d body=%s", query, rec.Code, rec.Body.String())
 	}
@@ -221,7 +221,7 @@ func TestReaderFitInsidePreservesAspect(t *testing.T) {
 }
 
 // callReaderPage 取第一页并把整个响应交出来：第一条要看的是状态码、ETag 与回退头，不只是响应体。
-func callReaderPage(t testing.TB, controller *Controller, bookID int64, query, ifNoneMatch string) *httptest.ResponseRecorder {
+func callReaderPage(t testing.TB, controller *apiFixture, bookID int64, query, ifNoneMatch string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := requestWithRouteParam(http.MethodGet, "/api/pages/1/1"+query, nil, "bookId", strconv.FormatInt(bookID, 10))
 	req = withRouteParam(req, "pageNumber", "1")
@@ -229,7 +229,7 @@ func callReaderPage(t testing.TB, controller *Controller, bookID int64, query, i
 		req.Header.Set("If-None-Match", ifNoneMatch)
 	}
 	rec := httptest.NewRecorder()
-	controller.servePageImage(rec, req)
+	controller.media.servePageImage(rec, req)
 	return rec
 }
 
@@ -287,7 +287,7 @@ func TestReaderAIFallbackDoesNotPinPageToUnupscaled(t *testing.T) {
 	if got := degraded.Header().Get("X-Image-Fallback"); got != "waifu2x" {
 		t.Fatalf("交付的不是用户点的那张图，响应必须说出来，X-Image-Fallback=%q", got)
 	}
-	stats, err := controller.collectPageCacheStats()
+	stats, err := controller.media.collectPageCacheStats()
 	if err != nil {
 		t.Fatalf("collect page cache stats: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestReaderTargetBiggerThanSourceKeepsSourceBytes(t *testing.T) {
 		}
 	}
 
-	stats, err := controller.collectPageCacheStats()
+	stats, err := controller.media.collectPageCacheStats()
 	if err != nil {
 		t.Fatalf("collect page cache stats: %v", err)
 	}

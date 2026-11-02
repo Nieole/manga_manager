@@ -57,7 +57,6 @@ type RunSamplesResponse struct {
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-func (c *Controller) runSampleInterval() time.Duration { return sampleIntervalOf(c.currentConfig()) }
 func sampleIntervalOf(cfg config.Config) time.Duration { return runtime.SampleInterval(cfg) }
 
 // getRunSamples 取一条运行的吞吐曲线。

@@ -8,11 +8,11 @@ import (
 	"time"
 )
 
-func (c *Controller) runRebuildFileIdentities(ctx context.Context, limit int, h bookidentity.TaskHandle) (int, int, error) {
+func (c *apiFixture) runRebuildFileIdentities(ctx context.Context, limit int, h bookidentity.TaskHandle) (int, int, error) {
 	return c.maintenance.RebuildFileIdentityRecords(ctx, limit, h)
 }
 
-func (c *Controller) runBackfillFullHashesLowPriority(ctx context.Context, limit int, gap time.Duration, h bookidentity.TaskHandle) (int, int, error) {
+func (c *apiFixture) runBackfillFullHashesLowPriority(ctx context.Context, limit int, gap time.Duration, h bookidentity.TaskHandle) (int, int, error) {
 	return c.maintenance.BackfillFullHashRecords(ctx, limit, gap, h)
 }
 

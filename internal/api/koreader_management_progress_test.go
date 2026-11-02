@@ -45,7 +45,7 @@ func TestKOReaderManagementEndpointsWithStoredProgress(t *testing.T) {
 
 	t.Run("设置页 KOReader 面板返回可用的最近同步时间", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.getKOReaderSettings(rec, httptest.NewRequest(http.MethodGet, "/api/system/koreader", nil))
+		controller.admin.getKOReaderSettings(rec, httptest.NewRequest(http.MethodGet, "/api/system/koreader", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected koreader settings 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -65,7 +65,7 @@ func TestKOReaderManagementEndpointsWithStoredProgress(t *testing.T) {
 
 	t.Run("账号列表返回可用的最近使用时间", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.listKOReaderAccounts(rec, httptest.NewRequest(http.MethodGet, "/api/system/koreader/accounts", nil))
+		controller.admin.listKOReaderAccounts(rec, httptest.NewRequest(http.MethodGet, "/api/system/koreader/accounts", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected koreader accounts 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -89,7 +89,7 @@ func TestKOReaderManagementEndpointsWithStoredProgress(t *testing.T) {
 
 	t.Run("连接中心返回 KOReader 账号计数", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.getClientConnections(rec, httptest.NewRequest(http.MethodGet, "/api/system/client-connections", nil))
+		controller.admin.getClientConnections(rec, httptest.NewRequest(http.MethodGet, "/api/system/client-connections", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected client connections 200, got %d body=%s", rec.Code, rec.Body.String())
 		}

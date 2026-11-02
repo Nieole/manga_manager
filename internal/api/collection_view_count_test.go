@@ -87,7 +87,7 @@ func TestSmartCollectionCountMatchesListing(t *testing.T) {
 		{"无用户上下文", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			views, err := controller.loadCollectionViews(ctx, testReaderSubject(t, tc.userID))
+			views, err := controller.organizationHTTP.loadCollectionViews(ctx, testReaderSubject(t, tc.userID))
 			if err != nil {
 				t.Fatalf("loadCollectionViews: %v", err)
 			}
@@ -103,7 +103,7 @@ func TestSmartCollectionCountMatchesListing(t *testing.T) {
 				t.Fatal("书架列表里找不到这个智能书架")
 			}
 
-			_, gotTotal, err := controller.loadSmartCollectionSeries(ctx, SmartFilter{ID: filter.ID}, 50, 0, testReaderSubject(t, tc.userID))
+			_, gotTotal, err := controller.organizationHTTP.loadSmartCollectionSeries(ctx, SmartFilter{ID: filter.ID}, 50, 0, testReaderSubject(t, tc.userID))
 			if err != nil {
 				t.Fatalf("loadSmartCollectionSeries: %v", err)
 			}
@@ -159,7 +159,7 @@ func TestSmartCollectionCountIsPerUser(t *testing.T) {
 	}
 
 	countFor := func(userID int64) int {
-		views, err := controller.loadCollectionViews(ctx, testReaderSubject(t, userID))
+		views, err := controller.organizationHTTP.loadCollectionViews(ctx, testReaderSubject(t, userID))
 		if err != nil {
 			t.Fatalf("loadCollectionViews: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestSmartCollectionCountIsPerUser(t *testing.T) {
 func TestCollectionViewsEndpointStillServes(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	rec := httptest.NewRecorder()
-	controller.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
+	controller.organizationHTTP.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("listCollectionViews = %d, body=%s", rec.Code, rec.Body.String())
 	}

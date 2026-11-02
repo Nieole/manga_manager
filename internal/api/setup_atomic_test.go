@@ -27,12 +27,13 @@ func TestSetupAtomicallyCreatesOnlyOneAdministrator(t *testing.T) {
 	c, store, _, _ := newTestController(t)
 	barrier := &concurrentSetupCount{Store: store}
 	barrier.arrived.Add(2)
-	c.store = barrier
+	c.admin.store = barrier
+	c.admin.initialization = accounts.NewInitialization(barrier, hashPassword)
 	codes := make(chan int, 2)
 	for _, name := range []string{"admin-a", "admin-b"} {
 		go func(name string) {
 			rec := httptest.NewRecorder()
-			c.setupAdmin(rec, httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"username":"`+name+`","password":"password1"}`)))
+			c.admin.setupAdmin(rec, httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"username":"`+name+`","password":"password1"}`)))
 			codes <- rec.Code
 		}(name)
 	}
@@ -53,9 +54,9 @@ func (failedSetupSession) CreateSession(context.Context, database.Session) error
 }
 func TestSetupSessionFailurePreservesCommittedAccountAndExactUsername(t *testing.T) {
 	c, store, _, _ := newTestController(t)
-	c.store = failedSetupSession{store}
+	c.admin.store = failedSetupSession{store}
 	rec := httptest.NewRecorder()
-	c.setupAdmin(rec, httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"username":" admin ","password":"password1"}`)))
+	c.admin.setupAdmin(rec, httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"username":" admin ","password":"password1"}`)))
 	var body struct {
 		Committed bool `json:"account_committed"`
 	}
@@ -68,9 +69,9 @@ func TestSetupSessionFailurePreservesCommittedAccountAndExactUsername(t *testing
 	if _, err := store.GetUserByUsername(context.Background(), " admin "); err != nil {
 		t.Fatal(err)
 	}
-	c.store = store
+	c.admin.store = store
 	login := httptest.NewRecorder()
-	c.login(login, httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"username":" admin ","password":"password1"}`)))
+	c.admin.login(login, httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"username":" admin ","password":"password1"}`)))
 	if login.Code != 200 {
 		t.Fatalf("login=%d %s", login.Code, login.Body.String())
 	}

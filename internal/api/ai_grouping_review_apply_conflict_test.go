@@ -41,7 +41,7 @@ type applyAIGroupingCollectionResponse struct {
 }
 
 // seedAIGroupingReviewWithCollections 建一条待应用的审核，候选合集按 names 顺序各挂一个系列。
-func seedAIGroupingReviewWithCollections(t *testing.T, names ...string) (*Controller, database.Store, database.AiGroupingReview, []database.AiGroupingReviewCollection) {
+func seedAIGroupingReviewWithCollections(t *testing.T, names ...string) (*apiFixture, database.Store, database.AiGroupingReview, []database.AiGroupingReviewCollection) {
 	t.Helper()
 
 	controller, store, lib, seriesA, seriesB := seedAIGroupingReviewFixture(t)
@@ -86,24 +86,24 @@ func TestApplyAIGroupingReviewRejectsPreemptedApply(t *testing.T) {
 	cases := []struct {
 		name string
 		// act 用被抢先过的 store 发出一次应用请求，返回响应。
-		act func(t *testing.T, controller *Controller, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) *httptest.ResponseRecorder
+		act func(t *testing.T, controller *apiFixture, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) *httptest.ResponseRecorder
 	}{
 		{
 			name: "单条候选合集应用",
-			act: func(t *testing.T, controller *Controller, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) *httptest.ResponseRecorder {
+			act: func(t *testing.T, controller *apiFixture, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) *httptest.ResponseRecorder {
 				req := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 				req = withRouteParam(req, "collectionId", strconv.FormatInt(collection.ID, 10))
 				rec := httptest.NewRecorder()
-				controller.applyAIGroupingReviewCollection(rec, req)
+				controller.organizationHTTP.applyAIGroupingReviewCollection(rec, req)
 				return rec
 			},
 		},
 		{
 			name: "整条审核应用",
-			act: func(t *testing.T, controller *Controller, review database.AiGroupingReview, _ database.AiGroupingReviewCollection) *httptest.ResponseRecorder {
+			act: func(t *testing.T, controller *apiFixture, review database.AiGroupingReview, _ database.AiGroupingReviewCollection) *httptest.ResponseRecorder {
 				req := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 				rec := httptest.NewRecorder()
-				controller.applyAIGroupingReview(rec, req)
+				controller.organizationHTTP.applyAIGroupingReview(rec, req)
 				return rec
 			},
 		},
@@ -172,7 +172,7 @@ func TestApplyAIGroupingReviewCollectionReportsCreatedID(t *testing.T) {
 				req := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 				req = withRouteParam(req, "collectionId", strconv.FormatInt(collection.ID, 10))
 				rec := httptest.NewRecorder()
-				controller.applyAIGroupingReviewCollection(rec, req)
+				controller.organizationHTTP.applyAIGroupingReviewCollection(rec, req)
 				if rec.Code != http.StatusOK {
 					t.Fatalf("第 %d 条应用状态码 = %d body=%s", i+1, rec.Code, rec.Body.String())
 				}

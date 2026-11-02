@@ -1,14 +1,10 @@
 package api
 
 import (
-	"context"
 	"net/http"
 )
 
 // RebuildFranchiseCollections synchronizes relation-derived collections through the organizing use case.
-func (c *Controller) RebuildFranchiseCollections(ctx context.Context) error {
-	return c.relations.Rebuild(ctx)
-}
 func (c *organizationHTTP) rebuildFranchiseCollectionsHandler(w http.ResponseWriter, r *http.Request) {
 	if err := c.relations.RetryFranchiseRepair(r.Context()); err != nil {
 		c.publish("refresh")

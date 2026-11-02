@@ -24,12 +24,12 @@ func TestProtocolReaderQueriesRejectInvalidSubject(t *testing.T) {
 		target, param string
 		id            int64
 	}{
-		{"opds books", c.opdsSeriesBooks, "/", "seriesId", series.ID},
-		{"mihon books", c.mihonSeriesBooks, "/", "seriesId", series.ID},
-		{"opds continue", c.opdsContinueReading, "/", "", 0},
-		{"mihon continue", c.mihonContinueReading, "/", "", 0},
-		{"mihon series", c.mihonSeries, "/?libraryId=" + strconv.FormatInt(lib.ID, 10), "", 0},
-		{"mihon search", c.mihonSeries, "/?q=Series", "", 0},
+		{"opds books", c.reader.opdsSeriesBooks, "/", "seriesId", series.ID},
+		{"mihon books", c.reader.mihonSeriesBooks, "/", "seriesId", series.ID},
+		{"opds continue", c.reader.opdsContinueReading, "/", "", 0},
+		{"mihon continue", c.reader.mihonContinueReading, "/", "", 0},
+		{"mihon series", c.reader.mihonSeries, "/?libraryId=" + strconv.FormatInt(lib.ID, 10), "", 0},
+		{"mihon search", c.reader.mihonSeries, "/?q=Series", "", 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -81,7 +81,7 @@ func TestProtocolsPreserveReaderIsolationAnonymousProgressAndPagedLinks(t *testi
 				return req
 			}
 			booksRec := httptest.NewRecorder()
-			c.mihonSeriesBooks(booksRec, request("/", "seriesId", series.ID))
+			c.reader.mihonSeriesBooks(booksRec, request("/", "seriesId", series.ID))
 			var books []MihonBookResponse
 			if err := json.Unmarshal(booksRec.Body.Bytes(), &books); err != nil {
 				t.Fatal(err)
@@ -91,7 +91,7 @@ func TestProtocolsPreserveReaderIsolationAnonymousProgressAndPagedLinks(t *testi
 			}
 			for page := 1; page <= 2; page++ {
 				rec := httptest.NewRecorder()
-				c.opdsSeriesBooks(rec, request("/?limit=1&page="+strconv.Itoa(page), "seriesId", series.ID))
+				c.reader.opdsSeriesBooks(rec, request("/?limit=1&page="+strconv.Itoa(page), "seriesId", series.ID))
 				var feed OPDSFeed
 				if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
 					t.Fatal(err)
@@ -115,7 +115,7 @@ func TestProtocolsPreserveReaderIsolationAnonymousProgressAndPagedLinks(t *testi
 				}
 			}
 			recentRec := httptest.NewRecorder()
-			c.mihonContinueReading(recentRec, request("/?limit=1", "", 0))
+			c.reader.mihonContinueReading(recentRec, request("/?limit=1", "", 0))
 			var recent []MihonContinueItemResponse
 			if err := json.Unmarshal(recentRec.Body.Bytes(), &recent); err != nil {
 				t.Fatal(err)

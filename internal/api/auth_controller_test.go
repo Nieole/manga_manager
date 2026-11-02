@@ -17,7 +17,7 @@ import (
 )
 
 // authTestServer 起一个真实路由的测试服务器。
-func authTestServer(t *testing.T) (*Controller, *httptest.Server) {
+func authTestServer(t *testing.T) (*apiFixture, *httptest.Server) {
 	t.Helper()
 	c, _, _, _ := newTestController(t)
 	r := chi.NewRouter()

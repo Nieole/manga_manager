@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"manga-manager/internal/seriescontext"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -18,6 +19,8 @@ func TestFranchiseFactCoverageUsesMetadataHTTPAndProposalUseCases(t *testing.T) 
 	c, store, _, _ := newTestController(t)
 	_, ids := seedFranchiseSeries(t, store, 2)
 	c.relations = organize.NewRelations(store, func(func()) {})
+	c.organizationHTTP.relations = c.relations
+	c.reader.context = seriescontext.New(store, c.relations, c.proposals, c.taskEngine.engine)
 	ctx := context.Background()
 	if _, err := c.relations.Create(ctx, ids[0], ids[1], "sequel"); err != nil {
 		t.Fatal(err)
@@ -48,7 +51,7 @@ func TestFranchiseFactCoverageUsesMetadataHTTPAndProposalUseCases(t *testing.T) 
 		t.Fatalf("proposal=%+v %v", queued, err)
 	}
 	rec := httptest.NewRecorder()
-	c.applyMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/api/metadata/reviews/x/apply", nil, "reviewId", strconv.FormatInt(queued.Proposal.ID, 10)))
+	c.organizationHTTP.applyMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/api/metadata/reviews/x/apply", nil, "reviewId", strconv.FormatInt(queued.Proposal.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("proposal HTTP%d %s", rec.Code, rec.Body.String())
 	}
@@ -70,6 +73,8 @@ func TestLibraryDeletionHTTPCascadesToDurableFranchiseRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.relations = organize.NewRelations(store, func(func()) {})
+	c.organizationHTTP.relations = c.relations
+	c.reader.context = seriescontext.New(store, c.relations, c.proposals, c.taskEngine.engine)
 	for _, pair := range [][2]int64{{ids[0], ids[1]}, {ids[1], ids[2]}} {
 		if _, err := c.relations.Create(ctx, pair[0], pair[1], "sequel"); err != nil {
 			t.Fatal(err)
@@ -83,7 +88,7 @@ func TestLibraryDeletionHTTPCascadesToDurableFranchiseRepair(t *testing.T) {
 		t.Fatalf("before=%+v", before)
 	}
 	rec := httptest.NewRecorder()
-	c.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(other.ID, 10)))
+	c.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(other.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete HTTP%d %s", rec.Code, rec.Body.String())
 	}

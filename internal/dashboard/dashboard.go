@@ -27,8 +27,7 @@ type cachedVolatileStats struct {
 	expiresAt time.Time
 }
 
-// statsCache 是纯缓存层，不持有 store：加载时由调用方传入当前 store。这样 Controller 是运行时 store 的
-// 唯一持有者，避免「换掉 Controller.store 但缓存仍查旧 store」的双引用隐患（也让白盒测试替换 store 生效）。
+// Service caches statistics without retaining persistence; callers supply narrow queries when loading.
 type Service struct {
 	structuralMu    sync.RWMutex
 	structuralCache *cachedStructuralStats

@@ -86,7 +86,7 @@ func TestSeriesMetadataSourcesComposeWithoutChangingIdentity(t *testing.T) {
 	assertContent("Manual", "Manual summary", "", []string{"Manual", "Shared"}, []string{"Manual Author"})
 	assertChanged()
 	rec := httptest.NewRecorder()
-	c.bulkEditSeries(rec, httptest.NewRequest(http.MethodPost, "/api/series/bulk-edit", bytes.NewBufferString(fmt.Sprintf(`{"series_ids":[%d],"add_tags":["Bulk"],"remove_tags":["Shared"],"status":"completed"}`, series.ID))))
+	c.organizationHTTP.bulkEditSeries(rec, httptest.NewRequest(http.MethodPost, "/api/series/bulk-edit", bytes.NewBufferString(fmt.Sprintf(`{"series_ids":[%d],"add_tags":["Bulk"],"remove_tags":["Shared"],"status":"completed"}`, series.ID))))
 	if rec.Code != 200 {
 		t.Fatalf("bulk: %d %s", rec.Code, rec.Body.String())
 	}
@@ -183,9 +183,9 @@ func TestGlobalTagMaintenanceInvalidatesMetadataFingerprint(t *testing.T) {
 		id      int64
 		body    string
 	}{
-		{c.renameTag, ids["Source"], `{"name":"Renamed"}`},
-		{c.mergeTag, ids["Source"], fmt.Sprintf(`{"target_id":%d}`, ids["Target"])},
-		{c.deleteTag, ids["Target"], ""},
+		{c.catalogue.renameTag, ids["Source"], `{"name":"Renamed"}`},
+		{c.catalogue.mergeTag, ids["Source"], fmt.Sprintf(`{"target_id":%d}`, ids["Target"])},
+		{c.catalogue.deleteTag, ids["Target"], ""},
 	} {
 		before := seriesMetadataVersionOf(t, c, series.ID)
 		rec := httptest.NewRecorder()

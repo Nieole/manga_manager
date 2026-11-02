@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"manga-manager/internal/config"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,17 +16,16 @@ import (
 	"testing"
 	"time"
 
-	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/task"
 )
 
 // runEventsOf 走端点取一条运行的事件流与阶段时间线。
-func runEventsOf(t *testing.T, c *Controller, runID int64) RunEventsResponse {
+func runEventsOf(t *testing.T, c *apiFixture, runID int64) RunEventsResponse {
 	t.Helper()
 	req := requestWithRouteParam(http.MethodGet, "/api/system/runs/1/events", nil, "runID", strconv.FormatInt(runID, 10))
 	rec := httptest.NewRecorder()
-	c.getRunEvents(rec, req)
+	c.families.runs.getRunEvents(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("取事件流返回 %d，想要 200（body=%s）", rec.Code, rec.Body.String())
 	}
@@ -78,7 +78,7 @@ func TestScanWithABrokenArchiveListsTheFileAndWhy(t *testing.T) {
 
 	// 任务体照常跑在后台再等它收尾，而不是换成同步执行版：这次扫描途中会自己排出一批封面，
 	// 而那一批要另起一条运行来跑——同步版会让扫描在等封面、封面在等扫描收工。
-	launched, err := controller.startLibraryScanRun(lib, true, task.TriggerManual)
+	launched, err := controller.families.library.startLibraryScanRun(lib, true, task.TriggerManual)
 	if err != nil {
 		t.Fatalf("发起扫描失败: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestRunEventsGiveAPhaseTimeline(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	engine, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	engine.now = clock.Now
-	controller := &Controller{taskEngine: engine}
+	controller := &apiFixture{Host: &Host{families: httpFamilies{runs: &runsHTTP{taskEngine: engine, currentConfig: func() config.Config { return config.Config{} }}}}, taskEngine: engine}
 
 	handle := seedTask(t, engine, taskSeed{
 		Key: "scan_library_7", Identity: libraryTask("scan_library", 7, variantSole), CanPause: true, CanCancel: true,
@@ -191,7 +191,7 @@ func TestRunEventsEndpointContract(t *testing.T) {
 	t.Run("运行不存在", func(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/system/runs/4242/events", nil, "runID", "4242")
 		rec := httptest.NewRecorder()
-		controller.getRunEvents(rec, req)
+		controller.families.runs.getRunEvents(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404（body=%s）", rec.Code, rec.Body.String())
 		}
@@ -200,7 +200,7 @@ func TestRunEventsEndpointContract(t *testing.T) {
 	t.Run("路径参数不是运行 id", func(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/system/runs//events", nil, "runID", "")
 		rec := httptest.NewRecorder()
-		controller.getRunEvents(rec, req)
+		controller.families.runs.getRunEvents(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400（body=%s）", rec.Code, rec.Body.String())
 		}
@@ -214,7 +214,7 @@ func TestRunEventsEndpointContract(t *testing.T) {
 func TestOmittedFailuresAnswerWhileTheRunIsStillGoing(t *testing.T) {
 	const overflow = 9
 	engine, _ := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
-	controller := &Controller{taskEngine: engine}
+	controller := &apiFixture{Host: &Host{families: httpFamilies{runs: &runsHTTP{taskEngine: engine, currentConfig: func() config.Config { return config.Config{} }}}}, taskEngine: engine}
 	handle := seedTask(t, engine, taskSeed{
 		Key: "scan_library_7", Identity: libraryTask("scan_library", 7, variantSole), CanPause: true, CanCancel: true,
 	})

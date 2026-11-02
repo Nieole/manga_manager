@@ -16,7 +16,7 @@ import (
 )
 
 // seedTaggedSmartCollection 造一个带 n 个同标签系列的资料库，并返回筛选规则 ID。
-func seedTaggedSmartCollection(t *testing.T, n int, pageSize int) (*Controller, int64) {
+func seedTaggedSmartCollection(t *testing.T, n int, pageSize int) (*apiFixture, int64) {
 	t.Helper()
 	controller, store, _, rootDir := newTestController(t)
 	ctx := context.Background()
@@ -54,11 +54,11 @@ func seedTaggedSmartCollection(t *testing.T, n int, pageSize int) (*Controller, 
 	return controller, filterID
 }
 
-func fetchSmartCollectionPage(t *testing.T, controller *Controller, filterID int64, query string) SmartCollectionSeriesResponse {
+func fetchSmartCollectionPage(t *testing.T, controller *apiFixture, filterID int64, query string) SmartCollectionSeriesResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/1/series"+query, nil, "filterId", strconv.FormatInt(filterID, 10))
-	controller.getSmartCollectionSeries(rec, req)
+	controller.organizationHTTP.getSmartCollectionSeries(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected smart collection series 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -131,7 +131,7 @@ func TestSmartCollectionSeriesPagesBeyondConfiguredPageSize(t *testing.T) {
 func TestSmartCollectionProtocolsKeepTheirPagingLimits(t *testing.T) {
 	controller, id := seedTaggedSmartCollection(t, 121, 30)
 	rec := httptest.NewRecorder()
-	controller.opdsSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1?limit=120", nil, "filterId", strconv.FormatInt(id, 10)))
+	controller.reader.opdsSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1?limit=120", nil, "filterId", strconv.FormatInt(id, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("OPDS status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -144,7 +144,7 @@ func TestSmartCollectionProtocolsKeepTheirPagingLimits(t *testing.T) {
 		t.Fatalf("OPDS first page members=%d want 120", len(feed.Entries))
 	}
 	rec = httptest.NewRecorder()
-	controller.opdsSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1?limit=120&page=2", nil, "filterId", strconv.FormatInt(id, 10)))
+	controller.reader.opdsSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1?limit=120&page=2", nil, "filterId", strconv.FormatInt(id, 10)))
 	feed = OPDSFeed{}
 	if err := xml.Unmarshal(rec.Body.Bytes(), &feed); err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestSmartCollectionProtocolsKeepTheirPagingLimits(t *testing.T) {
 		t.Fatalf("OPDS second page members=%d want 1", len(feed.Entries))
 	}
 	rec = httptest.NewRecorder()
-	controller.mihonSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series?limit=120", nil, "filterId", strconv.FormatInt(id, 10)))
+	controller.reader.mihonSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series?limit=120", nil, "filterId", strconv.FormatInt(id, 10)))
 	var page MihonSeriesPageResponse
 	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestSmartCollectionProtocolsKeepTheirPagingLimits(t *testing.T) {
 		t.Fatalf("Mihon first page=%+v", page)
 	}
 	rec = httptest.NewRecorder()
-	controller.mihonSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series?limit=120&page=2", nil, "filterId", strconv.FormatInt(id, 10)))
+	controller.reader.mihonSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series?limit=120&page=2", nil, "filterId", strconv.FormatInt(id, 10)))
 	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatal(err)
 	}

@@ -28,7 +28,7 @@ func TestRelocationCommitPreservesIdentityAndReadsNewLocation(t *testing.T) {
 	read := func() {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		c.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+		c.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), png1x1) {
 			t.Fatalf("read same book: %d %s", rec.Code, rec.Body.String())
 		}
@@ -55,7 +55,7 @@ func TestRelocationCommitPreservesIdentityAndReadsNewLocation(t *testing.T) {
 		t.Fatalf("preview: %+v", plan)
 	}
 	rec := httptest.NewRecorder()
-	c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
+	c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("commit: %d %s", rec.Code, rec.Body.String())
 	}
@@ -71,7 +71,7 @@ func TestRelocationCommitPreservesIdentityAndReadsNewLocation(t *testing.T) {
 		default:
 		}
 		rec = httptest.NewRecorder()
-		c.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/api/relocation-operations/1", nil, "operationId", strconv.FormatInt(result.ID, 10)))
+		c.families.relocation.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/api/relocation-operations/1", nil, "operationId", strconv.FormatInt(result.ID, 10)))
 		if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("get operation: %d %s %v", rec.Code, rec.Body.String(), err)
 		}
@@ -127,7 +127,7 @@ func TestRelocationCommittedEffectsFailureBlocksUntilRealStartupRecovery(t *test
 		t.Fatalf("truthful result: %+v", op)
 	}
 	page := httptest.NewRecorder()
-	c.servePageImage(page, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	c.media.servePageImage(page, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if page.Code != http.StatusServiceUnavailable {
 		t.Fatalf("incomplete migration reads: %d", page.Code)
 	}
@@ -138,7 +138,7 @@ func TestRelocationCommittedEffectsFailureBlocksUntilRealStartupRecovery(t *test
 		t.Fatalf("startup did not recover: %+v", op)
 	}
 	page = httptest.NewRecorder()
-	reopened.servePageImage(page, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	reopened.media.servePageImage(page, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if page.Code != http.StatusOK || !bytes.Equal(page.Body.Bytes(), png1x1) {
 		t.Fatalf("recovered page: %d", page.Code)
 	}
@@ -173,7 +173,7 @@ func TestRelocationCommitCanCancelBeforeWriting(t *testing.T) {
 		t.Fatal("revalidation not started")
 	}
 	rec := httptest.NewRecorder()
-	c.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
+	c.families.runs.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
 	close(resume)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("cancel before commit: %d %s", rec.Code, rec.Body.String())
@@ -206,7 +206,7 @@ func TestLibraryRootEditingRequiresRelocationOnlyWhenPopulated(t *testing.T) {
 		}
 		body, _ := json.Marshal(map[string]any{"name": "unconfirmed rename", "path": target, "scan_mode": "none", "scan_interval": 60})
 		rec := httptest.NewRecorder()
-		c.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/api/libraries/1", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+		c.families.library.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/api/libraries/1", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 		got, _ := store.GetLibrary(context.Background(), lib.ID)
 		if populated {
 			if rec.Code != http.StatusConflict || !bytes.Contains(rec.Body.Bytes(), []byte("relocation_required")) || got.Path != lib.Path || got.Name != lib.Name {
@@ -284,7 +284,7 @@ func TestRelocationQueuedCancellationSurvivesPrunedHistoryAndRestart(t *testing.
 	}
 	op := submitRelocation(t, c, plan.ID)
 	rec := httptest.NewRecorder()
-	c.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
+	c.families.runs.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("queued cancel: %d %s", rec.Code, rec.Body.String())
 	}
@@ -400,7 +400,7 @@ func TestRelocationWatchRecoveryKeepsLibraryBlockedWhenTargetCannotBeWatched(t *
 		t.Fatalf("unwatched root reported complete: %+v", op)
 	}
 	rec := httptest.NewRecorder()
-	reopened.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	reopened.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("failed recovery exposed library: %d", rec.Code)
 	}
@@ -455,16 +455,16 @@ func TestRelocationBlocksNewConflictingLibraryRootsUntilEffectsFinish(t *testing
 		body, _ := json.Marshal(map[string]any{"name": "new root", "path": path, "scan_mode": "none", "scan_interval": 60})
 		rec := httptest.NewRecorder()
 		if create {
-			c.createLibrary(rec, httptest.NewRequest(http.MethodPost, "/api/libraries", bytes.NewReader(body)))
+			c.families.library.createLibrary(rec, httptest.NewRequest(http.MethodPost, "/api/libraries", bytes.NewReader(body)))
 		} else {
-			c.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/api/libraries/2", body, "libraryId", strconv.FormatInt(other.ID, 10)))
+			c.families.library.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/api/libraries/2", body, "libraryId", strconv.FormatInt(other.ID, 10)))
 		}
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("conflicting root allowed create=%v: %d %s", create, rec.Code, rec.Body.String())
 		}
 	}
 	rec := httptest.NewRecorder()
-	c.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
+	c.families.runs.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(op.RunID, 10)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("commit advertised cancellation after write: %d", rec.Code)
 	}
@@ -474,10 +474,10 @@ func TestRelocationBlocksNewConflictingLibraryRootsUntilEffectsFinish(t *testing
 	}
 }
 
-func submitRelocation(t *testing.T, c *Controller, planID int64) RelocationOperation {
+func submitRelocation(t *testing.T, c *apiFixture, planID int64) RelocationOperation {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(planID, 10)))
+	c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(planID, 10)))
 	var op RelocationOperation
 	if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("submit: %d %s %v", rec.Code, rec.Body.String(), err)
@@ -519,7 +519,7 @@ func TestRelocationCommitRejectsChangedConfirmationFacts(t *testing.T) {
 				}
 			}
 			rec := httptest.NewRecorder()
-			c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
+			c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
 			if rec.Code != http.StatusAccepted {
 				t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
 			}
@@ -540,14 +540,14 @@ func TestRelocationCommitRejectsChangedConfirmationFacts(t *testing.T) {
 	}
 }
 
-func awaitRelocationOperation(t *testing.T, c *Controller, id int64) RelocationOperation {
+func awaitRelocationOperation(t *testing.T, c *apiFixture, id int64) RelocationOperation {
 	t.Helper()
 	deadline := time.After(10 * time.Second)
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 	for {
 		rec := httptest.NewRecorder()
-		c.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/api/relocation-operations/1", nil, "operationId", strconv.FormatInt(id, 10)))
+		c.families.relocation.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/api/relocation-operations/1", nil, "operationId", strconv.FormatInt(id, 10)))
 		var op RelocationOperation
 		if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("result: %d %s %v", rec.Code, rec.Body.String(), err)

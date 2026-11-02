@@ -12,27 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// The approved seam is the bound Host's real HTTP consumer. Compatibility
-// feature references are retired after binding; auth and push remain shared.
-func TestHostLibraryRoutesDoNotUseCompatibilityCapabilities(t *testing.T) {
+// The bound Host serves library consumers through the shared admission queue.
+func TestHostLibraryRoutesUseSharedAdmission(t *testing.T) {
 	c, store, _, root := newTestController(t)
 	lib, series, book := seedBookFixture(t, store, root, "Library", "Series", "book.cbz", 10)
-	o := c.organizationHTTP
-	h := (&Transport{legacy: c}).Bind(HostDependencies{
-		Reading:        ReadingDependencies{Capabilities: NewReaderCapabilities(store, c.relations, c.proposals, c.taskEngine.engine, func() { c.stats.InvalidateVolatile("reading") }), Content: c.content, ImageCache: c.imageCache, Statistics: c.stats, Recommendations: c.recommendations, KOReader: c.koreader},
-		Organization:   OrganizationDependencies{Relations: o.relations, Proposals: o.proposals, Collections: o.collections, Shelves: o.shelves, ReadingLists: o.lists, Grouping: o.grouping, Metadata: o.metadata, Selection: o.selection, GroupingQueries: o.groupingQueries, Series: o.series, StaticCollections: o.staticCollections, UnmatchedCount: o.unmatchedCount, KOReaderEnabled: o.koreaderEnabled, Publish: o.publish},
-		Administration: AdministrationDependencies{Configuration: c.configuration, Store: store, Manager: c.config, KOReader: c.koreader},
-		Libraries:      LibraryDependencies{Removal: store, Initials: store, Intelligence: c.intelligence, Queries: store, ComicInfo: store, Management: c.libraryManagement, Scans: c.scans, Maintenance: c.maintenance, Moves: c.moves, Disk: c.diskJobs, External: c.external, Relocation: c.relocation, Runs: RunDependencies{Engine: c.taskEngine.engine, Runs: c.taskEngine.runs, Store: c.taskEngine.runStore, Registry: c.taskEngine.registry}},
-		Lifecycle:      c.process,
-	})
-	projection, external, relocation := c.taskEngine, c.external, c.relocation
-	defer func() { c.taskEngine, c.external, c.relocation = projection, external, relocation }()
-	management, scans, maintenance, moves, disk := c.libraryManagement, c.scans, c.maintenance, c.moves, c.diskJobs
-	defer func() {
-		c.libraryManagement, c.scans, c.maintenance, c.moves, c.diskJobs = management, scans, maintenance, moves, disk
-	}()
-	c.libraryManagement, c.scans, c.maintenance, c.moves, c.diskJobs = nil, nil, nil, nil, nil
-	c.taskEngine, c.external, c.relocation = nil, nil, nil
+	h := c.Host
 	_ = mkTestUser(t, store, "admin", database.RoleAdmin)
 	router := chi.NewRouter()
 	h.SetupRoutes(router)

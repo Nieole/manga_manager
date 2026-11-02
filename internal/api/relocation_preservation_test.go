@@ -94,7 +94,7 @@ func assertRelocationPreservesAssociations(t *testing.T, repair bool) {
 	readPage := func() {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		c.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+		c.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), png1x1) {
 			t.Fatalf("same book page: %d %s", rec.Code, rec.Body.String())
 		}
@@ -185,7 +185,7 @@ func assertRelocationPreservesAssociations(t *testing.T, repair bool) {
 		t.Fatalf("preview: %+v", plan)
 	}
 	rec := httptest.NewRecorder()
-	c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
+	c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
 	var op RelocationOperation
 	if err = json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("confirm: %d %s (%v)", rec.Code, rec.Body.String(), err)
@@ -201,7 +201,7 @@ func assertRelocationPreservesAssociations(t *testing.T, repair bool) {
 		default:
 		}
 		rec = httptest.NewRecorder()
-		c.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/api/relocation-operations/1", nil, "operationId", strconv.FormatInt(op.ID, 10)))
+		c.families.relocation.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/api/relocation-operations/1", nil, "operationId", strconv.FormatInt(op.ID, 10)))
 		if err = json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("result: %d %s (%v)", rec.Code, rec.Body.String(), err)
 		}

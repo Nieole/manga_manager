@@ -67,7 +67,7 @@ func (s *externalTaskStore) ListExternalTransferBooksBySeries(context.Context, [
 // externalRig 把两个外部库任务体需要的东西凑齐：引擎（仍经它唯一的 seam 构造）、外部库会话
 // 管理器，以及资料库与外部库两个真实目录——传输任务真的在拷文件。
 type externalRig struct {
-	c           *Controller
+	c           *apiFixture
 	snapshots   func() []RunSnapshot
 	libraryID   int64
 	externalDir string
@@ -107,7 +107,7 @@ func newExternalRig(t *testing.T, books int, now func() time.Time, run func(func
 	engine.now = now
 
 	rig := &externalRig{
-		c: &Controller{
+		c: &apiFixture{Host: &Host{},
 			taskEngine: engine,
 			store:      store,
 			external:   external.NewManager(store, time.Hour),

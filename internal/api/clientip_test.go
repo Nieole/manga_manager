@@ -11,11 +11,11 @@ import (
 	"manga-manager/internal/config"
 )
 
-func newClientIPController(t *testing.T, trusted ...string) *Controller {
+func newClientIPController(t *testing.T, trusted ...string) *administrationHTTP {
 	t.Helper()
 	cfg := &config.Config{}
 	cfg.Server.TrustedProxies = trusted
-	return &Controller{config: config.NewManager(cfg)}
+	return &administrationHTTP{config: config.NewManager(cfg)}
 }
 
 // TestClientIPIgnoresForwardedHeadersFromUntrustedPeer 是本批次的核心断言。

@@ -15,7 +15,7 @@ func TestLibraryCreateHTTPSeparatesSavedFactsAndInitialScanAdmission(t *testing.
 	c, store, _, _ := newTestController(t)
 	body, _ := json.Marshal(CreateLibraryRequest{Name: "Managed", Path: t.TempDir(), ScanMode: "none", ScanFormats: "cbz"})
 	rec := httptest.NewRecorder()
-	c.createLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries", body, "", ""))
+	c.families.library.createLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries", body, "", ""))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("HTTP%d %s", rec.Code, rec.Body.String())
 	}
@@ -45,7 +45,7 @@ func TestLibraryUpdateHTTPReportsActualPathChangeOccupiers(t *testing.T) {
 	defer release()
 	body, _ := json.Marshal(UpdateLibraryRequest{Name: "Moved", Path: t.TempDir(), ScanMode: "none", ScanFormats: "cbz"})
 	rec := httptest.NewRecorder()
-	c.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/api/libraries/x", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/api/libraries/x", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var result struct {
 		Code      string `json:"code"`
 		Conflicts []any  `json:"conflicts"`

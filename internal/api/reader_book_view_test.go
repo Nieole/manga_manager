@@ -21,10 +21,10 @@ func TestBookReaderEndpointsRejectInvalidSubject(t *testing.T) {
 		param   string
 		id      int64
 	}{
-		{"detail", c.getBookInfo, "bookId", book.ID},
-		{"next", c.getNextBook, "bookId", book.ID},
-		{"previous", c.getPrevBook, "bookId", book.ID},
-		{"series", c.getBooksBySeries, "seriesId", series.ID},
+		{"detail", c.reader.getBookInfo, "bookId", book.ID},
+		{"next", c.reader.getNextBook, "bookId", book.ID},
+		{"previous", c.reader.getPrevBook, "bookId", book.ID},
+		{"series", c.reader.getBooksBySeries, "seriesId", series.ID},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := withUserContext(requestWithRouteParam(http.MethodGet, "/", nil, test.param, strconv.FormatInt(test.id, 10)), database.User{ID: -1})
@@ -45,7 +45,7 @@ func TestBookInfoPreservesFlatCompatibilityContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	c.getBookInfo(rec, requestWithRouteParam(http.MethodGet, "/", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	c.reader.getBookInfo(rec, requestWithRouteParam(http.MethodGet, "/", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("detail=%d %s", rec.Code, rec.Body.String())
 	}

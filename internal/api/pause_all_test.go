@@ -27,10 +27,10 @@ func bulkControl(t *testing.T, handler http.HandlerFunc, path, countField string
 }
 
 // liveFrame 取实况帧。
-func liveFrame(t *testing.T, controller *Controller) RunLive {
+func liveFrame(t *testing.T, controller *apiFixture) RunLive {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.getTaskCenterLive(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
+	controller.families.runs.getTaskCenterLive(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("实况接口的状态码为 %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -58,7 +58,7 @@ func TestPauseAllTurnsRunningIntoPaused(t *testing.T) {
 		t.Fatal("一条都没暂停时实况帧就说有运行被暂停了")
 	}
 
-	paused := bulkControl(t, controller.pauseAllTasks, "/api/system/tasks/pause-all", "paused")
+	paused := bulkControl(t, controller.families.runs.pauseAllTasks, "/api/system/tasks/pause-all", "paused")
 	if paused != 1 {
 		t.Fatalf("按下的条数为 %d, want 1（不可暂停的那条不受影响）", paused)
 	}
@@ -73,7 +73,7 @@ func TestPauseAllTurnsRunningIntoPaused(t *testing.T) {
 		t.Fatal("有运行被暂停，实况帧的暂停字段却说没有")
 	}
 
-	resumed := bulkControl(t, controller.resumeAllTasks, "/api/system/tasks/resume-all", "resumed")
+	resumed := bulkControl(t, controller.families.runs.resumeAllTasks, "/api/system/tasks/resume-all", "resumed")
 	if resumed != 1 {
 		t.Fatalf("放行的条数为 %d, want 1", resumed)
 	}
@@ -90,10 +90,10 @@ func TestPauseAllTurnsRunningIntoPaused(t *testing.T) {
 func TestPauseAllOnAnIdleSystemIsNotAnError(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
-	if paused := bulkControl(t, controller.pauseAllTasks, "/api/system/tasks/pause-all", "paused"); paused != 0 {
+	if paused := bulkControl(t, controller.families.runs.pauseAllTasks, "/api/system/tasks/pause-all", "paused"); paused != 0 {
 		t.Fatalf("空系统上按下的条数为 %d, want 0", paused)
 	}
-	if resumed := bulkControl(t, controller.resumeAllTasks, "/api/system/tasks/resume-all", "resumed"); resumed != 0 {
+	if resumed := bulkControl(t, controller.families.runs.resumeAllTasks, "/api/system/tasks/resume-all", "resumed"); resumed != 0 {
 		t.Fatalf("空系统上放行的条数为 %d, want 0", resumed)
 	}
 }
@@ -114,7 +114,7 @@ func TestPauseAllReportsWhoPressedIt(t *testing.T) {
 	if err := pauseByKey(controller.taskEngine, singleKey); err != nil {
 		t.Fatalf("单条暂停失败: %v", err)
 	}
-	bulkControl(t, controller.pauseAllTasks, "/api/system/tasks/pause-all", "paused")
+	bulkControl(t, controller.families.runs.pauseAllTasks, "/api/system/tasks/pause-all", "paused")
 
 	if got := currentTask(t, controller.taskEngine, bulkKey).PauseReason; got != "pause_all" {
 		t.Fatalf("全部暂停按下的那条暂停原因为 %q, want pause_all", got)
@@ -123,7 +123,7 @@ func TestPauseAllReportsWhoPressedIt(t *testing.T) {
 		t.Fatalf("单条暂停原因为 %q, want manual", got)
 	}
 
-	bulkControl(t, controller.resumeAllTasks, "/api/system/tasks/resume-all", "resumed")
+	bulkControl(t, controller.families.runs.resumeAllTasks, "/api/system/tasks/resume-all", "resumed")
 	for _, key := range []string{bulkKey, singleKey} {
 		if got := currentTask(t, controller.taskEngine, key).PauseReason; got != "" {
 			t.Fatalf("恢复之后任务 %q 仍带着暂停原因 %q", key, got)

@@ -25,7 +25,7 @@ func TestReadingListLifecycle(t *testing.T) {
 	_, seriesB, _ := seedBookFixture(t, store, rootDir, "Library B", "Series Beta", "Beta 01.cbz", 10)
 
 	createRec := httptest.NewRecorder()
-	controller.createReadingList(createRec, httptest.NewRequest(http.MethodPost, "/api/reading-lists/", jsonBody(`{"name":"Cosmic Order","description":"main + side stories"}`)))
+	controller.organizationHTTP.createReadingList(createRec, httptest.NewRequest(http.MethodPost, "/api/reading-lists/", jsonBody(`{"name":"Cosmic Order","description":"main + side stories"}`)))
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected create 201, got %d body=%s", createRec.Code, createRec.Body.String())
 	}
@@ -38,7 +38,7 @@ func TestReadingListLifecycle(t *testing.T) {
 	}
 
 	addARec := httptest.NewRecorder()
-	controller.addReadingListItem(addARec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(seriesA.ID, 10)+`,"note":"start here"}`), "listId", strconv.FormatInt(created.ID, 10)))
+	controller.organizationHTTP.addReadingListItem(addARec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(seriesA.ID, 10)+`,"note":"start here"}`), "listId", strconv.FormatInt(created.ID, 10)))
 	if addARec.Code != http.StatusOK {
 		t.Fatalf("expected add A 200, got %d body=%s", addARec.Code, addARec.Body.String())
 	}
@@ -48,7 +48,7 @@ func TestReadingListLifecycle(t *testing.T) {
 	}
 
 	addBRec := httptest.NewRecorder()
-	controller.addReadingListItem(addBRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(seriesB.ID, 10)+`}`), "listId", strconv.FormatInt(created.ID, 10)))
+	controller.organizationHTTP.addReadingListItem(addBRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(seriesB.ID, 10)+`}`), "listId", strconv.FormatInt(created.ID, 10)))
 	if addBRec.Code != http.StatusOK {
 		t.Fatalf("expected add B 200, got %d body=%s", addBRec.Code, addBRec.Body.String())
 	}
@@ -59,13 +59,13 @@ func TestReadingListLifecycle(t *testing.T) {
 
 	reorderRec := httptest.NewRecorder()
 	reorderBody := []byte(`{"item_ids":[` + strconv.FormatInt(itemB.ID, 10) + `,` + strconv.FormatInt(itemA.ID, 10) + `]}`)
-	controller.reorderReadingListItems(reorderRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", reorderBody, "listId", strconv.FormatInt(created.ID, 10)))
+	controller.organizationHTTP.reorderReadingListItems(reorderRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", reorderBody, "listId", strconv.FormatInt(created.ID, 10)))
 	if reorderRec.Code != http.StatusOK {
 		t.Fatalf("expected reorder 200, got %d body=%s", reorderRec.Code, reorderRec.Body.String())
 	}
 
 	listItemsRec := httptest.NewRecorder()
-	controller.listReadingListItems(listItemsRec, requestWithRouteParam(http.MethodGet, "/api/reading-lists/1/items", nil, "listId", strconv.FormatInt(created.ID, 10)))
+	controller.organizationHTTP.listReadingListItems(listItemsRec, requestWithRouteParam(http.MethodGet, "/api/reading-lists/1/items", nil, "listId", strconv.FormatInt(created.ID, 10)))
 	if listItemsRec.Code != http.StatusOK {
 		t.Fatalf("expected list items 200, got %d body=%s", listItemsRec.Code, listItemsRec.Body.String())
 	}
@@ -81,7 +81,7 @@ func TestReadingListLifecycle(t *testing.T) {
 	}
 
 	removeRec := httptest.NewRecorder()
-	controller.removeReadingListItem(removeRec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
+	controller.organizationHTTP.removeReadingListItem(removeRec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
 		"listId": strconv.FormatInt(created.ID, 10),
 		"itemId": strconv.FormatInt(itemB.ID, 10),
 	}))
@@ -90,7 +90,7 @@ func TestReadingListLifecycle(t *testing.T) {
 	}
 
 	listRec := httptest.NewRecorder()
-	controller.listReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/api/reading-lists/", nil))
+	controller.organizationHTTP.listReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/api/reading-lists/", nil))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected list 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -103,7 +103,7 @@ func TestReadingListLifecycle(t *testing.T) {
 	}
 
 	deleteRec := httptest.NewRecorder()
-	controller.deleteReadingList(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/reading-lists/1", nil, "listId", strconv.FormatInt(created.ID, 10)))
+	controller.organizationHTTP.deleteReadingList(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/reading-lists/1", nil, "listId", strconv.FormatInt(created.ID, 10)))
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("expected delete 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
@@ -126,7 +126,7 @@ func TestReadingListValidation(t *testing.T) {
 
 	t.Run("create requires name", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.createReadingList(rec, httptest.NewRequest(http.MethodPost, "/api/reading-lists/", jsonBody(`{"name":" "}`)))
+		controller.organizationHTTP.createReadingList(rec, httptest.NewRequest(http.MethodPost, "/api/reading-lists/", jsonBody(`{"name":" "}`)))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected create validation 400, got %d", rec.Code)
 		}
@@ -134,7 +134,7 @@ func TestReadingListValidation(t *testing.T) {
 
 	t.Run("route ids are validated", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.listReadingListItems(rec, requestWithRouteParam(http.MethodGet, "/api/reading-lists/bad/items", nil, "listId", "bad"))
+		controller.organizationHTTP.listReadingListItems(rec, requestWithRouteParam(http.MethodGet, "/api/reading-lists/bad/items", nil, "listId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected bad list id 400, got %d", rec.Code)
 		}
@@ -142,7 +142,7 @@ func TestReadingListValidation(t *testing.T) {
 
 	t.Run("add requires existing series", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":999}`), "listId", strconv.FormatInt(list.ID, 10)))
+		controller.organizationHTTP.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":999}`), "listId", strconv.FormatInt(list.ID, 10)))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected missing series 404, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -150,12 +150,12 @@ func TestReadingListValidation(t *testing.T) {
 
 	t.Run("readding updates note instead of duplicating", func(t *testing.T) {
 		firstRec := httptest.NewRecorder()
-		controller.addReadingListItem(firstRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`,"note":"old"}`), "listId", strconv.FormatInt(list.ID, 10)))
+		controller.organizationHTTP.addReadingListItem(firstRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`,"note":"old"}`), "listId", strconv.FormatInt(list.ID, 10)))
 		if firstRec.Code != http.StatusOK {
 			t.Fatalf("expected first add 200, got %d", firstRec.Code)
 		}
 		secondRec := httptest.NewRecorder()
-		controller.addReadingListItem(secondRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`,"note":"new"}`), "listId", strconv.FormatInt(list.ID, 10)))
+		controller.organizationHTTP.addReadingListItem(secondRec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`,"note":"new"}`), "listId", strconv.FormatInt(list.ID, 10)))
 		if secondRec.Code != http.StatusOK {
 			t.Fatalf("expected second add 200, got %d", secondRec.Code)
 		}
@@ -197,7 +197,7 @@ func TestReadingListMissingTargetReturnsNotFound(t *testing.T) {
 
 	t.Run("清单不存在时新增条目返回 404 而不是外键兜底的 500", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/999999/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "listId", "999999"))
+		controller.organizationHTTP.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/999999/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "listId", "999999"))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected missing list 404, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -205,7 +205,7 @@ func TestReadingListMissingTargetReturnsNotFound(t *testing.T) {
 
 	t.Run("删除不存在的条目返回 404 而不是谎称删除成功", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/999999", nil, map[string]string{
+		controller.organizationHTTP.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/999999", nil, map[string]string{
 			"listId": strconv.FormatInt(list.ID, 10),
 			"itemId": "999999",
 		}))
@@ -216,7 +216,7 @@ func TestReadingListMissingTargetReturnsNotFound(t *testing.T) {
 
 	t.Run("删除别的清单的条目返回 404 且不误删", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
+		controller.organizationHTTP.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
 			"listId": strconv.FormatInt(list.ID, 10),
 			"itemId": strconv.FormatInt(otherItem.ID, 10),
 		}))
@@ -244,7 +244,7 @@ func TestReadingListMissingTargetReturnsNotFound(t *testing.T) {
 		before := readingListItemSortOrder(t, store, list.ID, mine.ID)
 		rec := httptest.NewRecorder()
 		body := []byte(`{"item_ids":[` + strconv.FormatInt(otherItem.ID, 10) + `,` + strconv.FormatInt(mine.ID, 10) + `]}`)
-		controller.reorderReadingListItems(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", body, "listId", strconv.FormatInt(list.ID, 10)))
+		controller.organizationHTTP.reorderReadingListItems(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", body, "listId", strconv.FormatInt(list.ID, 10)))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected foreign item 404, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -269,7 +269,7 @@ func TestReadingListNormalItemFlowStillWorks(t *testing.T) {
 	added := make([]database.ReadingListItem, 0, 3)
 	for _, series := range []database.Series{seriesA, seriesB, seriesC} {
 		rec := httptest.NewRecorder()
-		controller.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "listId", strconv.FormatInt(list.ID, 10)))
+		controller.organizationHTTP.addReadingListItem(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items", []byte(`{"series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "listId", strconv.FormatInt(list.ID, 10)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected add 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -284,7 +284,7 @@ func TestReadingListNormalItemFlowStillWorks(t *testing.T) {
 		untouched := readingListItemSortOrder(t, store, list.ID, added[2].ID)
 		rec := httptest.NewRecorder()
 		body := []byte(`{"item_ids":[` + strconv.FormatInt(added[1].ID, 10) + `,` + strconv.FormatInt(added[0].ID, 10) + `]}`)
-		controller.reorderReadingListItems(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", body, "listId", strconv.FormatInt(list.ID, 10)))
+		controller.organizationHTTP.reorderReadingListItems(rec, requestWithRouteParam(http.MethodPost, "/api/reading-lists/1/items/reorder", body, "listId", strconv.FormatInt(list.ID, 10)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected partial reorder 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -298,7 +298,7 @@ func TestReadingListNormalItemFlowStillWorks(t *testing.T) {
 
 	t.Run("删除本清单里真实存在的条目仍返回 200", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
+		controller.organizationHTTP.removeReadingListItem(rec, requestWithRouteParams(http.MethodDelete, "/api/reading-lists/1/items/1", nil, map[string]string{
 			"listId": strconv.FormatInt(list.ID, 10),
 			"itemId": strconv.FormatInt(added[0].ID, 10),
 		}))
@@ -346,7 +346,7 @@ func TestReadingListProjectsCurrentBooksWithoutAggregateSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	controller.listReadingListItems(rec, requestWithRouteParam(http.MethodGet, "/api/reading-lists/1/items", nil, "listId", strconv.FormatInt(list.ID, 10)))
+	controller.organizationHTTP.listReadingListItems(rec, requestWithRouteParam(http.MethodGet, "/api/reading-lists/1/items", nil, "listId", strconv.FormatInt(list.ID, 10)))
 	var got []readingListItemResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -356,7 +356,7 @@ func TestReadingListProjectsCurrentBooksWithoutAggregateSnapshot(t *testing.T) {
 	}
 	target := strconv.FormatInt(got[0].NextBookID, 10)
 	bookRec := httptest.NewRecorder()
-	controller.getBookInfo(bookRec, requestWithRouteParam(http.MethodGet, "/api/books/"+target, nil, "bookId", target))
+	controller.reader.getBookInfo(bookRec, requestWithRouteParam(http.MethodGet, "/api/books/"+target, nil, "bookId", target))
 	var reopened database.Book
 	if err := json.Unmarshal(bookRec.Body.Bytes(), &reopened); err != nil {
 		t.Fatal(err)
@@ -389,7 +389,7 @@ func TestReadingListProtocolsKeepIdentityOrderAndPagination(t *testing.T) {
 	}
 	id := strconv.FormatInt(list.ID, 10)
 	opds := httptest.NewRecorder()
-	controller.opdsReadingListSeries(opds, requestWithRouteParam(http.MethodGet, "/opds/v1.2/reading-lists/"+id+"?page=1&limit=1", nil, "listId", id))
+	controller.reader.opdsReadingListSeries(opds, requestWithRouteParam(http.MethodGet, "/opds/v1.2/reading-lists/"+id+"?page=1&limit=1", nil, "listId", id))
 	var feed OPDSFeed
 	if err = xml.Unmarshal(opds.Body.Bytes(), &feed); err != nil {
 		t.Fatal(err)
@@ -408,7 +408,7 @@ func TestReadingListProtocolsKeepIdentityOrderAndPagination(t *testing.T) {
 		t.Fatal("missing OPDS next page")
 	}
 	mihon := httptest.NewRecorder()
-	controller.mihonReadingListSeries(mihon, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/reading-lists/"+id+"/series?page=2&limit=1", nil, "listId", id))
+	controller.reader.mihonReadingListSeries(mihon, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/reading-lists/"+id+"/series?page=2&limit=1", nil, "listId", id))
 	var page MihonSeriesPageResponse
 	if err = json.Unmarshal(mihon.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
@@ -439,7 +439,7 @@ func TestReadingListHTTPDoesNotInheritAnotherReaderOrGlobalCompletion(t *testing
 	}
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodGet, "/api/reading-lists/1/items", nil, "listId", strconv.FormatInt(list.ID, 10))
-	controller.listReadingListItems(rec, withUserContext(req, user))
+	controller.organizationHTTP.listReadingListItems(rec, withUserContext(req, user))
 	var items []readingListItemResponse
 	if err = json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
 		t.Fatal(err)

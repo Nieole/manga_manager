@@ -27,7 +27,7 @@ const (
 
 // bruteForceRig 是一套开着 OPDS 的真实路由装配，并让转发头可信以便逐次更换来源 IP。
 type bruteForceRig struct {
-	controller *Controller
+	controller *apiFixture
 	server     *httptest.Server
 }
 

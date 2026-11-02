@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestRelocationCommitMovesExplicitPoliciesAndPreservesOtherSettings(t *testing.T) {
@@ -43,7 +44,7 @@ func TestRelocationCommitMovesExplicitPoliciesAndPreservesOtherSettings(t *testi
 	if _, err := store.CreateLibrary(context.Background(), database.CreateLibraryParams{Name: "unchanged nested", Path: filepath.Join(target, "unrelated-nested"), ScanMode: "none", ScanInterval: 60}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
@@ -53,7 +54,7 @@ func TestRelocationCommitMovesExplicitPoliciesAndPreservesOtherSettings(t *testi
 	// A completed settings save after preview must survive the policy-only patch.
 	cfg = c.currentConfig()
 	cfg.Tasks.RunSlots = 7
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	op := submitRelocation(t, c, plan.ID)
@@ -97,7 +98,7 @@ func TestRelocationPolicyDuplicateSourceKeysCannotSilentlyLoseBehavior(t *testin
 	}
 	cfg := c.currentConfig()
 	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}, {Path: lib.Path, StorageProfile: "network"}}
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
@@ -116,7 +117,7 @@ func TestRelocationPolicyRuntimeFailureRecoversThroughFreshManager(t *testing.T)
 	}
 	cfg := c.currentConfig()
 	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
@@ -127,7 +128,7 @@ func TestRelocationPolicyRuntimeFailureRecoversThroughFreshManager(t *testing.T)
 		t.Fatalf("truthful failed runtime: %+v", op)
 	}
 	page := httptest.NewRecorder()
-	c.servePageImage(page, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	c.media.servePageImage(page, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if page.Code != http.StatusServiceUnavailable {
 		t.Fatalf("mixed-state read: %d", page.Code)
 	}
@@ -142,14 +143,14 @@ func TestRelocationPolicyRuntimeFailureRecoversThroughFreshManager(t *testing.T)
 	disk.Tasks.RunSlots = 8
 	writePolicyConfig(t, c.configPath, *disk)
 	fresh := config.NewManager(disk)
-	reopened := newControllerCore(store, scanner.NewScanner(store, fresh), fresh, c.configPath, defaultControllerCacheSizes())
+	reopened := newAPIFixture(store, scanner.NewScanner(store, fresh), fresh, c.configPath, defaultControllerCacheSizes())
 	t.Cleanup(reopened.Close)
 	op = awaitRelocationOperation(t, reopened, op.ID)
 	if op.Status != "completed" {
 		t.Fatalf("fresh recovery: %+v", op)
 	}
 	page = httptest.NewRecorder()
-	reopened.servePageImage(page, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	reopened.media.servePageImage(page, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if page.Code != http.StatusOK || !bytes.Equal(page.Body.Bytes(), png1x1) {
 		t.Fatalf("recovered read: %d", page.Code)
 	}
@@ -171,7 +172,7 @@ func TestRelocationPolicySQLFailureCompensatesAndAllowsNewConfirmation(t *testin
 	}
 	cfg := c.currentConfig()
 	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
@@ -213,7 +214,7 @@ func TestRelocationPolicyPersistenceFailuresCompensateOrRemainBlocked(t *testing
 			}
 			cfg := c.currentConfig()
 			cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
-			if err := c.persistConfig(&cfg); err != nil {
+			if err := c.admin.persistConfig(&cfg); err != nil {
 				t.Fatal(err)
 			}
 			c.Close()
@@ -233,7 +234,7 @@ func TestRelocationPolicyPersistenceFailuresCompensateOrRemainBlocked(t *testing
 				return nil
 			})
 			mgr := config.NewManager(&cfg, writer)
-			current := newControllerCore(store, scanner.NewScanner(store, mgr), mgr, c.configPath, defaultControllerCacheSizes())
+			current := newAPIFixture(store, scanner.NewScanner(store, mgr), mgr, c.configPath, defaultControllerCacheSizes())
 			t.Cleanup(current.Close)
 			plan := startRelocationPreview(t, current, lib.ID, target)
 			if boundary == "compensation" {
@@ -260,7 +261,7 @@ func TestRelocationPolicyPersistenceFailuresCompensateOrRemainBlocked(t *testing
 				t.Fatal(err)
 			}
 			fresh := config.NewManager(disk)
-			reopened := newControllerCore(store, scanner.NewScanner(store, fresh), fresh, c.configPath, defaultControllerCacheSizes())
+			reopened := newAPIFixture(store, scanner.NewScanner(store, fresh), fresh, c.configPath, defaultControllerCacheSizes())
 			t.Cleanup(reopened.Close)
 			op = awaitPolicyOperation(t, reopened, op.ID)
 			if op.Status != "failed" && op.Status != "interrupted" {
@@ -273,12 +274,12 @@ func TestRelocationPolicyPersistenceFailuresCompensateOrRemainBlocked(t *testing
 	}
 }
 
-func awaitPolicyOperation(t *testing.T, c *Controller, id int64) RelocationOperation {
+func awaitPolicyOperation(t *testing.T, c *apiFixture, id int64) RelocationOperation {
 	t.Helper()
 	deadline := time.After(10 * time.Second)
 	for {
 		rec := httptest.NewRecorder()
-		c.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/operation", nil, "operationId", strconv.FormatInt(id, 10)))
+		c.families.relocation.getRelocationOperation(rec, requestWithRouteParam(http.MethodGet, "/operation", nil, "operationId", strconv.FormatInt(id, 10)))
 		var op RelocationOperation
 		if err := json.Unmarshal(rec.Body.Bytes(), &op); err != nil || rec.Code != http.StatusOK {
 			t.Fatalf("operation: %d %v", rec.Code, err)
@@ -319,7 +320,7 @@ func TestRelocationPolicyDivergentEditsStayBlockedAcrossRestartsAndHistoryPrunin
 			}
 			cfg := c.currentConfig()
 			cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
-			if err := c.persistConfig(&cfg); err != nil {
+			if err := c.admin.persistConfig(&cfg); err != nil {
 				t.Fatal(err)
 			}
 			plan := startRelocationPreview(t, c, lib.ID, target)
@@ -357,7 +358,7 @@ func TestRelocationPolicyDivergentEditsStayBlockedAcrossRestartsAndHistoryPrunin
 					t.Fatal(err)
 				}
 				mgr := config.NewManager(disk)
-				current := newControllerCore(store, scanner.NewScanner(store, mgr), mgr, c.configPath, defaultControllerCacheSizes())
+				current := newAPIFixture(store, scanner.NewScanner(store, mgr), mgr, c.configPath, defaultControllerCacheSizes())
 				result := awaitPolicyOperation(t, current, op.ID)
 				if result.Status != "paths_committed" || result.Code != "relocation_policy_recovery_conflict" {
 					t.Fatalf("divergent recovery: %+v", result)
@@ -367,7 +368,7 @@ func TestRelocationPolicyDivergentEditsStayBlockedAcrossRestartsAndHistoryPrunin
 					status int
 				}{{book.ID, http.StatusServiceUnavailable}, {otherBook.ID, http.StatusOK}} {
 					rec := httptest.NewRecorder()
-					current.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(item.id, 10), "pageNumber": "1"}))
+					current.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(item.id, 10), "pageNumber": "1"}))
 					if rec.Code != item.status {
 						t.Fatalf("scoped access: book %d status %d", item.id, rec.Code)
 					}
@@ -378,7 +379,7 @@ func TestRelocationPolicyDivergentEditsStayBlockedAcrossRestartsAndHistoryPrunin
 			after.Tasks.RunSlots = 11
 			writePolicyConfig(t, c.configPath, *after)
 			mgr := config.NewManager(after)
-			recovered := newControllerCore(store, scanner.NewScanner(store, mgr), mgr, c.configPath, defaultControllerCacheSizes())
+			recovered := newAPIFixture(store, scanner.NewScanner(store, mgr), mgr, c.configPath, defaultControllerCacheSizes())
 			t.Cleanup(recovered.Close)
 			if got := awaitPolicyOperation(t, recovered, op.ID); got.Status != "completed" {
 				t.Fatalf("resolved recovery: %+v", got)
@@ -400,7 +401,7 @@ func TestRelocationPolicySerializesBrowserSaveAndReloadThroughPublication(t *tes
 	}
 	cfg := c.currentConfig()
 	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
@@ -420,7 +421,7 @@ func TestRelocationPolicySerializesBrowserSaveAndReloadThroughPublication(t *tes
 	req := versionedConfigRequest(c, body, "/api/system/config")
 	rec := httptest.NewRecorder()
 	saveStarted, saveDone := make(chan struct{}), make(chan struct{})
-	go func() { close(saveStarted); c.updateSystemConfig(rec, req); close(saveDone) }()
+	go func() { close(saveStarted); c.admin.updateSystemConfig(rec, req); close(saveDone) }()
 	reloadDone := make(chan error, 1)
 	go func() { reloadDone <- c.config.Reload(c.configPath, runtimecfg.Apply, nil) }()
 	<-saveStarted
@@ -457,7 +458,7 @@ func TestRelocationPolicyExternalEditDuringRuntimeIsPreservedAndBlocked(t *testi
 	}
 	cfg := c.currentConfig()
 	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
@@ -490,7 +491,7 @@ func TestRelocationPolicyExternalEditDuringRuntimeIsPreservedAndBlocked(t *testi
 		t.Fatal("external file edit overwritten")
 	}
 	rec := httptest.NewRecorder()
-	c.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	c.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatal("Reload released unresolved migration")
 	}
@@ -506,7 +507,7 @@ func TestRelocationPolicyExternalEditDuringEffectsRemainsBlocked(t *testing.T) {
 	}
 	cfg := c.currentConfig()
 	cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)
@@ -527,7 +528,7 @@ func TestRelocationPolicyExternalEditDuringEffectsRemainsBlocked(t *testing.T) {
 		t.Fatalf("external edit released migration: %+v", op)
 	}
 	rec := httptest.NewRecorder()
-	c.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	c.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("mixed policy read: %d", rec.Code)
 	}
@@ -542,7 +543,7 @@ func TestRelocationZeroPolicyPreviewRejectsUnpublishedDiskPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := c.currentConfig()
-	if err := c.persistConfig(&cfg); err != nil {
+	if err := c.admin.persistConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
 	plan := startRelocationPreview(t, c, lib.ID, target)

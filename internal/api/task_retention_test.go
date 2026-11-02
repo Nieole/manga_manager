@@ -14,7 +14,7 @@ import (
 
 // newCleanupRig 造一台任务体同步执行的 Controller：清理跑完了，启动调用才返回，
 // 因此断言不必 sleep 或轮询。落盘是**真的 taskstore**，裁剪的 DELETE 打在真 SQLite 上。
-func newCleanupRig(t *testing.T) *Controller {
+func newCleanupRig(t *testing.T) *apiFixture {
 	t.Helper()
 	controller, _, _, _ := newTestController(t)
 	controller.taskEngine.runBackground = runTaskBodySynchronously
@@ -22,7 +22,7 @@ func newCleanupRig(t *testing.T) *Controller {
 }
 
 // setRetention 改这三个阈值，与经设置页保存走同一条路（换掉配置快照）。
-func setRetention(t testing.TB, c *Controller, runsPerTask, terminalDays, sampleDays int) {
+func setRetention(t testing.TB, c *apiFixture, runsPerTask, terminalDays, sampleDays int) {
 	t.Helper()
 	cfg := c.currentConfig()
 	cfg.Tasks.RetainRunsPerTask = runsPerTask

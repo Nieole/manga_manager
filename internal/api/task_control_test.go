@@ -55,9 +55,9 @@ func TestRunControlEndpointsRejectUnknownRun(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	endpoints := map[string]http.HandlerFunc{
-		"pause":  controller.pauseRun,
-		"resume": controller.resumeRun,
-		"cancel": controller.cancelRun,
+		"pause":  controller.families.runs.pauseRun,
+		"resume": controller.families.runs.resumeRun,
+		"cancel": controller.families.runs.cancelRun,
 	}
 
 	for name, handler := range endpoints {
@@ -84,7 +84,7 @@ func TestResumeRunRejectsRunningRun(t *testing.T) {
 
 	req := requestWithRouteParam(http.MethodPost, "/api/system/runs/1/resume", nil, "runID", strconv.FormatInt(runID, 10))
 	rec := httptest.NewRecorder()
-	controller.resumeRun(rec, req)
+	controller.families.runs.resumeRun(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
@@ -97,9 +97,9 @@ func TestMissingRunIDIsBadRequest(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	endpoints := map[string]http.HandlerFunc{
-		"pause":  controller.pauseRun,
-		"resume": controller.resumeRun,
-		"cancel": controller.cancelRun,
+		"pause":  controller.families.runs.pauseRun,
+		"resume": controller.families.runs.resumeRun,
+		"cancel": controller.families.runs.cancelRun,
 	}
 
 	for name, handler := range endpoints {

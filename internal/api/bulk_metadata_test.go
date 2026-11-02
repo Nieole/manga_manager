@@ -45,7 +45,7 @@ func TestBulkMetadataTransactionAndRefreshFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
-			c.bulkEditSeries(rec, httptest.NewRequest(http.MethodPost, "/api/series/bulk-edit", bytes.NewReader(body)))
+			c.organizationHTTP.bulkEditSeries(rec, httptest.NewRequest(http.MethodPost, "/api/series/bulk-edit", bytes.NewReader(body)))
 			want := http.StatusOK
 			if fail == "series_tags" {
 				want = http.StatusInternalServerError
@@ -117,7 +117,7 @@ func TestBulkMetadataRequestResults(t *testing.T) {
 		{"{", 400, ""}, {`{"series_ids":[]}`, 200, ""},
 	} {
 		rec := httptest.NewRecorder()
-		c.bulkEditSeries(rec, httptest.NewRequest(http.MethodPost, "/api/series/bulk-edit", bytes.NewBufferString(tc.body)))
+		c.organizationHTTP.bulkEditSeries(rec, httptest.NewRequest(http.MethodPost, "/api/series/bulk-edit", bytes.NewBufferString(tc.body)))
 		if rec.Code != tc.status || (tc.response != "" && rec.Body.String() != tc.response) {
 			t.Fatalf("response %d: %s", rec.Code, rec.Body.String())
 		}

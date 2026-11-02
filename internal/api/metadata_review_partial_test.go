@@ -21,7 +21,7 @@ import (
 
 // seedPartialApplyFixture 造一个「title 已有值、summary/publisher 为空」的系列，
 // 并入队一条同时提案这三个字段的提案。fill_empty 会写后两个、筛掉 title。
-func seedPartialApplyFixture(t *testing.T, controller *Controller, store database.Store, name string) (database.Series, database.MetadataReview) {
+func seedPartialApplyFixture(t *testing.T, controller *apiFixture, store database.Store, name string) (database.Series, database.MetadataReview) {
 	t.Helper()
 	ctx := context.Background()
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib-"+name, name, "book-"+name+".cbz", 10)
@@ -65,7 +65,7 @@ func TestBulkApplyReportsPartialBucket(t *testing.T) {
 
 	body := []byte(`{"review_ids":[` + strconv.FormatInt(review.ID, 10) + `],"mode":"fill_empty"}`)
 	rec := httptest.NewRecorder()
-	controller.bulkApplyMetadataReviews(rec,
+	controller.organizationHTTP.bulkApplyMetadataReviews(rec,
 		httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-apply", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
@@ -88,7 +88,7 @@ func TestSingleApplyReportsPartialOutcome(t *testing.T) {
 	lockSeriesFields(t, store, review.SeriesID, "summary")
 
 	rec := httptest.NewRecorder()
-	controller.applyMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
+	controller.organizationHTTP.applyMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
 		"reviewId", strconv.FormatInt(review.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())

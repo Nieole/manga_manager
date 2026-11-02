@@ -5,6 +5,8 @@
 package api
 
 import (
+	"manga-manager/internal/reading"
+
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -36,7 +38,7 @@ func (failingCursorStore) SearchSeriesCursor(context.Context, int64, database.Se
 	return nil, "", false, errors.New("disk on fire")
 }
 
-func seedCursorFallbackLibrary(t *testing.T) (*Controller, database.Library) {
+func seedCursorFallbackLibrary(t *testing.T) (*apiFixture, database.Library) {
 	t.Helper()
 	controller, store, _, rootDir := newTestController(t)
 	lib, _, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 10)
@@ -55,7 +57,7 @@ func seedCursorFallbackLibrary(t *testing.T) (*Controller, database.Library) {
 
 // doSeriesSearch 打一次列表请求，并把这次请求写出的日志一并收回来——降级路径的判据里
 // 有一半是「别再往运维日志里写 ERROR」。
-func doSeriesSearch(t *testing.T, controller *Controller, query string) (int, seriesSearchBody, []slog.Record) {
+func doSeriesSearch(t *testing.T, controller *apiFixture, query string) (int, seriesSearchBody, []slog.Record) {
 	t.Helper()
 	capture := &captureLogHandler{}
 	previous := slog.Default()
@@ -63,7 +65,7 @@ func doSeriesSearch(t *testing.T, controller *Controller, query string) (int, se
 	defer slog.SetDefault(previous)
 
 	rec := httptest.NewRecorder()
-	controller.searchSeriesPaged(rec, httptest.NewRequest(http.MethodGet, "/api/series/search?"+query, nil))
+	controller.reader.searchSeriesPaged(rec, httptest.NewRequest(http.MethodGet, "/api/series/search?"+query, nil))
 	var body seriesSearchBody
 	if rec.Code == http.StatusOK {
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
@@ -173,7 +175,7 @@ func TestSearchSeriesStaleCursorFallsBackToOffset(t *testing.T) {
 
 	t.Run("服务端自己出错仍然 500 并记 ERROR", func(t *testing.T) {
 		broken, brokenLib := seedCursorFallbackLibrary(t)
-		broken.store = failingCursorStore{Store: broken.store}
+		broken.reader.catalogue = reading.NewCatalogueQueries(failingCursorStore{Store: broken.store})
 		code, _, records := doSeriesSearch(t, broken,
 			"libraryId="+strconv.FormatInt(brokenLib.ID, 10)+"&limit=1&page=2&sortBy=name_asc&cursor="+url.QueryEscape(nameCursor))
 		if code != http.StatusInternalServerError {

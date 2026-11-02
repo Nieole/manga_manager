@@ -20,7 +20,7 @@ func TestCollectionAddMissingSeriesReturnsNotFoundAndKeepsBatchAtomic(t *testing
 	}
 	req := requestWithRouteParam(http.MethodPost, "/", []byte(`{"series_ids":[`+strconv.FormatInt(book.SeriesID, 10)+`,999999]}`), "collectionId", strconv.FormatInt(id, 10))
 	rec := httptest.NewRecorder()
-	c.addSeriesToCollection(rec, req)
+	c.organizationHTTP.addSeriesToCollection(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing series status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -42,7 +42,7 @@ func TestSnapshotMissingMemberReturnsNotFoundAndRollsBackCollection(t *testing.T
 	}
 	req := requestWithRouteParam(http.MethodPost, "/", []byte(`{"name":"Snapshot"}`), "filterId", strconv.FormatInt(filter.ID, 10))
 	rec := httptest.NewRecorder()
-	c.snapshotSmartCollection(rec, req)
+	c.organizationHTTP.snapshotSmartCollection(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing snapshot member status=%d body=%s", rec.Code, rec.Body.String())
 	}

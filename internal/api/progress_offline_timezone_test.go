@@ -32,13 +32,13 @@ func pinLocalZone(t *testing.T, name string, offsetSeconds int) {
 }
 
 // bulkSyncOfflineItem 按离线队列的真实报文发一条补传：updated_at 是 toISOString() 的 UTC 文本。
-func bulkSyncOfflineItem(t *testing.T, controller *Controller, user database.User, bookID, page int64, updatedAtUTC string) {
+func bulkSyncOfflineItem(t *testing.T, controller *apiFixture, user database.User, bookID, page int64, updatedAtUTC string) {
 	t.Helper()
 	body := []byte(`{"items":[{"book_id":` + strconv.FormatInt(bookID, 10) +
 		`,"page":` + strconv.FormatInt(page, 10) + `,"updated_at":"` + updatedAtUTC + `"}]}`)
 	rec := httptest.NewRecorder()
 	req := withUserContext(httptest.NewRequest(http.MethodPost, "/api/books/bulk-progress/sync", bytes.NewReader(body)), user)
-	controller.bulkSyncBookProgress(rec, req)
+	controller.reader.bulkSyncBookProgress(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("bulk sync: expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}

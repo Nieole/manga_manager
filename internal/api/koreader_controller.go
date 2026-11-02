@@ -142,7 +142,7 @@ type KOReaderDeviceConflictItem struct {
 	Suggestion    string  `json:"suggestion"`
 }
 
-func (c *Controller) SetupKOReaderRoutes(r chi.Router) {
+func (c *administrationHTTP) SetupKOReaderRoutes(r chi.Router) {
 	basePath := c.currentConfig().KOReader.BasePath
 	if strings.TrimSpace(basePath) == "" {
 		basePath = "/koreader"
@@ -671,17 +671,17 @@ func (c *maintenanceHTTP) reconcileKOReaderProgress(w http.ResponseWriter, r *ht
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.reconcile_started")})
 }
 
-func (c *Controller) koreaderHealthcheck(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) koreaderHealthcheck(w http.ResponseWriter, r *http.Request) {
 	writeKOReaderJSON(w, r, http.StatusOK, map[string]string{"state": "OK"})
 }
 
-func (c *Controller) koreaderRobots(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) koreaderRobots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("User-agent: *\nDisallow: /\n"))
 }
 
-func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) koreaderRegister(w http.ResponseWriter, r *http.Request) {
 	cfg := c.currentConfig()
 	if !cfg.KOReader.Enabled {
 		jsonError(w, http.StatusServiceUnavailable, "KOReader sync is disabled")
@@ -742,7 +742,7 @@ func (c *Controller) koreaderRegister(w http.ResponseWriter, r *http.Request) {
 	writeKOReaderJSON(w, r, http.StatusCreated, map[string]string{"username": account.Username})
 }
 
-func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
 		slog.Warn("KOReader auth request rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
@@ -769,7 +769,7 @@ func (c *Controller) koreaderAuth(w http.ResponseWriter, r *http.Request) {
 	writeKOReaderJSON(w, r, http.StatusOK, map[string]string{"state": "OK", "authorized": "OK"})
 }
 
-func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) koreaderUpdateProgress(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
 		slog.Warn("KOReader progress push rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
@@ -807,7 +807,7 @@ func (c *Controller) koreaderUpdateProgress(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (c *Controller) koreaderGetProgress(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) koreaderGetProgress(w http.ResponseWriter, r *http.Request) {
 	if !c.currentConfig().KOReader.Enabled {
 		slog.Warn("KOReader progress pull rejected: service disabled",
 			"username", strings.TrimSpace(r.Header.Get("x-auth-user")),
@@ -886,7 +886,7 @@ func writeKOReaderAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-func (c *Controller) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Credentials, document string, err error) {
+func (c *administrationHTTP) logKOReaderAuthFailure(ctx context.Context, creds ksvc.Credentials, document string, err error) {
 	var status, message string
 	switch {
 	case errors.Is(err, ksvc.ErrForbidden):

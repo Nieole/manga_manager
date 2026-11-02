@@ -23,7 +23,7 @@ import (
 // 走真会话而不是绕过鉴权：这三条端点都在 /api 组里，改写方法还要 CSRF——
 // 绕过去的话，用例守住的就不是用户真正打到的那条路径。
 type taskRouteRig struct {
-	controller *Controller
+	controller *apiFixture
 	server     *httptest.Server
 	client     *http.Client
 	csrf       string

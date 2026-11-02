@@ -25,7 +25,7 @@ func TestExportBookComicInfo(t *testing.T) {
 	controller, _, book := seedComicInfoFixture(t)
 
 	rec := httptest.NewRecorder()
-	controller.exportBookComicInfo(rec, requestWithRouteParam(http.MethodGet, "/api/books/1/comicinfo.xml", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	controller.families.disk.exportBookComicInfo(rec, requestWithRouteParam(http.MethodGet, "/api/books/1/comicinfo.xml", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -60,7 +60,7 @@ func TestExportSeriesComicInfoArchive(t *testing.T) {
 	controller, series, _ := seedComicInfoFixture(t)
 
 	rec := httptest.NewRecorder()
-	controller.exportSeriesComicInfoArchive(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/comicinfo.zip", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.families.disk.exportSeriesComicInfoArchive(rec, requestWithRouteParam(http.MethodGet, "/api/series/1/comicinfo.zip", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -110,7 +110,7 @@ func TestExportSeriesComicInfoArchive(t *testing.T) {
 func TestExportBookComicInfoRejectsInvalidBookID(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	rec := httptest.NewRecorder()
-	controller.exportBookComicInfo(rec, requestWithRouteParam(http.MethodGet, "/api/books/bad/comicinfo.xml", nil, "bookId", "bad"))
+	controller.families.disk.exportBookComicInfo(rec, requestWithRouteParam(http.MethodGet, "/api/books/bad/comicinfo.xml", nil, "bookId", "bad"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}
@@ -119,7 +119,7 @@ func TestExportBookComicInfoRejectsInvalidBookID(t *testing.T) {
 func TestExportSeriesComicInfoArchiveRejectsInvalidSeriesID(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	rec := httptest.NewRecorder()
-	controller.exportSeriesComicInfoArchive(rec, requestWithRouteParam(http.MethodGet, "/api/series/bad/comicinfo.zip", nil, "seriesId", "bad"))
+	controller.families.disk.exportSeriesComicInfoArchive(rec, requestWithRouteParam(http.MethodGet, "/api/series/bad/comicinfo.zip", nil, "seriesId", "bad"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}
@@ -169,7 +169,7 @@ func TestWriteBookComicInfoMergesInsteadOfReplacing(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.writeBookComicInfo(rec, requestWithRouteParam(http.MethodPost, "/api/books/1/comicinfo", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	controller.families.disk.writeBookComicInfo(rec, requestWithRouteParam(http.MethodPost, "/api/books/1/comicinfo", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -212,7 +212,7 @@ func TestWriteBookComicInfoMergesInsteadOfReplacing(t *testing.T) {
 	}
 }
 
-func seedComicInfoFixture(t *testing.T) (*Controller, database.Series, database.Book) {
+func seedComicInfoFixture(t *testing.T) (*apiFixture, database.Series, database.Book) {
 	t.Helper()
 
 	controller, store, _, tempDir := newTestController(t)

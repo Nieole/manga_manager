@@ -37,7 +37,7 @@ func TestRelocationRepairEditedRootRequiresExplicitSourceAndPreservesReading(t *
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	c.relocationSourceRoots(rec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/relocation-source-roots", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.relocationSourceRoots(rec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/relocation-source-roots", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var hints RelocationSourceRoots
 	if err := json.Unmarshal(rec.Body.Bytes(), &hints); err != nil || rec.Code != http.StatusOK || !hints.RecordsOutsideCurrentRoot {
 		t.Fatalf("hints: %d %s %v", rec.Code, rec.Body.String(), err)
@@ -74,7 +74,7 @@ func TestRelocationRepairEditedRootRequiresExplicitSourceAndPreservesReading(t *
 		}
 	}
 	page := httptest.NewRecorder()
-	c.servePageImage(page, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	c.media.servePageImage(page, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if page.Code != http.StatusOK || !bytes.Equal(page.Body.Bytes(), png1x1) {
 		t.Fatalf("repaired page: %d %s", page.Code, page.Body.String())
 	}
@@ -154,7 +154,7 @@ func TestRelocationRepairMixedAndPrefixLookalikeRecordsRemainUntouched(t *testin
 				t.Fatalf("specific blocker: %+v", details)
 			}
 			rec := httptest.NewRecorder()
-			c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
+			c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{}`), "planId", strconv.FormatInt(plan.ID, 10)))
 			if rec.Code != http.StatusConflict {
 				t.Fatalf("blocked confirmation: %d %s", rec.Code, rec.Body.String())
 			}
@@ -174,11 +174,11 @@ func TestRelocationRepairMixedAndPrefixLookalikeRecordsRemainUntouched(t *testin
 	}
 }
 
-func startRepairPreview(t *testing.T, c *Controller, libraryID int64, source, target string) RelocationPlan {
+func startRepairPreview(t *testing.T, c *apiFixture, libraryID int64, source, target string) RelocationPlan {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"source_root": source, "target_root": target})
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(libraryID, 10)))
+	c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(libraryID, 10)))
 	var plan RelocationPlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("repair preview: %d %s %v", rec.Code, rec.Body.String(), err)

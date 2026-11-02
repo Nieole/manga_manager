@@ -16,7 +16,7 @@ import (
 const maxCoverUploadBytes = 16 << 20 // 16 MiB
 
 // setBookCoverFromPage 把书内指定页(1-based)设为该书封面。
-func (c *Controller) setBookCoverFromPage(w http.ResponseWriter, r *http.Request) {
+func (c *coverHTTP) setBookCoverFromPage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -45,7 +45,7 @@ func (c *Controller) setBookCoverFromPage(w http.ResponseWriter, r *http.Request
 }
 
 // uploadBookCover 用上传的图片作为书封面（首个 multipart 处理器）。
-func (c *Controller) uploadBookCover(w http.ResponseWriter, r *http.Request) {
+func (c *coverHTTP) uploadBookCover(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")

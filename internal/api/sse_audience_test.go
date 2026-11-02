@@ -78,7 +78,7 @@ func openEventStream(t *testing.T, cl *http.Client, baseURL string) *eventStream
 
 // waitReady 反复投递探针帧直到收到，以此确认本连接已完成订阅登记：
 // broker 的注册走无缓冲 channel，响应头先于注册写出，只等「读到响应头」会抢跑。
-func (s *eventStream) waitReady(t *testing.T, c *Controller) {
+func (s *eventStream) waitReady(t *testing.T, c *apiFixture) {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
 	for {
@@ -100,7 +100,7 @@ func (s *eventStream) waitReady(t *testing.T, c *Controller) {
 
 // collectUntilSentinel 投递一枚尾哨兵并收齐它之前的全部帧：broker 是单 goroutine 顺序投递，
 // 收到哨兵即证明先于它入列的帧都已投完，于是「没收到」是确定结论而不是等得不够久。
-func (s *eventStream) collectUntilSentinel(t *testing.T, c *Controller) []string {
+func (s *eventStream) collectUntilSentinel(t *testing.T, c *apiFixture) []string {
 	t.Helper()
 	c.PublishEvent(sseSentinelEvent)
 	var got []string
@@ -126,7 +126,7 @@ func (s *eventStream) collectUntilSentinel(t *testing.T, c *Controller) []string
 
 // sseAudienceRig 是一套「管理员 + 普通用户」的真实路由装配。
 type sseAudienceRig struct {
-	controller *Controller
+	controller *apiFixture
 	server     *httptest.Server
 }
 

@@ -7,6 +7,8 @@ import (
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/koreader"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -64,5 +66,29 @@ func newAdministration(d AdministrationDependencies, auth *authState, warning *s
 		initialization: accounts.NewInitialization(d.Store, hashPassword),
 		management:     accounts.NewManagement(d.Store, hashPassword),
 		passwords:      accounts.NewPasswords(d.Store, hashPassword, verifyPassword, auth.invalidateBasicAuthForUser),
+	}
+}
+
+func (c *administrationHTTP) protocolEnabled(protocol string) bool {
+	cfg := c.currentConfig()
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "opds":
+		return cfg.Protocols.OPDS.Enabled
+	case "mihon":
+		return cfg.Protocols.Mihon.Enabled
+	default:
+		return false
+	}
+}
+
+func (c *administrationHTTP) requireProtocolEnabled(protocol string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !c.protocolEnabled(protocol) {
+				http.NotFound(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
 	}
 }

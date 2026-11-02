@@ -20,7 +20,7 @@ import (
 )
 
 // queueSummaryProposal 入队一条只提案 summary 的提案：一次应用写了什么，读系列的简介就知道。
-func queueSummaryProposal(t *testing.T, controller *Controller, series database.Series, sourceID int, summary string) database.MetadataReview {
+func queueSummaryProposal(t *testing.T, controller *apiFixture, series database.Series, sourceID int, summary string) database.MetadataReview {
 	t.Helper()
 	queued, err := controller.proposals.Queue(context.Background(), series, &metadata.SeriesMetadata{
 		Provider:   "bangumi",
@@ -56,7 +56,7 @@ func TestBulkApplyFillEmptyKeepsFirstWriteOfSameSeries(t *testing.T) {
 		t.Fatalf("构造请求体: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	controller.bulkApplyMetadataReviews(rec,
+	controller.organizationHTTP.bulkApplyMetadataReviews(rec,
 		httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-apply", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
@@ -99,10 +99,10 @@ func TestBulkApplyFillEmptyKeepsFirstWriteOfSameSeries(t *testing.T) {
 }
 
 // listInbox 走收件箱那条 HTTP 入口取一页。
-func listInbox(t *testing.T, controller *Controller) metadataReviewInboxResponse {
+func listInbox(t *testing.T, controller *apiFixture) metadataReviewInboxResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.listMetadataReviewInbox(rec,
+	controller.organizationHTTP.listMetadataReviewInbox(rec,
 		httptest.NewRequest(http.MethodGet, "/api/metadata/reviews/inbox?limit=30", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("收件箱 HTTP %d: %s", rec.Code, rec.Body.String())

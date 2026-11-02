@@ -21,13 +21,13 @@ func TestScrapeSeriesMetadataValidationHandlers(t *testing.T) {
 	_, series, _ := seedBookFixture(t, store, rootDir, "Library A", "Series Alpha", "Alpha 01.cbz", 12)
 
 	invalidRec := httptest.NewRecorder()
-	controller.scrapeSeriesMetadata(invalidRec, requestWithRouteParam(http.MethodPost, "/api/series/bad/scrape", nil, "seriesId", "bad"))
+	controller.providers.scrapeSeriesMetadata(invalidRec, requestWithRouteParam(http.MethodPost, "/api/series/bad/scrape", nil, "seriesId", "bad"))
 	if invalidRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid series id 400, got %d", invalidRec.Code)
 	}
 
 	notFoundRec := httptest.NewRecorder()
-	controller.scrapeSeriesMetadata(notFoundRec, requestWithRouteParam(http.MethodPost, "/api/series/999/scrape", nil, "seriesId", "999"))
+	controller.providers.scrapeSeriesMetadata(notFoundRec, requestWithRouteParam(http.MethodPost, "/api/series/999/scrape", nil, "seriesId", "999"))
 	if notFoundRec.Code != http.StatusNotFound {
 		t.Fatalf("expected missing series 404, got %d", notFoundRec.Code)
 	}
@@ -40,7 +40,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		controller, _, _, _ := newTestController(t)
 
 		rec := httptest.NewRecorder()
-		controller.batchScrapeAllSeries(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/scrape/all", bytes.NewBufferString(`{}`)))
+		controller.families.maintenance.batchScrapeAllSeries(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/scrape/all", bytes.NewBufferString(`{}`)))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -62,7 +62,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		seedTask(t, controller.taskEngine, taskSeed{Key: "scrape_all_series", Identity: systemTask("scrape", variantScrapeAllLibraries), Total: 1})
 
 		rec := httptest.NewRecorder()
-		controller.batchScrapeAllSeries(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/scrape/all", bytes.NewBufferString(`{}`)))
+		controller.families.maintenance.batchScrapeAllSeries(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/scrape/all", bytes.NewBufferString(`{}`)))
 
 		// 冲突不再被丢弃：撞上活动运行的那次发起进**排队中**，接口据此仍然接受它。
 		if rec.Code != http.StatusOK {
@@ -77,7 +77,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		controller, _, _, _ := newTestController(t)
 
 		rec := httptest.NewRecorder()
-		controller.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/bad/scrape", nil, "libraryId", "bad"))
+		controller.families.maintenance.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/bad/scrape", nil, "libraryId", "bad"))
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid library id 400, got %d", rec.Code)
@@ -95,7 +95,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		}
 
 		rec := httptest.NewRecorder()
-		controller.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/scrape", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+		controller.families.maintenance.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/scrape", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -118,7 +118,7 @@ func TestBatchScrapeAllSeriesAndScrapeLibraryLocalBranches(t *testing.T) {
 		seedTask(t, controller.taskEngine, taskSeed{Key: taskKey, Identity: libraryTask("scrape", lib.ID, variantScrapeOneLibrary), Total: 1})
 
 		rec := httptest.NewRecorder()
-		controller.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/scrape", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+		controller.families.maintenance.scrapeLibrary(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/scrape", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected duplicate library scrape to be accepted, got %d", rec.Code)
@@ -145,7 +145,7 @@ func TestApplyScrapedMetadataOutcomeCodes(t *testing.T) {
 	post := func() map[string]any {
 		req := requestWithRouteParam(http.MethodPost, "/api/series/1/scrape-apply?provider=bangumi", body, "seriesId", strconv.FormatInt(series.ID, 10))
 		rec := httptest.NewRecorder()
-		controller.applyScrapedMetadata(rec, req)
+		controller.providers.applyScrapedMetadata(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 		}

@@ -16,10 +16,10 @@ import (
 )
 
 // taskSummaries 打一次任务清单接口。
-func taskSummaries(t *testing.T, controller *Controller, query string) []TaskSummary {
+func taskSummaries(t *testing.T, controller *apiFixture, query string) []TaskSummary {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.listTaskSummaries(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/summary"+query, nil))
+	controller.families.runs.listTaskSummaries(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/summary"+query, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("任务清单接口的状态码为 %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -31,10 +31,10 @@ func taskSummaries(t *testing.T, controller *Controller, query string) []TaskSum
 }
 
 // runsOf 打一次运行列表接口，返回取回的那一页。
-func runsOf(t *testing.T, controller *Controller, query string) []RunSnapshot {
+func runsOf(t *testing.T, controller *apiFixture, query string) []RunSnapshot {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks"+query, nil))
+	controller.families.runs.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks"+query, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("运行列表接口的状态码为 %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
@@ -158,7 +158,7 @@ func TestLiveFrameIgnoresListFilters(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	// 带上一份足以把那条活动运行筛掉的条件：实况帧不该受它影响。
-	controller.getTaskCenterLive(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live?status=completed&scope=system", nil))
+	controller.families.runs.getTaskCenterLive(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live?status=completed&scope=system", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("实况接口的状态码为 %d, want 200", rec.Code)
 	}

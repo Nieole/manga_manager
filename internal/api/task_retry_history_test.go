@@ -15,7 +15,7 @@ import (
 )
 
 // runsForKey 取这个**任务键**名下的全部运行，由新到旧。
-func runsForKey(t *testing.T, c *Controller, key string) []RunSnapshot {
+func runsForKey(t *testing.T, c *apiFixture, key string) []RunSnapshot {
 	t.Helper()
 	items, err := c.taskEngine.listRunSnapshots(context.Background(), taskFilters{})
 	if err != nil {

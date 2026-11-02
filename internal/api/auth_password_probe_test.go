@@ -111,7 +111,7 @@ func TestPasswordCheckCostIsIndependentOfUsernameExistence(t *testing.T) {
 
 	t.Run("协议 Basic 鉴权：用户名不存在时也跑满一次同 cost 的比对", func(t *testing.T) {
 		rec := recordPasswordCompares(t)
-		if _, ok := c.resolveBasicAuthUser(ctx, "ghost", "password1"); ok {
+		if _, ok := c.admin.resolveBasicAuthUser(ctx, "ghost", "password1"); ok {
 			t.Fatal("不存在的用户名不该通过 Basic 鉴权")
 		}
 		rec.wantSingleCompareAtCost(t, realCost)
@@ -119,14 +119,14 @@ func TestPasswordCheckCostIsIndependentOfUsernameExistence(t *testing.T) {
 
 	t.Run("协议 Basic 鉴权：用户名存在但口令错误仍只跑一次比对", func(t *testing.T) {
 		rec := recordPasswordCompares(t)
-		if _, ok := c.resolveBasicAuthUser(ctx, "alice", "wrongpass"); ok {
+		if _, ok := c.admin.resolveBasicAuthUser(ctx, "alice", "wrongpass"); ok {
 			t.Fatal("口令错误不该通过 Basic 鉴权")
 		}
 		rec.wantSingleCompareAtCost(t, realCost)
 	})
 
 	t.Run("协议 Basic 鉴权：凭据正确仍然放行", func(t *testing.T) {
-		if uid, ok := c.resolveBasicAuthUser(ctx, "alice", "password1"); !ok || uid != user.ID {
+		if uid, ok := c.admin.resolveBasicAuthUser(ctx, "alice", "password1"); !ok || uid != user.ID {
 			t.Fatalf("正确凭据应放行并返回 uid=%d，实得 uid=%d ok=%v", user.ID, uid, ok)
 		}
 	})

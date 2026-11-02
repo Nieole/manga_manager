@@ -38,14 +38,14 @@ type scrapeApplyResult struct {
 }
 
 // postScrapeApply 把 result 交给 scrape-apply 入口；extraQuery 是附加查询串（如 "&force=1"）。
-func postScrapeApply(t *testing.T, controller *Controller, seriesID int64, result *metadata.SeriesMetadata, extraQuery string) scrapeApplyResult {
+func postScrapeApply(t *testing.T, controller *apiFixture, seriesID int64, result *metadata.SeriesMetadata, extraQuery string) scrapeApplyResult {
 	t.Helper()
 	body, err := json.Marshal(result)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	controller.applyScrapedMetadata(rec, requestWithRouteParam(http.MethodPost,
+	controller.providers.applyScrapedMetadata(rec, requestWithRouteParam(http.MethodPost,
 		"/api/series/1/scrape-apply?provider=bangumi"+extraQuery, body,
 		"seriesId", strconv.FormatInt(seriesID, 10)))
 	if rec.Code != http.StatusOK {
@@ -59,10 +59,10 @@ func postScrapeApply(t *testing.T, controller *Controller, seriesID int64, resul
 }
 
 // rejectReview 走 HTTP handler 把提案拒掉。
-func rejectReview(t *testing.T, controller *Controller, reviewID int64) {
+func rejectReview(t *testing.T, controller *apiFixture, reviewID int64) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
+	controller.organizationHTTP.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
 		"reviewId", strconv.FormatInt(reviewID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reject 失败：%d %s", rec.Code, rec.Body.String())
@@ -74,12 +74,12 @@ func TestScrapeApplyTranslatesQueueOutcomes(t *testing.T) {
 		name string
 		want string
 		// arrange 摆好库里的状态，并返回本次要提交的刮削结果。
-		arrange func(t *testing.T, controller *Controller, store database.Store, series database.Series) *metadata.SeriesMetadata
+		arrange func(t *testing.T, controller *apiFixture, store database.Store, series database.Series) *metadata.SeriesMetadata
 	}{
 		{
 			name: "队列里已有逐字相同的提案",
 			want: "duplicate_ignored",
-			arrange: func(t *testing.T, controller *Controller, _ database.Store, series database.Series) *metadata.SeriesMetadata {
+			arrange: func(t *testing.T, controller *apiFixture, _ database.Store, series database.Series) *metadata.SeriesMetadata {
 				if first := postScrapeApply(t, controller, series.ID, rejectedDedupResult(), ""); !first.Queued {
 					t.Fatalf("铺垫的首次入队没成功：%+v", first)
 				}
@@ -89,7 +89,7 @@ func TestScrapeApplyTranslatesQueueOutcomes(t *testing.T) {
 		{
 			name: "与当前值毫无差异",
 			want: "no_changes",
-			arrange: func(_ *testing.T, _ *Controller, _ database.Store, series database.Series) *metadata.SeriesMetadata {
+			arrange: func(_ *testing.T, _ *apiFixture, _ database.Store, series database.Series) *metadata.SeriesMetadata {
 				// 系列没有 title 时当前值就是它的名字，提交同一个值即毫无差异。
 				return &metadata.SeriesMetadata{Provider: "bangumi", Title: series.Name, SourceID: 99}
 			},
@@ -97,7 +97,7 @@ func TestScrapeApplyTranslatesQueueOutcomes(t *testing.T) {
 		{
 			name: "有差异但差异字段全被锁",
 			want: "all_locked",
-			arrange: func(t *testing.T, _ *Controller, store database.Store, series database.Series) *metadata.SeriesMetadata {
+			arrange: func(t *testing.T, _ *apiFixture, store database.Store, series database.Series) *metadata.SeriesMetadata {
 				lockSeriesFields(t, store, series.ID, "title")
 				return &metadata.SeriesMetadata{Provider: "bangumi", Title: "A Different Title", SourceID: 99}
 			},
@@ -105,7 +105,7 @@ func TestScrapeApplyTranslatesQueueOutcomes(t *testing.T) {
 		{
 			name: "此前已被用户拒绝",
 			want: "rejected_before",
-			arrange: func(t *testing.T, controller *Controller, _ database.Store, series database.Series) *metadata.SeriesMetadata {
+			arrange: func(t *testing.T, controller *apiFixture, _ database.Store, series database.Series) *metadata.SeriesMetadata {
 				first := postScrapeApply(t, controller, series.ID, rejectedDedupResult(), "")
 				if !first.Queued {
 					t.Fatalf("铺垫的首次入队没成功：%+v", first)
