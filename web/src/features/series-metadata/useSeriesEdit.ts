@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, getApiErrorMessage, isAxiosError } from '../../api/client';
+import { useLibraryInvalidation } from '../../session/ApplicationSessionProvider';
 import type { Author, MetaTag, Series, SeriesLink } from './types';
 import type { SeriesEditForm, SeriesFormField, SeriesFormValue } from './draft';
 export type { SeriesEditForm, SeriesFormField, SeriesFormValue } from './draft';
@@ -17,6 +18,7 @@ interface UseSeriesEditParams {
 }
 
 export function useSeriesEdit({ seriesId, series, tags, authors, links, metadataVersion, reload, showToast, t }: UseSeriesEditParams) {
+  const invalidateLibrary = useLibraryInvalidation();
   const activeScope = useRef({ seriesId });
   if (activeScope.current.seriesId !== seriesId) activeScope.current = { seriesId };
   const scope = activeScope.current;
@@ -135,13 +137,18 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
         links: editForm.linksInput,
         expected_version: expectedVersion,
       });
-      if (activeScope.current !== scope) return;
-      setHasConflict(false);
-      setIsEditing(false);
       try {
-        await reload(true);
-      } catch {
-        if (activeScope.current === scope) showToast(t('series.toast.savedRefreshFailed'), 'error');
+        if (activeScope.current !== scope) return;
+        setHasConflict(false);
+        setIsEditing(false);
+        try {
+          await reload(true);
+        } catch {
+          if (activeScope.current === scope) showToast(t('series.toast.savedRefreshFailed'), 'error');
+        }
+      } finally {
+        // Publish even after refresh failure or a target switch, but never supersede our awaited refresh.
+        invalidateLibrary({ areas: ['catalog', 'collections', 'organize', 'stats', 'reading-lists'] });
       }
     } catch (err) {
       if (activeScope.current !== scope) return;
@@ -158,7 +165,7 @@ export function useSeriesEdit({ seriesId, series, tags, authors, links, metadata
       console.error('Failed to update metadata', err);
       showToast(`${t('series.toast.saveFailed')}: ${getApiErrorMessage(err, t('series.toast.saveFailed'))}`, 'error');
     }
-  }, [series, seriesId, editForm, lockedFields, reload, showToast, t, scope]);
+  }, [series, seriesId, editForm, lockedFields, reload, showToast, t, scope, invalidateLibrary]);
 
   return {
     isEditing,

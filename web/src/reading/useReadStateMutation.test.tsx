@@ -3,7 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { apiClient } from '../api/client';
 import { useReadStateMutation } from './useReadStateMutation';
-vi.mock('../api/client',()=>({apiClient:{post:vi.fn()}}));
+vi.spyOn(apiClient, 'post');
 
 it('keeps the same operation and occurrence when a failed mark is retried',async()=>{
  const post=vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('connection lost')).mockResolvedValue({});
