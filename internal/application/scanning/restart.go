@@ -18,7 +18,7 @@ func (*Service) Restarts() []RestartDefinition {
 	return []RestartDefinition{{Type: "scan_library", Resumable: true}, {Type: "scan_series", Resumable: true}, {Type: "generate_covers", Resumable: true}, {Type: "cleanup_library"}}
 }
 
-// Restart replays the original force input and rediscovers missing covers after process loss.
+// Restart replays force and cover discovery independently of the trigger.
 func (c *Service) Restart(ctx context.Context, id task.Identity, args map[string]string, t task.Trigger) (task.Launched, error) {
 	if id.Variant != "" {
 		return task.Launched{}, fmt.Errorf("unsupported scanning variant: %s", id.Variant)
@@ -33,7 +33,8 @@ func (c *Service) Restart(ctx context.Context, id task.Identity, args map[string
 	case id.Type == "scan_series" && id.Scope == task.ScopeSeries && id.ScopeID > 0:
 		return task.Launched{}, c.ScanSeries(id.ScopeID, args["force"] == "true", t)
 	case id.Type == "generate_covers" && id.Scope == task.ScopeLibrary && id.ScopeID > 0:
-		return c.BackfillCovers(id.ScopeID, t)
+		// Missing input preserves the pre-declaration recovery behavior for old runs.
+		return c.startCoverRun(ctx, id.ScopeID, t, args["backfill"] != "false")
 	case id.Type == "cleanup_library" && id.Scope == task.ScopeLibrary && id.ScopeID > 0 && t != task.TriggerResumed:
 		return c.CleanupLibrary(id.ScopeID, t)
 	}

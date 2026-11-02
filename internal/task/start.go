@@ -5,9 +5,11 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"runtime/debug"
 	"time"
 
@@ -56,7 +58,7 @@ type RunSpec struct {
 
 	// Args 是重启入参：**重启函数**从这里读回这次运行是拿什么参数发起的。
 	Args map[string]string
-	// Labels 是启动时就已知、整次运行不变的展示标签（刮削源名等）。
+	// Labels 描述运行环境，重启函数不得读取；已在 Limits 声明的值不在这里重复。
 	// 开跑之后才变的标签走 runhandle.Frame.Labels，两条都是按键合并。
 	Labels map[string]string
 	// Limits 是这次运行实际生效的并发上限。零值表示没有上限可报（多数维护类工作如此），
@@ -110,7 +112,7 @@ type Body func(ctx context.Context, handle *runhandle.Handle) (Result, error)
 type Launched struct {
 	Run Run
 	// Coalesced 为真表示本次发起被合并进了 Run 那一条已经排着的运行：
-	// 它跑的是同一件事，本次交出的任务体不会执行。
+	// 它保留先排上的声明，本次交出的任务体不会执行。
 	Coalesced bool
 	// Stalled 非空表示这次**自动**发起被**停发**挡下：一条运行都没建（Run 是零值），
 	// 交出的任务体不会执行，而它就是挡下的原因。
@@ -127,7 +129,7 @@ type Launched struct {
 //
 // 这个任务已经有一条排队中的运行时，本次发起**合并**进那一条：不新建，只把它的合并计数加一，
 // 返回的正是那条排队运行。守护扫描要的只是「确保扫过」，合并与各排一条效果相同，
-// 而后者会堆成一串一模一样的运行。被合并掉的那份任务体不会执行——排在前面的那条跑的是同一件事。
+// 而后者会堆成一串一模一样的运行。被合并掉的那份任务体不会执行；入参不同时，事件保留被丢弃的声明。
 //
 // **自动**发起（定时、监听）还要多过一道**停发**闸门：连败到阈值、**退避**没到期、或者
 // 人工禁用了这个任务，本次就一条运行都不建，交回的 Launched.Stalled 说明为什么。手动发起
@@ -224,7 +226,7 @@ func (e *Engine) admitLocked(ctx context.Context, owner Task, spec RunSpec, body
 	// 「最多一条排队中的运行」这条约束由**数据库**说了算，不在内存里再判一次：
 	// 撞上它就是「这个任务已经排着了」，本次发起合并进那一条。
 	if errors.Is(err, ErrRunAlreadyQueued) {
-		return e.coalesceLocked(ctx, owner.ID)
+		return e.coalesceLocked(ctx, owner.ID, spec)
 	}
 	if err != nil {
 		return Launched{}, nil, err
@@ -272,12 +274,11 @@ func (e *Engine) mustQueueLocked(ctx context.Context, taskID int64) (bool, error
 // coalesceLocked 把这一次发起**合并**进这个任务已有的那条排队运行：不新建，只把计数加一。
 // 调用方持锁。
 //
-// 合并掉的是**这一次的声明与任务体**：排在前面那条跑的是同一件事，再排一条只会让列表里堆出
-// 一串一模一样的运行。计数必须落盘且发得出去——否则用户看到的是一条孤零零的排队，
+// 合并掉的是**这一次的声明与任务体**，排在前面那份不被替换。入参不同则每次记事件。计数必须落盘且发得出去——否则用户看到的是一条孤零零的排队，
 // 不知道它代表了几次发起。
 //
 // 序号要重取一个：合并是一次用户看得见的变化，不取的话那条排队在任务中心里一动不动。
-func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Launched, func(), error) {
+func (e *Engine) coalesceLocked(ctx context.Context, taskID int64, incoming RunSpec) (Launched, func(), error) {
 	queue, err := e.store.ListRuns(ctx, RunFilter{
 		TaskID:   taskID,
 		Statuses: []RunStatus{StatusQueued},
@@ -293,12 +294,22 @@ func (e *Engine) coalesceLocked(ctx context.Context, taskID int64) (Launched, fu
 	}
 
 	run := queue[0]
+	side, err := e.store.LoadRunSideData(ctx, []int64{run.ID})
+	if err != nil {
+		return Launched{}, nil, err
+	}
+	lossy := !maps.Equal(side[run.ID].Args, incoming.Args)
 	run.CoalescedCount++
-	// 事件只在**第一次**被合并时落一条：守护与监听扫描会在一次长扫期间反复撞上同一条排队运行，
-	// 每次落一条就能在一条还没起跑的运行上堆出几千行，而「一共被合并了几次」这件事
-	// CoalescedCount 已经记着、也已经发到界面上了。事件回答的是「它被合并过」。
-	if run.CoalescedCount == 1 {
-		e.emitControlLocked(run.ID, ControlCoalesced)
+	// Lossless repetition is noise; every discarded behavioral declaration is evidence.
+	if lossy || run.CoalescedCount == 1 {
+		detail, _ := json.Marshal(struct {
+			Trigger Trigger           `json:"trigger"`
+			Args    map[string]string `json:"args"`
+			Labels  map[string]string `json:"labels"`
+			Limits  Limits            `json:"limits"`
+			Lossy   bool              `json:"lossy"`
+		}{incoming.Trigger, incoming.Args, incoming.Labels, incoming.Limits, lossy})
+		e.emitEventLocked(run.ID, Event{Kind: EventControl, Action: ControlCoalesced, Detail: string(detail)})
 	}
 	run.UpdatedAt = e.clock()
 	run.Sequence = e.nextSequenceLocked()
