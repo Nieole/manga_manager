@@ -98,3 +98,7 @@ At `codex/refinement-48` / `46c20cb`, [acceptance.md](acceptance.md) records 204
 固定基线 `badc595541250189586b87e9d1c1c83ac79fd677` 至 `9435e7b` 的最终双轴独立复审均批准：**Standards 0 项可行动发现；Spec 0 项已确立的可行动发现**。Spec 复审的证据校验、基线 whitespace 及 task/content/proposal/configuration 定向检查通过；审查未穷尽所有改动文件，也未独立重跑全套长测试。原始全套 Go/race、1024 前端、格式/lint/build、TS26/SQL 无漂移等实际执行范围与证据仍按验收文档记录。
 
 48 已关闭，当前 48/48 本地票全部关闭。Linux/Darwin CGO 交叉构建因缺少目标 C 工具链失败，非 Windows 运行、真实设备/外部服务与浏览器存储未执行；这些限制保留为失败/未执行，不记为通过。没有已复现而未处置的前置票实现缺口；没有推送或创建远程 PR。
+
+## 工作树与证据交接
+
+本轮 15 棵实现/修复树均先验证 HEAD 已合入、无 tracked 修改，再完成注销及原路径清理；所有分支和无关工作树保留，未运行 reset/clean 或全局 prune。注销前将 60,772 个 `.tmp` 及未跟踪证据/产物逐文件 SHA256 归档、完整读回校验，原始日志未丢弃。归档、哈希与清理记录路径见 [acceptance.md](acceptance.md#worktree-cleanup-and-raw-evidence-archive)。Windows 遗留的四个已注销目录（含 47 尾点文件导致的首轮失败）已完整移到外部 `preserved-remnants/`，未强删；未跟踪原件另存 `preserved-untracked/`。主树继续位于 `codex/architecture-refinement`，规范化证据仍受仓库版本控制。

@@ -2,7 +2,7 @@
 
 ## Target, provenance and acceptance discipline
 
-- Target: `C:/Users/saber/dev/manga-refinement-48`, branch `codex/refinement-48`, HEAD `46c20cbc936c664eae6c246cb20ed59c1ac1f9e5`, tracked tree `813d019e7fc785ea2868e83f3f6d7f8df11cb348` (01–47 integrated/closed). No production changes in 48. Initial retry status had only the untracked partial `acceptance-evidence/`; **all prior `.tmp` artifacts and raw logs remain**, including failed cross-builds and doc timeouts. The initial retry did not reset, clean, stage or commit. The parent subsequently staged the acceptance paths, but its cached whitespace check failed; no commit was created. The evidence-integrity repair leaves the index untouched for parent restaging.
+- Tested snapshot (worktree now retired): `C:/Users/saber/dev/manga-refinement-48`, branch `codex/refinement-48`, HEAD `46c20cbc936c664eae6c246cb20ed59c1ac1f9e5`, tracked tree `813d019e7fc785ea2868e83f3f6d7f8df11cb348` (01–47 integrated/closed). No production changes in 48. Initial retry status had only the untracked partial `acceptance-evidence/`; **all prior `.tmp` artifacts and raw logs are preserved in the cleanup archive below**, including failed cross-builds and doc timeouts. The initial retry did not reset, clean, stage or commit. The parent subsequently staged the acceptance paths, but its cached whitespace check failed; no commit was created. The evidence-integrity repair left the index untouched for parent restaging; the corrected staged check subsequently passed and artifact `9435e7b` was integrated.
 - Ground truth: AGENTS, CONTEXT, agent issue/domain/doc-style guides, architecture spec/design/queue/execution, issue 48 and ADRs 0001/0003/0005–0015. The external inventory is preserved as [input only](acceptance-evidence/inventory-input.md), not accepted evidence: it describes a pre-46/47 source snapshot and explicitly did not execute tests. All current row paths/symbols were checked; three inherited frontend suite/template pointers were replaced by concrete executed cases. The original partial mapping is retained as `stories-inherited.json`.
 - Current gates below were completed by the interrupted 48 attempt on the same HEAD with no tracked source changes; retry inspected commands, logs and exit files, not just filenames. Fresh retry re-executed all 1024 frontend tests with JSON case results. Source digest and retired-boundary/import audit: [structure-audit.json](acceptance-evidence/structure-audit.json). `manifest.json` hashes retained evidence. Documentation-only reconciliation does not change tested production bytes.
 - **Four distinct states:** observed source / test exists / actual scoped execution PASS / unexecuted or failed limitation. The matrix supplies source + consumer + actual executed witness + manual review; it never promotes ticket done, presence, package compilation, cross-compilation or a representative regression to complete story acceptance. Packages with no test files (accounts and several query owners) obtain behavioral evidence through real SQLite HTTP/use-case consumers, not package compilation.
@@ -19,6 +19,17 @@ Both reviewers independently inspected the integration branch at `9435e7b` using
 ### Spec
 
 **APPROVE; 0 actionable findings established** for missing requirements, scope creep or incorrect implementation. The reviewer ran the evidence validator, baseline whitespace check and targeted task/content/proposal/configuration tests; task results were cached. Production-consumer inspection covered major boundaries but was not exhaustive across all 768 changed files. Full integration/race/frontend suites were not independently rerun. Evidence validation does not establish exhaustive acceptance of all 204 stories. Failed Linux/Darwin target builds and unexecuted non-Windows runtime, physical devices, live providers and browser storage remain limitations, not waived successful gates.
+
+## Worktree cleanup and raw-evidence archive
+
+All 15 worktrees used by this continuation were verified merged with no tracked edits, then unregistered; their original paths no longer exist. All branches and unrelated worktrees were retained. Before removal, 60,772 `.tmp` and untracked evidence/artifact files were archived with individual SHA256 comparisons against a full archive readback.
+
+- Archive: `C:/Users/saber/AppData/Local/Temp/manga-refinement-evidence-2026-11-03/worktree-evidence.tar.gz` (691,921,098 bytes).
+- Archive SHA256: `e013d872d383f176db9370cc73be850dc95bc46d05bd465fe3c83a1ac23a343e`.
+- Sibling `manifest.json` records each original tree HEAD and archived-file hash; `cleanup-results.json` retains the first incomplete removal, and `cleanup-final-results.json` records completion. Untracked originals were also moved to `preserved-untracked/`.
+- Windows left four unregistered directory remnants, including a trailing-dot file in 47 that caused `Directory not empty`; these were moved intact to `preserved-remnants/`, not forcibly deleted. No branch deletion, reset, clean, push or remote PR was performed.
+
+Repository-owned canonical evidence remains available without the external archive. Historical absolute paths above identify where execution occurred, not live worktree locations.
 
 ## Executed gates and exact evidence
 
@@ -39,7 +50,7 @@ All links below are relative to [acceptance-evidence/](acceptance-evidence/). Fo
 | CI-platform server cross-build attempts | **FAILED**, Linux/amd64 CGO: host MinGW lacks target POSIX headers/types; Darwin/arm64 CGO: `clang` unavailable. No target sysroot/compiler installed; do not substitute CGO-disabled release binary | `linux-build`, `darwin-build` |
 | Historical worktree diff / generated status | PASS for then-tracked paths, empty outputs; original `diff-check` missed then-untracked evidence. Artifact committability requires full-file checks and parent restaging/cached check, not this historical gate | `diff-check`, `generated-status` |
 
-Historical evidence is separate: `../manga-refinement-47/.tmp/47-contract-verified-*` records full ordinary Go and **complete API race 638.934s**, with `47-contract-web-*-final.log` recording 1024 frontend tests; `../manga-refinement-47/.tmp/merge47-*` records focused combination gates. These belong to the 47 worktree's dirty contraction over base `2744240`, later reconciled against docs-only `3d82d84`, **not a run on 48 HEAD**. They corroborate only; current-tree full Go/race/1024 evidence supersedes them. Historical files remain in their owning tree.
+Historical evidence is separate: `../manga-refinement-47/.tmp/47-contract-verified-*` records full ordinary Go and **complete API race 638.934s**, with `47-contract-web-*-final.log` recording 1024 frontend tests; `../manga-refinement-47/.tmp/merge47-*` records focused combination gates. These belong to the 47 worktree's dirty contraction over base `2744240`, later reconciled against docs-only `3d82d84`, **not a run on 48 HEAD**. They corroborate only; current-tree full Go/race/1024 evidence supersedes them. Historical files are retained under their original worktree names in the cleanup archive below.
 
 ## Cross-feature joins / what witnesses establish
 
