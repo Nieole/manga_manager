@@ -692,6 +692,9 @@ func TestRestorationRejectsQueuedOrActiveRelatedWorkBeforeAdmission(t *testing.T
 			}
 			acceptRelocationAnomalies(t, c, startRelocationPreview(t, c, lib.ID, target).ID)
 			check := startRestorationCheck(t, c, lib.ID)
+			// A checked plan can precede engine finalization; join it before
+			// replacing the fixture's assembly-only callbacks.
+			c.runtime.WaitBackground()
 			c.taskEngine.runBackground = func(func()) {}
 			c.taskEngine.slots = func() int { return 1 }
 			hold := func(id int64, key string) {
