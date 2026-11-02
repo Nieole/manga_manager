@@ -10,13 +10,15 @@ import (
 
 // assembleRuntime binds HTTP-owned leaf effects to the application process graph.
 func (c *Controller) assembleRuntime(scan *scanner.Scanner) error {
-	e := &taskEngine{now: nil, slots: c.taskSlots, backoff: c.taskBackoffPolicy, sampleInterval: c.runSampleInterval, resumeEnabled: c.taskResumeEnabled, identities: make(map[int64]TaskIdentity)}
+	e := c.taskEngine
 	c.taskEngine = e
 	app, err := runtime.New(c.store, c.config, runtime.Options{ConfigPath: c.configPath, Scanner: scan, Tasks: task.Config{Publish: e.publisher(c.sse.publishAdmin), PublishLive: e.livePublisher(c.sse.publishAdmin), RunBackground: func(fn func()) { e.runBackground(fn) }, Now: e.clock, Slots: e.slotLimit, Backoff: e.backoffPolicy, SampleInterval: e.samplingInterval}, Effects: runtime.Effects{Publish: c.PublishEvent, PurgeReadingPaths: c.purgeReadingPathCaches, InvalidateStats: c.invalidateDashboardStatsCache, WarmStats: c.warmDashboardStatsCacheAsync, InvalidateRecommendations: c.purgeRecommendationCache, InvalidateReading: func() { c.invalidateVolatileStatsCache("koreader_progress") }, RunEvents: c.sse.run, StopEvents: c.sse.closeClients, TrimPageCache: c.enforcePageCacheBudget, ObserveIdentity: e.observeIdentity, Sources: intelligence.Sources{Metadata: c.getMetadataFetcher}}})
 	if err != nil {
 		return err
 	}
 	c.runtime = app
+	c.process = app
+	c.configuration = app.Configuration
 	e.engine = app.Engine
 	e.runs = app.Runs
 	e.runStore = app.Tasks

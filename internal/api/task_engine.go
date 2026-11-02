@@ -11,6 +11,7 @@ import (
 
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/runtime"
+	"manga-manager/internal/config"
 	"manga-manager/internal/task"
 )
 
@@ -90,9 +91,10 @@ type taskEngine struct {
 	resumeEnabled func() bool
 
 	// dispatch supports isolated adapter fixtures; production capabilities are read from registry.
-	dispatch map[taskDispatchKey]taskDispatch
-	runtime  *runtime.Runtime
-	registry *runtime.Registry
+	dispatch       map[taskDispatchKey]taskDispatch
+	runtime        *runtime.Runtime
+	configSnapshot func() config.Config
+	registry       *runtime.Registry
 
 	// ---- 受 pushMutex 保护的状态 ----
 
@@ -246,6 +248,9 @@ func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRe
 //
 // 装配期没给开关就按**开着**算，理由同 slotLimit：不合法与没给都交给领域侧兜底。
 func (e *taskEngine) buildResumePolicy() task.ResumePolicy {
+	if e.registry != nil && e.configSnapshot != nil {
+		return e.registry.Policy(e.configSnapshot())
+	}
 	if e.registry != nil && e.runtime != nil {
 		return e.registry.Policy(e.runtime.Config())
 	}
