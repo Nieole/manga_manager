@@ -1,18 +1,15 @@
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, KeyRound, RefreshCw, RotateCcw, Save, TabletSmartphone, Trash2, UserPlus } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings, useKOReader } from './SettingsContext';
+import { useKOReaderDiagnostics, useKOReaderEditing } from '../../features/koreader-settings/KOReaderProvider';
+import { useSettingsMaintenance } from '../../features/settings-actions/useSettingsMaintenance';
 import { FieldErrors, SettingsPageIntro, inputClassName, sectionClassName } from './shared';
 
 export function SettingsKOReaderPage() {
   const { t, formatDateTime } = useI18n();
-  const { handleAction } = useSettings();
+  const { koreaderForm, setKOReaderForm, koreaderFieldErrors, savingKOReader, saveKOReader } = useKOReaderEditing();
+  const { handleAction } = useSettingsMaintenance();
   const {
     koreaderStatus,
-    koreaderForm,
-    setKOReaderForm,
-    koreaderFieldErrors,
-    saveKOReader,
-    savingKOReader,
     needsMatchingMaintenance,
     applyingMatching,
     handleApplyMatchingChanges,
@@ -32,7 +29,7 @@ export function SettingsKOReaderPage() {
     fetchKOReaderUnmatched,
     formatKOReaderLatestSync,
     formatKOReaderIndexLabel,
-  } = useKOReader();
+  } = useKOReaderDiagnostics();
 
   if (!koreaderForm) return null;
 

@@ -1,6 +1,8 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'settings.editor.conflict': 'Server settings changed. Your unsaved edits and their original version are preserved. Review them, or explicitly discard this section and reload.',
+    'settings.editor.reloadSection': 'Discard this section’s edits and reload',
     'settings.toast.configSavedRestart': 'Configuration saved and published; some fields still require a server restart.',
     'settings.toast.configSavedNext': 'Configuration saved and published; related fields are read by subsequent requests or jobs.',
     'settings.toast.configRefreshFailed': 'The save succeeded, but refreshing settings failed. Reload to verify the current view.',
