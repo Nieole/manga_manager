@@ -24,6 +24,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"manga-manager/internal/api"
+	"manga-manager/internal/bootstrap"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/logger"
@@ -146,11 +147,16 @@ func main() {
 	}
 
 	// API 端点挂载
-	apiController := api.NewController(store, nil, cfgManager, resolvedConfigPath)
+	process, err := bootstrap.Open(context.Background(), store, cfgManager, bootstrap.Options{ConfigPath: resolvedConfigPath})
+	if err != nil {
+		slog.Error("Failed to initialize application", "error", err)
+		os.Exit(1)
+	}
+	defer process.Close()
 
-	apiController.SetupRoutes(r)
-	apiController.SetupOPDSRoutes(r)
-	apiController.SetupKOReaderRoutes(r)
+	process.HTTP.SetupRoutes(r)
+	process.HTTP.SetupOPDSRoutes(r)
+	process.HTTP.SetupKOReaderRoutes(r)
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		// 存活/就绪探测：探测数据库连接，DB 不可达时返回 503，供反向代理/编排器判断实例健康。
@@ -217,7 +223,7 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := apiController.Shutdown(shutdownCtx, srv.Shutdown); err != nil {
+	if err := process.Shutdown(shutdownCtx, srv.Shutdown); err != nil {
 		slog.Error("Graceful HTTP shutdown failed", "error", err)
 	}
 	slog.Info("Shutdown complete")

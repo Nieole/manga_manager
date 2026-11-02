@@ -7,8 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { applySectionSnapshot } from './SettingsContext';
-import type { Config } from './SettingsContext';
+import { applySectionSnapshot } from '../../features/settings-editor';
+import type { Config } from '../../features/settings-editor';
 
 // makeConfig 造一份只带本用例关心字段的最小 config。
 function makeConfig(overrides: Record<string, unknown> = {}): Config {
@@ -96,8 +96,8 @@ describe('applySectionSnapshot', () => {
 
 describe('保存后的刷新同样只覆盖本分区', () => {
   it('保存 AI 之后，资料库分区的草稿不被服务端配置抹掉', () => {
-    // fetchConfig(savedSection) 的语义：以手上的草稿为底，只把刚保存的那个分区
-    // 换成服务端的新值。少了这一半，「只保存本分区」就只做了一半——
+    // 分区快照以手上的草稿为底，只替换指定分区。
+    // 少了这一半，「只保存本分区」就只做了一半——
     // 保存 AI 会顺手把资料库分区没保存的草稿整片抹掉，侧边栏脏点一起熄灭，全程无提示。
     const draft = makeConfig({
       scanner: {

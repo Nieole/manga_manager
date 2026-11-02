@@ -15,7 +15,7 @@ import { useReaderBookData } from './book-reader/useReaderBookData';
 import { useReaderBookmarks } from './book-reader/useReaderBookmarks';
 import { useReaderImmersive } from './book-reader/useReaderImmersive';
 import { useReaderKeyboardShortcuts } from './book-reader/useReaderKeyboardShortcuts';
-import { useReaderOffline } from './book-reader/useReaderOffline';
+import { useReaderOffline } from '../features/offline/useReaderOffline';
 import { useReaderPageNavigation } from './book-reader/useReaderPageNavigation';
 import { useReaderPointerDrag } from './book-reader/useReaderPointerDrag';
 import { useReaderPreferences } from './book-reader/useReaderPreferences';

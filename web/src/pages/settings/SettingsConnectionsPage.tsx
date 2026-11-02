@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiClient, isAxiosError } from '../../api/client';
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Copy, ExternalLink, Layers3, Link2, PlugZap, QrCode, RefreshCw, Server, TabletSmartphone, Wifi, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings } from './SettingsContext';
+import { useSettings } from '../../features/settings-editor';
 import { SettingsPageIntro, sectionClassName } from './shared';
 
 interface ClientEndpointRequestSnapshot {
@@ -57,7 +57,7 @@ interface ClientConnectionsResponse {
 
 export function SettingsConnectionsPage() {
   const { t } = useI18n();
-  const { config, saveProtocols, showToast } = useSettings();
+  const { config, saveProtocols, isSectionSaving, showToast } = useSettings();
   const [loading, setLoading] = useState(true);
   const [copying, setCopying] = useState<string | null>(null);
   const [savingProtocol, setSavingProtocol] = useState<'opds' | 'mihon' | null>(null);
@@ -155,7 +155,8 @@ export function SettingsConnectionsPage() {
       // 走 context 的 saveProtocols：它以服务端快照为底只叠加 protocols，不要自己拼
       // `{...config, protocols}` 再整份 POST——基底是活的草稿，用户在别的分区改了
       // 没保存的东西会被这一下开关顺手写进后端。
-      await saveProtocols(protocol, enabled);
+      const result = await saveProtocols(protocol, enabled);
+      if (!result.committed) return;
       showToast(
         t(enabled ? 'settings.connections.protocolEnabledToast' : 'settings.connections.protocolDisabledToast', {
           label: protocol === 'opds' ? 'OPDS' : 'Mihon',
@@ -275,14 +276,14 @@ export function SettingsConnectionsPage() {
             label="OPDS"
             description={t('settings.connections.protocol.opdsDescription')}
             enabled={config?.protocols?.opds?.enabled ?? data?.status.opds_enabled ?? false}
-            saving={savingProtocol === 'opds'}
+            saving={savingProtocol !== null || isSectionSaving('connections')}
             onToggle={(enabled) => setProtocolEnabled('opds', enabled)}
           />
           <ProtocolToggleCard
             label="Mihon"
             description={t('settings.connections.protocol.mihonDescription')}
             enabled={config?.protocols?.mihon?.enabled ?? data?.status.mihon_enabled ?? false}
-            saving={savingProtocol === 'mihon'}
+            saving={savingProtocol !== null || isSectionSaving('connections')}
             onToggle={(enabled) => setProtocolEnabled('mihon', enabled)}
           />
         </div>

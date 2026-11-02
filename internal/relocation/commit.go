@@ -3,9 +3,7 @@ package relocation
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -44,19 +42,7 @@ type commitAccess struct {
 }
 
 func (s *Service) Operation(ctx context.Context, id int64) (RelocationOperation, error) {
-	var op RelocationOperation
-	var data string
-	var runID int64
-	var status string
-	err := s.Store.DB().QueryRowContext(ctx, `SELECT run_id,status,result FROM relocation_operations WHERE id=?`, id).Scan(&runID, &status, &data)
-	if err != nil {
-		return op, err
-	}
-	if err = json.Unmarshal([]byte(data), &op); err != nil {
-		return op, err
-	}
-	op.ID, op.RunID, op.Status = id, runID, status
-	return op, err
+	return s.operations().load(ctx, id)
 }
 
 // Prepare returns the same durable operation for every confirmation of a plan.
@@ -73,7 +59,7 @@ func (s *Service) prepare(ctx context.Context, planID int64, restore *Restoratio
 		return RelocationOperation{}, false, ErrPlanNotReady
 	}
 	var existing int64
-	err = s.Store.DB().QueryRowContext(ctx, `SELECT id FROM relocation_operations WHERE plan_id=?`, planID).Scan(&existing)
+	err = s.operations().find(ctx, planID, &existing)
 	if err == nil {
 		op, e := s.Operation(ctx, existing)
 		return op, false, e
@@ -102,35 +88,11 @@ func (s *Service) prepare(ctx context.Context, planID int64, restore *Restoratio
 		op.Purpose, op.ProtectionID = "restoration", plan.ProtectionID
 		op.ScanMode, op.ScanInterval, op.ScanFormats = restore.ScanMode, restore.ScanInterval, restore.ScanFormats
 	}
-	data, err := json.Marshal(op)
-	if err != nil {
-		return op, false, err
-	}
-	result, err := s.Store.DB().ExecContext(ctx, `INSERT INTO relocation_operations(plan_id,library_id,status,result) VALUES(?,?,?,?) ON CONFLICT(plan_id) DO NOTHING`, planID, plan.LibraryID, op.Status, data)
-	if err != nil {
-		return op, false, err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return op, false, err
-	}
-	if err = s.Store.DB().QueryRowContext(ctx, `SELECT id FROM relocation_operations WHERE plan_id=?`, planID).Scan(&existing); err != nil {
-		return op, false, err
-	}
-	op.ID = existing
-	if n == 0 {
-		existingOp, e := s.Operation(ctx, existing)
-		return existingOp, false, e
-	}
-	if err = s.saveOperation(ctx, op); err != nil {
-		return op, false, err
-	}
-	return op, n == 1, nil
+	return s.operations().create(ctx, op)
 }
 
 func (s *Service) BindOperationRun(ctx context.Context, id, runID int64) error {
-	_, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_operations SET run_id=? WHERE id=? AND run_id=0`, runID, id)
-	return err
+	return s.operations().bind(ctx, id, runID)
 }
 
 // FailUnstarted records admission failure without changing a committed result.
@@ -148,18 +110,16 @@ func (s *Service) FailUnstarted(ctx context.Context, id int64, code string) erro
 }
 
 func (s *Service) saveOperation(ctx context.Context, op RelocationOperation) error {
-	op.UpdatedAt = time.Now().UTC()
-	data, err := json.Marshal(op)
-	if err != nil {
-		return err
-	}
-	_, err = s.Store.DB().ExecContext(ctx, `UPDATE relocation_operations SET status=?,result=? WHERE id=?`, op.Status, data, op.ID)
-	return err
+	return s.operations().save(ctx, op)
 }
 
 // Commit keeps exclusive access through database commit and derived effects.
 // Failed effects retain the reservation until recovery finishes.
 func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle) error {
+	return s.commitObserved(ctx, id, handle, nil)
+}
+
+func (s *Service) commitObserved(ctx context.Context, id int64, handle *runhandle.Handle, committed func(RelocationOperation)) error {
 	op, err := s.Operation(ctx, id)
 	if err != nil {
 		return err
@@ -168,7 +128,7 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		return nil
 	}
 	if op.Purpose == "restoration" {
-		return s.commitRestoration(ctx, op, handle)
+		return s.commitRestoration(ctx, op, handle, committed)
 	}
 	release, err := s.acquireOperation(ctx, op)
 	if err != nil {
@@ -192,7 +152,6 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		if plan.Status != "checked" {
 			return ErrPlanNotReady
 		}
-		inspection := &Service{Store: s.Store, Config: config.NewManager(&cfg), transient: true, recordsOnly: true}
 		if e = handle.DisableCancellation(); e != nil {
 			return e
 		}
@@ -209,79 +168,16 @@ func (s *Service) Commit(ctx context.Context, id int64, handle *runhandle.Handle
 		// Register provisional progress before taking SQLite's write reservation,
 		// so background sample persistence cannot contend with this transaction.
 		handle.AdvanceLive(0, total)
-		tx, e := s.Store.DB().BeginTx(ctx, nil)
+		verify := func() error { return nil }
+		if session != nil {
+			verify = session.Verify
+		}
+		processed, e := s.commitPaths(ctx, plan, &op, cfg, handle, verify)
 		if e != nil {
 			return e
 		}
-		defer tx.Rollback()
-		if _, e = tx.ExecContext(ctx, `UPDATE relocation_plans SET status=status WHERE id=? AND status='checked'`, plan.ID); e != nil {
-			return e
-		}
-		inspection.db = tx
-		var expectedRecords string
-		if e = tx.QueryRowContext(ctx, `SELECT digest FROM relocation_record_facts WHERE plan_id=?`, plan.ID).Scan(&expectedRecords); e != nil {
-			if errors.Is(e, sql.ErrNoRows) {
-				return ErrStalePlan
-			}
-			return e
-		}
-		if e = inspection.Check(ctx, plan.ID, handle, nil); e != nil {
-			return e
-		}
-		checked := inspection.evaluated
-		if inspection.recordsDigest != expectedRecords || checked.BlockerCount != 0 || (plan.AnomalyCount != 0 && !op.AcceptAnomalies) {
-			return ErrStalePlan
-		}
-		processed := 0
-		for _, kind := range []string{"series", "book"} {
-			table := "series"
-			if kind == "book" {
-				table = "books"
-			}
-			e = inspection.walkRecords(ctx, op.LibraryID, kind, func(item storedRecord) error {
-				mapped, mapErr := MapPath(op.SourceRoot, op.TargetRoot, item.Path)
-				if mapErr != nil {
-					return mapErr
-				}
-				_, mapErr = tx.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET path=? WHERE id=?", table), mapped, item.ID)
-				if mapErr == nil {
-					processed++
-					if processed%100 == 0 || processed == total {
-						handle.AdvanceLive(processed, total)
-					}
-				}
-				return mapErr
-			})
-			if e != nil {
-				return e
-			}
-		}
-		if op.Protected {
-			if _, e = tx.ExecContext(ctx, `INSERT INTO library_relocation_protection(library_id,operation_id,plan_id,facts_digest,anomaly_count,scan_mode,scan_interval,scan_formats) SELECT id,?,?,?,?,scan_mode,scan_interval,scan_formats FROM libraries WHERE id=? ON CONFLICT(library_id) DO UPDATE SET operation_id=excluded.operation_id,plan_id=excluded.plan_id,facts_digest=excluded.facts_digest,anomaly_count=excluded.anomaly_count`, op.ID, plan.ID, plan.FactsDigest, plan.AnomalyCount, op.LibraryID); e != nil {
-				return e
-			}
-			if _, e = tx.ExecContext(ctx, `UPDATE libraries SET scan_mode='none' WHERE id=?`, op.LibraryID); e != nil {
-				return e
-			}
-		}
-		if _, e = tx.ExecContext(ctx, `UPDATE libraries SET path=? WHERE id=? AND path=?`, op.TargetRoot, op.LibraryID, plan.LibraryRoot); e != nil {
-			return e
-		}
-		if _, e = tx.ExecContext(ctx, `UPDATE relocation_plans SET status='consumed' WHERE id=? AND status='checked'`, plan.ID); e != nil {
-			return e
-		}
-		op.Status = "paths_committed"
-		data, _ := json.Marshal(op)
-		if _, e = tx.ExecContext(ctx, `UPDATE relocation_operations SET status=?,result=? WHERE id=?`, op.Status, data, op.ID); e != nil {
-			return e
-		}
-		if session != nil {
-			if e = session.Verify(); e != nil {
-				return e
-			}
-		}
-		if e = tx.Commit(); e != nil {
-			return e
+		if committed != nil {
+			committed(op)
 		}
 		handle.Advance(processed, total, "task.msg.relocation.updating", nil)
 		keep = true
@@ -387,21 +283,7 @@ func (s *Service) Recover(ctx context.Context) error {
 	if err := s.Initialize(ctx); err != nil {
 		return err
 	}
-	rows, err := s.Store.DB().QueryContext(ctx, `SELECT id FROM relocation_operations WHERE status IN ('pending','prepared','paths_committed') ORDER BY id`)
-	if err != nil {
-		return err
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	err = rows.Err()
-	rows.Close()
+	ids, err := s.operations().unfinished(ctx)
 	if err != nil {
 		return err
 	}

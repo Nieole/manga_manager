@@ -8,16 +8,16 @@ import {
   supportsOfflineReaderCache,
   syncQueuedOfflineProgress,
   type OfflineBookStatus,
+  type OfflinePage,
 } from './offlineReader';
-import type { ImageFilter, Page, ReaderImageFormat } from './types';
 
 interface UseReaderOfflineOptions {
   bookId?: string;
   bookTitle: string;
-  pages: Page[];
-  imageFilter: ImageFilter;
+  pages: OfflinePage[];
+  imageFilter: string;
   autoCrop: boolean;
-  readerImageFormat: ReaderImageFormat;
+  readerImageFormat: 'original' | 'webp' | 'jpeg';
   readerImageQuality: number;
   getImageUrlForBook: (bookId: string, pageNumber: number) => string;
   t: (key: string) => string;
@@ -94,7 +94,6 @@ export function useReaderOffline({
   }, [bookId]);
 
   useEffect(() => {
-     
     refreshOfflineStatus();
   }, [refreshOfflineStatus]);
 

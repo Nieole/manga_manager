@@ -31,7 +31,7 @@ vi.mock('../../api/client', () => ({
 }));
 
 // 离线那一层整层替掉：本文件测的是取图缓存，不需要 Cache Storage。
-vi.mock('./offlineReader', () => ({
+vi.mock('../../features/offline/offlineReader', () => ({
   supportsOfflineReaderCache: () => false,
   cacheBookForOffline: vi.fn(),
   deleteOfflineBook: vi.fn(),
