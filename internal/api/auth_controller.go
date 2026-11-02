@@ -58,7 +58,7 @@ func sessionFromContext(ctx context.Context) (database.Session, bool) {
 // currentUserID 返回当前登录用户 id；无用户时（首启尚无账户 / 直接调用处理器的单元测试 / 未接入会话的
 // 阅读协议）返回 0。0 表示走旧的全局进度路径（books.last_read_page + series_stats），>0 走每用户进度。
 // authGate 保证：一旦站点存在账户，未登录请求会被 401 拦下，故已登录处理器里 currentUserID 恒 > 0。
-func (c *Controller) currentUserID(r *http.Request) int64 {
+func (c *administrationHTTP) currentUserID(r *http.Request) int64 {
 	if u, ok := userFromContext(r.Context()); ok {
 		return u.ID
 	}
@@ -119,7 +119,7 @@ func verifyPassword(hash, pw string) bool {
 // 用户名不存在与口令错误在返回值与**开销**上都不可区分：账户查不到时改用 dummyPasswordHash
 // 走完同一次 bcrypt。空哈希格式非法，bcrypt 会在做任何 KDF 之前就返回，两条分支的耗时因此差
 // 一个数量级——bcrypt 慢是故意的，正因为慢，这个缺口才明显。
-func (c *Controller) authenticateUser(ctx context.Context, username, password string) (database.User, bool) {
+func (c *administrationHTTP) authenticateUser(ctx context.Context, username, password string) (database.User, bool) {
 	return accounts.Authenticate(ctx, c.store, accounts.Credentials{Username: username, Password: password}, dummyPasswordHash, verifyPassword)
 }
 
@@ -134,7 +134,7 @@ func (c *Controller) authenticateUser(ctx context.Context, username, password st
 //   - **可信代理说了 http 就以它为准，不再看 r.TLS**：proxy→backend 之间常另有一段内部 TLS，
 //     若让 r.TLS 覆盖代理的声明，明文对外的部署会被误判成 https 而下发 Secure，
 //     浏览器随即丢弃 Cookie，登录直接失效。r.TLS 只在没有可信声明时兜底。
-func (c *Controller) sessionCookieSecure(r *http.Request) bool {
+func (c *administrationHTTP) sessionCookieSecure(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
@@ -172,7 +172,7 @@ func forwardedRequestProto(r *http.Request) string {
 
 // warnUntrustedForwardedProto 每进程只告警一次：该头由客户端可控，
 // 未配 trusted_proxies 的直连部署可能被任意请求触发，逐次打日志等于给了一个刷日志的口子。
-func (c *Controller) warnUntrustedForwardedProto() {
+func (c *administrationHTTP) warnUntrustedForwardedProto() {
 	if c == nil {
 		return
 	}
@@ -182,7 +182,7 @@ func (c *Controller) warnUntrustedForwardedProto() {
 	})
 }
 
-func (c *Controller) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
+func (c *administrationHTTP) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
@@ -195,7 +195,7 @@ func (c *Controller) setSessionCookie(w http.ResponseWriter, r *http.Request, to
 	})
 }
 
-func (c *Controller) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
@@ -214,7 +214,7 @@ func (c *Controller) clearSessionCookie(w http.ResponseWriter, r *http.Request) 
 
 // resolveBasicAuthUser 校验 Basic 凭据并返回站点用户 id；
 // 命中缓存即免去一次 bcrypt（bcrypt 故意很慢，协议客户端每个请求都带凭据）。
-func (c *Controller) resolveBasicAuthUser(ctx context.Context, username, password string) (int64, bool) {
+func (c *administrationHTTP) resolveBasicAuthUser(ctx context.Context, username, password string) (int64, bool) {
 	if username == "" || password == "" {
 		return 0, false
 	}
@@ -269,7 +269,7 @@ func basicUserKey(username string) string { return "basic-user:" + username }
 //
 // 用户名格与网页登录的用户名桶**刻意分开**：协议客户端会拿保存的旧口令自动重试，共用就意味着
 // 用户自己的阅读器能把他锁在网页端门外——而网页端正是他唯一能改回口令的地方。
-func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
+func (c *administrationHTTP) requireBasicAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !c.usersExist(r.Context()) {
 			next.ServeHTTP(w, r)
@@ -316,7 +316,7 @@ func (c *Controller) requireBasicAuth(next http.Handler) http.Handler {
 }
 
 // respondBasicAuthChallenge 应答「请（重新）出示凭据」。
-func (c *Controller) respondBasicAuthChallenge(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) respondBasicAuthChallenge(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("WWW-Authenticate", basicAuthChallenge)
 	jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
 }
@@ -377,7 +377,7 @@ func isCsrfExempt(p string) bool {
 
 // usersExist 报告站点是否已存在账户；一旦为真即缓存，避免每请求 COUNT。
 // 出错时按「已存在」处理（fail-closed）：公开鉴权端点在 authGate 中先于此判断放行，故首启 setup 不受影响。
-func (c *Controller) usersExist(ctx context.Context) bool {
+func (c *administrationHTTP) usersExist(ctx context.Context) bool {
 	if c.auth.usersExist() {
 		return true
 	}
@@ -423,7 +423,7 @@ func isAdminOnlyPath(p string) bool {
 
 // authorize 依角色与路径判定权限：/system 与 /users 为管理专属（含只读）；读方法对已登录用户开放；
 // 改写方法仅管理员放行，普通用户限个人写操作（见 isRegularWritablePath）。
-func (c *Controller) authorize(user database.User, r *http.Request) bool {
+func (c *administrationHTTP) authorize(user database.User, r *http.Request) bool {
 	p := r.URL.Path
 	if isAdminOnlyPath(p) {
 		return user.IsAdmin()
@@ -439,7 +439,7 @@ func (c *Controller) authorize(user database.User, r *http.Request) bool {
 
 // authGate 是 /api 组统一的鉴权中间件：放行公开端点与 Mihon（自带鉴权，阶段3 接入 Basic）、
 // 首启直通；否则解析会话 cookie → 用户，校验 CSRF 与角色，并把用户/会话写入上下文。
-func (c *Controller) authGate(next http.Handler) http.Handler {
+func (c *administrationHTTP) authGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if strings.HasPrefix(p, "/api/mihon/") {
@@ -508,7 +508,7 @@ func (c *Controller) authGate(next http.Handler) http.Handler {
 }
 
 // startSession 新建会话、下发 cookie，返回该会话的 CSRF 令牌供响应体带回前端。
-func (c *Controller) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, userID int64) (string, error) {
+func (c *administrationHTTP) startSession(ctx context.Context, w http.ResponseWriter, r *http.Request, userID int64) (string, error) {
 	raw, err := generateToken()
 	if err != nil {
 		return "", err
@@ -540,7 +540,7 @@ type authSessionResponse struct {
 // ---- 公开端点 ----
 
 // authStatus 报告站点初始化状态与当前登录态，供前端启动时决定进入 setup / 登录 / 应用。
-func (c *Controller) authStatus(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) authStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	count, err := c.store.CountUsers(ctx)
 	if err != nil {
@@ -562,7 +562,7 @@ func (c *Controller) authStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // setupAdmin maps initialization outcomes and establishes the separate HTTP session.
-func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req struct {
 		Username    string `json:"username"`
@@ -572,7 +572,7 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	result, err := accounts.NewInitialization(c.store, hashPassword).Setup(ctx, accounts.SetupInput{Username: req.Username, Password: req.Password, DisplayName: req.DisplayName})
+	result, err := c.initialization.Setup(ctx, accounts.SetupInput{Username: req.Username, Password: req.Password, DisplayName: req.DisplayName})
 	if err != nil {
 		switch {
 		case errors.Is(err, accounts.ErrInitialized):
@@ -614,7 +614,7 @@ func (c *Controller) setupAdmin(w http.ResponseWriter, r *http.Request) {
 //     而抬高阈值恰恰放宽了当下这条 5 次 / 15 分钟的单 IP 撒网防护。
 //
 // 结论：现状是有意为之。要动它得先给成功登录也套上限流，那是另一件事。
-func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ipKey := "ip:" + c.clientIP(r)
 	if d, locked := c.auth.loginLimiter.retryAfter(ipKey); locked {
@@ -655,7 +655,7 @@ func (c *Controller) login(w http.ResponseWriter, r *http.Request) {
 }
 
 // logout 删除当前会话并清 cookie。
-func (c *Controller) logout(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) logout(w http.ResponseWriter, r *http.Request) {
 	if sess, ok := sessionFromContext(r.Context()); ok {
 		_ = c.store.DeleteSession(r.Context(), sess.ID)
 	}
@@ -664,7 +664,7 @@ func (c *Controller) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // authMe 返回当前登录用户与其会话的 CSRF 令牌。
-func (c *Controller) authMe(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) authMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := userFromContext(r.Context())
 	if !ok {
 		jsonError(w, http.StatusUnauthorized, apiText(requestLocale(r), "auth.login_required"))
@@ -675,7 +675,7 @@ func (c *Controller) authMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // changePassword 用户自助改密：校验当前密码后更新，并踢掉本人所有会话、重新建立当前会话。
-func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) changePassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := userFromContext(ctx)
 	if !ok {
@@ -689,7 +689,7 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	out, err := accounts.NewPasswords(c.store, hashPassword, verifyPassword, c.auth.invalidateBasicAuthForUser).Change(ctx, accounts.Actor{ID: user.ID}, accounts.ChangePasswordInput{CurrentPassword: req.CurrentPassword, NewPassword: req.NewPassword})
+	out, err := c.passwords.Change(ctx, accounts.Actor{ID: user.ID}, accounts.ChangePasswordInput{CurrentPassword: req.CurrentPassword, NewPassword: req.NewPassword})
 	if err != nil {
 		if errors.Is(err, accounts.ErrCurrentPassword) {
 			jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "auth.password_incorrect"))
@@ -731,15 +731,15 @@ func accountManagementError(w http.ResponseWriter, r *http.Request, err error) {
 		jsonError(w, http.StatusInternalServerError, "account management failed")
 	}
 }
-func (c *Controller) listUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := accounts.NewManagement(c.store, hashPassword).List(r.Context(), accounts.Actor{ID: c.currentUserID(r)})
+func (c *administrationHTTP) listUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := c.management.List(r.Context(), accounts.Actor{ID: c.currentUserID(r)})
 	if err != nil {
 		accountManagementError(w, r, err)
 		return
 	}
 	jsonResponse(w, http.StatusOK, users)
 }
-func (c *Controller) createUser(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) createUser(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username    string `json:"username"`
 		Password    string `json:"password"`
@@ -749,14 +749,14 @@ func (c *Controller) createUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &in) {
 		return
 	}
-	user, err := accounts.NewManagement(c.store, hashPassword).Create(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, accounts.CreateInput{Username: in.Username, Password: in.Password, Role: in.Role, DisplayName: in.DisplayName})
+	user, err := c.management.Create(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, accounts.CreateInput{Username: in.Username, Password: in.Password, Role: in.Role, DisplayName: in.DisplayName})
 	if err != nil {
 		accountManagementError(w, r, err)
 		return
 	}
 	jsonResponse(w, http.StatusOK, user)
 }
-func (c *Controller) updateUser(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) updateUser(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "userId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid user ID")
@@ -769,7 +769,7 @@ func (c *Controller) updateUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &in) {
 		return
 	}
-	user, err := accounts.NewManagement(c.store, hashPassword).Update(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, id, accounts.UpdateInput{DisplayName: in.DisplayName, Role: in.Role})
+	user, err := c.management.Update(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, id, accounts.UpdateInput{DisplayName: in.DisplayName, Role: in.Role})
 	if err != nil {
 		accountManagementError(w, r, err)
 		return
@@ -778,7 +778,7 @@ func (c *Controller) updateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // resetUserPassword 由管理员重置某账户密码，并踢掉其全部会话强制重新登录。
-func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id, err := parseID(r, "userId")
 	if err != nil {
@@ -792,7 +792,7 @@ func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeAuthJSON(w, r, &req) {
 		return
 	}
-	out, err := accounts.NewPasswords(c.store, hashPassword, verifyPassword, c.auth.invalidateBasicAuthForUser).Reset(ctx, accounts.Actor{ID: c.currentUserID(r)}, id, req.Password)
+	out, err := c.passwords.Reset(ctx, accounts.Actor{ID: c.currentUserID(r)}, id, req.Password)
 	if err != nil {
 		accountManagementError(w, r, err)
 		return
@@ -801,13 +801,13 @@ func (c *Controller) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteUser 删除账户；禁止删除自身与最后一个管理员。
-func (c *Controller) deleteUser(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) deleteUser(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "userId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid user ID")
 		return
 	}
-	if err := accounts.NewManagement(c.store, hashPassword).Delete(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, id); err != nil {
+	if err := c.management.Delete(r.Context(), accounts.Actor{ID: c.currentUserID(r)}, id); err != nil {
 		accountManagementError(w, r, err)
 		return
 	}

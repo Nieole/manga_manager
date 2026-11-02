@@ -8,7 +8,7 @@ import (
 	"manga-manager/internal/database"
 )
 
-func (c *Controller) getHealthReport(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getHealthReport(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseOptionalInt64(r.URL.Query().Get("library_id"))
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")

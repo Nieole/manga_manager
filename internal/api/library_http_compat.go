@@ -248,7 +248,3 @@ func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Reques
 func (c *Controller) removeBooks(w http.ResponseWriter, r *http.Request) {
 	c.httpFamilies().removal.removeBooks(w, r)
 }
-
-func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
-	c.httpFamilies().library.browseDirs(w, r)
-}

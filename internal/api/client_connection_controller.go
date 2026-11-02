@@ -59,7 +59,7 @@ type ClientConnectionsResponse struct {
 	Status    ClientConnectionStatus     `json:"status"`
 }
 
-func (c *Controller) getClientConnections(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getClientConnections(w http.ResponseWriter, r *http.Request) {
 	cfg := c.currentConfig()
 	stats, err := c.store.GetKOReaderStats(r.Context())
 	if err != nil {

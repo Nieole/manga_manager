@@ -78,7 +78,12 @@ type LibraryDependencies struct {
 }
 
 // AdministrationDependencies supplies configuration publication, not a Runtime.
-type AdministrationDependencies struct{ Configuration *configuration.Service }
+type AdministrationDependencies struct {
+	Configuration *configuration.Service
+	Store         AdministrationStore
+	Manager       *config.Manager
+	KOReader      *koreader.Service
+}
 
 // HostDependencies groups capability inputs by the families migrating off Controller.
 // Legacy handlers consume these bindings until their family migration removes them.
@@ -141,8 +146,9 @@ func (t *Transport) TaskOptions(options task.Config) task.Config {
 // Host mounts feature adapters. Its compatibility controller is removed by the
 // reader, organization, library and administration migration tickets.
 type Host struct {
-	compatibility *Controller
-	families      httpFamilies
+	compatibility  *Controller
+	families       httpFamilies
+	administration *administrationHTTP
 }
 
 // Bind installs capabilities without constructing or starting another application.
@@ -167,9 +173,11 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 		c.reader = c.bindReaderHTTP(d.Reading.Capabilities)
 	}
 	cfg := c.config
-	return &Host{compatibility: c, families: bindHTTPFamilies(d.Libraries, d.Reading.Content, cfg.Snapshot, e, func(name string) metadata.Fetcher { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }, d.Administration.Configuration.DatabasePath, c.invalidateDashboardStatsCache)}
+	return &Host{compatibility: c, administration: newAdministration(d.Administration, c.auth, &c.untrustedProtoWarnOnce), families: bindHTTPFamilies(d.Libraries, d.Reading.Content, cfg.Snapshot, e, func(name string) metadata.Fetcher { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }, d.Administration.Configuration.DatabasePath, c.invalidateDashboardStatsCache)}
 }
 
-func (h *Host) SetupRoutes(r chi.Router)         { h.compatibility.setupRoutes(r, h.families) }
+func (h *Host) SetupRoutes(r chi.Router) {
+	h.compatibility.setupRoutes(r, h.families, h.administration)
+}
 func (h *Host) SetupOPDSRoutes(r chi.Router)     { h.compatibility.SetupOPDSRoutes(r) }
 func (h *Host) SetupKOReaderRoutes(r chi.Router) { h.compatibility.SetupKOReaderRoutes(r) }
