@@ -12,8 +12,23 @@ import (
 	"manga-manager/internal/database"
 )
 
+// RecordFacts supplies only identity and current library protection facts.
+type RecordFacts interface {
+	GetLibrary(context.Context, int64) (database.Library, error)
+	LibraryRelocationProtection(context.Context, int64) (*database.LibraryRelocationProtection, error)
+}
+type libraryFacts struct{ source database.Store }
+
+func (f libraryFacts) GetLibrary(ctx context.Context, id int64) (database.Library, error) {
+	return f.source.GetLibrary(ctx, id)
+}
+func (f libraryFacts) LibraryRelocationProtection(ctx context.Context, id int64) (*database.LibraryRelocationProtection, error) {
+	return f.source.LibraryRelocationProtection(ctx, id)
+}
+
 type Service struct {
-	Store            database.Store
+	Store            RecordFacts
+	persistence      *sqlitePersistence
 	Config           *config.Manager
 	Files            FileSystem
 	Acquire          func(context.Context, int64) (func(), error)
@@ -36,7 +51,7 @@ func (s *Service) dbtx() database.DBTX {
 	if s.db != nil {
 		return s.db
 	}
-	return s.Store.DB()
+	return s.persistence.db
 }
 
 func (s *Service) libraryPaths(ctx context.Context) ([]struct {
@@ -66,7 +81,7 @@ func (s *Service) libraryPaths(ctx context.Context) ([]struct {
 }
 
 func NewService(store database.Store, cfg *config.Manager) *Service {
-	return &Service{Store: store, Config: cfg, Files: HostFiles{}, access: commitAccess{releases: map[int64]func(){}}}
+	return &Service{Store: libraryFacts{store}, persistence: &sqlitePersistence{db: store.DB()}, Config: cfg, Files: HostFiles{}, access: commitAccess{releases: map[int64]func(){}}}
 }
 
 // Initialize is idempotent for existing databases. Plans deliberately have no
@@ -77,7 +92,7 @@ func (s *Service) Initialize(ctx context.Context) error {
 		return nil
 	}
 	s.once.Do(func() {
-		_, s.err = s.Store.DB().ExecContext(ctx, `
+		_, s.err = s.persistence.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS relocation_plans (
  id INTEGER PRIMARY KEY AUTOINCREMENT, library_id INTEGER NOT NULL,
  run_id INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL,
@@ -150,7 +165,7 @@ func (s *Service) Create(ctx context.Context, libraryID int64, source, target st
 	if err != nil {
 		return plan, err
 	}
-	result, err := s.Store.DB().ExecContext(ctx, `INSERT INTO relocation_plans(library_id,status,summary) VALUES(?,?,?)`, libraryID, plan.Status, body)
+	result, err := s.persistence.db.ExecContext(ctx, `INSERT INTO relocation_plans(library_id,status,summary) VALUES(?,?,?)`, libraryID, plan.Status, body)
 	if err != nil {
 		return plan, err
 	}
@@ -163,7 +178,7 @@ func (s *Service) SetRun(ctx context.Context, id, runID int64) error {
 	// The trigger can therefore bind a terminal check even before start returns,
 	// and history deletion cannot erase that fact. A failed label write followed
 	// by a missing unbound run is a persistence failure, not an inferred terminal.
-	result, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET run_id=?, status=
+	result, err := s.persistence.db.ExecContext(ctx, `UPDATE relocation_plans SET run_id=?, status=
  CASE WHEN status IN ('pending','checking') THEN COALESCE((
   SELECT CASE WHEN status='completed' THEN 'failed' ELSE status END FROM runs
   WHERE id=? AND status IN ('completed','cancelled','failed','interrupted')
@@ -187,7 +202,7 @@ func (s *Service) SetRun(ctx context.Context, id, runID int64) error {
 }
 
 func (s *Service) SetStatus(ctx context.Context, id int64, status string) error {
-	_, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET status=? WHERE id=? AND status IN ('pending','checking')`, status, id)
+	_, err := s.persistence.db.ExecContext(ctx, `UPDATE relocation_plans SET status=? WHERE id=? AND status IN ('pending','checking')`, status, id)
 	return err
 }
 
@@ -197,7 +212,7 @@ func (s *Service) InterruptChecks(ctx context.Context) error {
 	if err := s.Initialize(ctx); err != nil {
 		return err
 	}
-	_, err := s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET status='interrupted' WHERE status IN ('pending','checking')`)
+	_, err := s.persistence.db.ExecContext(ctx, `UPDATE relocation_plans SET status='interrupted' WHERE status IN ('pending','checking')`)
 	return err
 }
 
@@ -216,7 +231,7 @@ func (s *Service) LatestPurpose(ctx context.Context, libraryID int64, purpose st
 	if err := s.Initialize(ctx); err != nil {
 		return RelocationPlan{}, err
 	}
-	return s.readPlan(s.Store.DB().QueryRowContext(ctx, `SELECT id,run_id,status,summary,facts_digest,policies_json FROM relocation_plans WHERE library_id=? AND COALESCE(json_extract(summary,'$.purpose'),'')=? ORDER BY id DESC LIMIT 1`, libraryID, purpose))
+	return s.readPlan(s.persistence.db.QueryRowContext(ctx, `SELECT id,run_id,status,summary,facts_digest,policies_json FROM relocation_plans WHERE library_id=? AND COALESCE(json_extract(summary,'$.purpose'),'')=? ORDER BY id DESC LIMIT 1`, libraryID, purpose))
 }
 
 func (s *Service) readPlan(row *sql.Row) (RelocationPlan, error) {
@@ -236,7 +251,7 @@ func (s *Service) readPlan(row *sql.Row) (RelocationPlan, error) {
 		if protectionErr != nil {
 			return plan, protectionErr
 		}
-		err := s.Store.DB().QueryRow(`SELECT id,run_id FROM relocation_operations WHERE plan_id=?`, id).Scan(&plan.OperationID, &plan.CommitRunID)
+		err := s.persistence.db.QueryRow(`SELECT id,run_id FROM relocation_operations WHERE plan_id=?`, id).Scan(&plan.OperationID, &plan.CommitRunID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return plan, err
 		}
@@ -254,7 +269,7 @@ func (s *Service) save(ctx context.Context, plan RelocationPlan) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.Store.DB().ExecContext(ctx, `UPDATE relocation_plans SET status=?,summary=?,facts_digest=?,policies_json=? WHERE id=?`, plan.Status, body, plan.FactsDigest, plan.PoliciesJSON, plan.ID)
+	_, err = s.persistence.db.ExecContext(ctx, `UPDATE relocation_plans SET status=?,summary=?,facts_digest=?,policies_json=? WHERE id=?`, plan.Status, body, plan.FactsDigest, plan.PoliciesJSON, plan.ID)
 	return err
 }
 
@@ -264,7 +279,7 @@ func (s *Service) add(ctx context.Context, plan *RelocationPlan, detail Relocati
 		return nil
 	}
 	var ordinal int64
-	if err := s.Store.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0)+1 FROM relocation_details WHERE plan_id=?`, plan.ID).Scan(&ordinal); err != nil {
+	if err := s.persistence.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0)+1 FROM relocation_details WHERE plan_id=?`, plan.ID).Scan(&ordinal); err != nil {
 		return err
 	}
 	detail.Ordinal = ordinal
@@ -272,7 +287,7 @@ func (s *Service) add(ctx context.Context, plan *RelocationPlan, detail Relocati
 	if err != nil {
 		return err
 	}
-	if _, err = s.Store.DB().ExecContext(ctx, `INSERT INTO relocation_details(plan_id,ordinal,kind,detail) VALUES(?,?,?,?)`, plan.ID, ordinal, detail.Kind, body); err != nil {
+	if _, err = s.persistence.db.ExecContext(ctx, `INSERT INTO relocation_details(plan_id,ordinal,kind,detail) VALUES(?,?,?,?)`, plan.ID, ordinal, detail.Kind, body); err != nil {
 		return err
 	}
 	countDetail(plan, detail)
@@ -300,10 +315,10 @@ func (s *Service) Details(ctx context.Context, id int64, kind string, offset, li
 	if _, err := s.Get(ctx, id); err != nil {
 		return page, err
 	}
-	if err := s.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM relocation_details WHERE plan_id=? AND (?='' OR kind=?)`, id, kind, kind).Scan(&page.Total); err != nil {
+	if err := s.persistence.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM relocation_details WHERE plan_id=? AND (?='' OR kind=?)`, id, kind, kind).Scan(&page.Total); err != nil {
 		return page, err
 	}
-	rows, err := s.Store.DB().QueryContext(ctx, `SELECT detail FROM relocation_details WHERE plan_id=? AND (?='' OR kind=?) ORDER BY ordinal LIMIT ? OFFSET ?`, id, kind, kind, page.Limit, page.Offset)
+	rows, err := s.persistence.db.QueryContext(ctx, `SELECT detail FROM relocation_details WHERE plan_id=? AND (?='' OR kind=?) ORDER BY ordinal LIMIT ? OFFSET ?`, id, kind, kind, page.Limit, page.Offset)
 	if err != nil {
 		return page, err
 	}
