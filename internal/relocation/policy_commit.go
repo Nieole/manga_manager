@@ -2,8 +2,6 @@ package relocation
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"reflect"
 
@@ -115,31 +113,9 @@ func (s *Service) preparePolicies(ctx context.Context, op *RelocationOperation, 
 	next.Library.StoragePolicies = MappedPolicies(disk, op.SourceRoot, op.TargetRoot)
 	j.Before, j.After = j.entries(disk), j.entries(next)
 	j.Unowned = j.unowned(disk)
-	data, err := json.Marshal(j)
-	if err != nil {
+	if err = s.operations().preparePolicy(ctx, op, j); err != nil {
 		return nil, err
 	}
-	tx, err := s.Store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO relocation_policy_journal(operation_id,patch) VALUES(?,?)`, op.ID, data); err != nil {
-		return nil, err
-	}
-	prepared := *op
-	prepared.Status = "prepared"
-	data, err = json.Marshal(prepared)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE relocation_operations SET status='prepared',result=? WHERE id=? AND status='pending'`, data, op.ID); err != nil {
-		return nil, err
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	op.Status = "prepared"
 	if plan.PolicyCount == 0 {
 		return nil, nil
 	}
@@ -149,29 +125,10 @@ func (s *Service) preparePolicies(ctx context.Context, op *RelocationOperation, 
 	return &next, nil
 }
 
-func (s *Service) loadPolicyJournal(ctx context.Context, id int64) (*policyJournal, error) {
-	var data string
-	err := s.Store.DB().QueryRowContext(ctx, `SELECT patch FROM relocation_policy_journal WHERE operation_id=?`, id).Scan(&data)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var j policyJournal
-	if err = json.Unmarshal([]byte(data), &j); err != nil {
-		return nil, err
-	}
-	if j.Version != 1 {
-		return nil, errPolicyRecoveryConflict
-	}
-	return &j, nil
-}
-
 // reconcilePolicies uses the SQL decision to select compensation or completion.
 // A divergent owned entry is preserved and keeps the library inaccessible.
 func (s *Service) reconcilePolicies(ctx context.Context, op RelocationOperation, finish func(func() error) error) error {
-	j, err := s.loadPolicyJournal(ctx, op.ID)
+	j, err := s.operations().policy(ctx, op.ID)
 	if err != nil {
 		return err
 	}

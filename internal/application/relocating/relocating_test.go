@@ -210,6 +210,13 @@ func TestApplicationRelocationPreservesIdentityAndReleasesOnlyAfterEffects(t *te
 		run, _ := r.engine.Await(ctx, op.RunID)
 		t.Fatalf("effects failure opened operation: %+v run=%+v", op, run)
 	}
+	run, err := r.engine.Await(ctx, op.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.MessageParams["paths_committed"] != "true" || run.MessageParams["operation_status"] != "paths_committed" {
+		t.Fatalf("committed operation facts lost from run: %+v", run.MessageParams)
+	}
 	for _, id := range []int64{r.library.ID, nested.ID} {
 		if release, e := r.engine.AcquireLibraryRead(id); !errors.Is(e, task.ErrLibraryUnavailable) {
 			if release != nil {
@@ -290,6 +297,10 @@ func TestConfigurationWriteFailureCompensatesBeforeOpeningAccess(t *testing.T) {
 	if op.Status != "failed" {
 		t.Fatalf("configuration rollback boundary: %+v", op)
 	}
+	run, err := r.engine.Await(ctx, op.RunID)
+	if err != nil || run.MessageParams["paths_committed"] != "false" || run.MessageParams["operation_completed"] != "false" {
+		t.Fatalf("uncommitted failure facts: %+v %v", run.MessageParams, err)
+	}
 	book, err := r.store.GetBook(ctx, r.book.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -311,6 +322,10 @@ func TestConfigurationWriteFailureCompensatesBeforeOpeningAccess(t *testing.T) {
 	recovered, err := r.service.Confirm(ctx, retry.ID, false)
 	if err != nil || recovered.Status != "completed" {
 		t.Fatalf("retry after compensation: %+v %v", recovered, err)
+	}
+	run, err = r.engine.Await(ctx, recovered.RunID)
+	if err != nil || run.MessageParams["paths_committed"] != "true" || run.MessageParams["operation_completed"] != "true" {
+		t.Fatalf("completed retry facts: %+v %v", run.MessageParams, err)
 	}
 }
 
