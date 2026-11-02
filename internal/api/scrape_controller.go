@@ -317,7 +317,7 @@ func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request) {
+func (c *maintenanceHTTP) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request) {
 	ctx := requestContextWithLocale(r)
 
 	var reqBody struct {
@@ -338,7 +338,7 @@ func (c *Controller) batchScrapeAllSeries(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (c *Controller) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *maintenanceHTTP) scrapeLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := requestContextWithLocale(r)
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {

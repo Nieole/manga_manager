@@ -31,7 +31,7 @@ func externalLibraryTransferTaskKey(libraryID int64, sessionID string) string {
 	return diskjobs.ExternalTransferKey(libraryID, sessionID)
 }
 
-func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) createExternalLibrarySession(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -85,7 +85,7 @@ func (c *Controller) createExternalLibrarySession(w http.ResponseWriter, r *http
 	})
 }
 
-func (c *Controller) getExternalLibrarySession(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) getExternalLibrarySession(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -112,7 +112,7 @@ func (c *Controller) getExternalLibrarySession(w http.ResponseWriter, r *http.Re
 	jsonResponse(w, http.StatusOK, session)
 }
 
-func (c *Controller) getExternalLibrarySeries(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) getExternalLibrarySeries(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -159,7 +159,7 @@ func (c *Controller) getExternalLibrarySeries(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) transferToExternalLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) transferToExternalLibrary(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")

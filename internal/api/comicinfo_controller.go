@@ -20,7 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func (c *Controller) exportSeriesComicInfoArchive(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) exportSeriesComicInfoArchive(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := strconv.ParseInt(chi.URLParam(r, "seriesId"), 10, 64)
 	if err != nil || seriesID <= 0 {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -74,7 +74,7 @@ func (c *Controller) exportSeriesComicInfoArchive(w http.ResponseWriter, r *http
 	_, _ = w.Write(data)
 }
 
-func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) exportBookComicInfo(w http.ResponseWriter, r *http.Request) {
 	bookID, err := strconv.ParseInt(chi.URLParam(r, "bookId"), 10, 64)
 	if err != nil || bookID <= 0 {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -126,7 +126,7 @@ func (c *Controller) exportBookComicInfo(w http.ResponseWriter, r *http.Request)
 
 // writeBookComicInfo 把单本书的 ComicInfo.xml 合并写回其 cbz/zip 归档（原子替换、不备份）。
 // rar/cbr 与无法安全合并的原文档都返回 415；这是修改用户原始文件的敏感操作，由前端二次确认后触发。
-func (c *Controller) writeBookComicInfo(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) writeBookComicInfo(w http.ResponseWriter, r *http.Request) {
 	bookID, err := strconv.ParseInt(chi.URLParam(r, "bookId"), 10, 64)
 	if err != nil || bookID <= 0 {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -173,7 +173,7 @@ func (c *Controller) writeBookComicInfo(w http.ResponseWriter, r *http.Request) 
 
 // writeSeriesComicInfo 把整个系列所有可写归档（cbz/zip）的 ComicInfo.xml 写回，返回写入/跳过计数。
 // rar/cbr 条目按“跳过”处理，不视为失败。
-func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request) {
+func (c *diskHTTP) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := strconv.ParseInt(chi.URLParam(r, "seriesId"), 10, 64)
 	if err != nil || seriesID <= 0 {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -210,7 +210,7 @@ func (c *Controller) writeSeriesComicInfo(w http.ResponseWriter, r *http.Request
 func writeComicInfoTaskKey(seriesID int64) string { return diskjobs.ComicInfoKey(seriesID) }
 
 // buildBookComicInfo 复用导出路径的构造逻辑，从数据库聚合出单本书的 ComicInfo。
-func (c *Controller) buildBookComicInfo(r *http.Request, book database.Book) (parser.ComicInfo, error) {
+func (c *diskHTTP) buildBookComicInfo(r *http.Request, book database.Book) (parser.ComicInfo, error) {
 	series, err := c.store.GetSeries(r.Context(), book.SeriesID)
 	if err != nil {
 		return parser.ComicInfo{}, err

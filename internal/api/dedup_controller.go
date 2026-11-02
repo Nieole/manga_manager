@@ -17,7 +17,7 @@ import (
 )
 
 // getDuplicateBooks 返回按 file_hash 分组的重复书籍。
-func (c *Controller) getDuplicateBooks(w http.ResponseWriter, r *http.Request) {
+func (c *removalHTTP) getDuplicateBooks(w http.ResponseWriter, r *http.Request) {
 	rows, err := c.store.FindDuplicateBooks(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to find duplicates")
@@ -42,7 +42,7 @@ func (c *Controller) getDuplicateBooks(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeBooks 从库中移除选中书籍（删除数据库记录）。move_to_trash 为真时先把原文件移入回收站目录。
-func (c *Controller) removeBooks(w http.ResponseWriter, r *http.Request) {
+func (c *removalHTTP) removeBooks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		BookIDs     []int64 `json:"book_ids"`
 		MoveToTrash bool    `json:"move_to_trash"`
@@ -76,7 +76,7 @@ func (c *Controller) removeBooks(w http.ResponseWriter, r *http.Request) {
 
 	var trashDir string
 	if req.MoveToTrash {
-		trashDir = filepath.Join(filepath.Dir(c.configuration.DatabasePath()), "trash")
+		trashDir = filepath.Join(filepath.Dir(c.databasePath()), "trash")
 		if err := os.MkdirAll(trashDir, 0o755); err != nil {
 			jsonError(w, http.StatusInternalServerError, "Failed to prepare trash directory")
 			return

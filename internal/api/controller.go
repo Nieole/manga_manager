@@ -384,7 +384,9 @@ func eventPrefix(event string) string {
 	return event
 }
 
-func (c *Controller) SetupRoutes(r chi.Router) {
+func (c *Controller) SetupRoutes(r chi.Router) { c.setupRoutes(r, c.httpFamilies()) }
+
+func (c *Controller) setupRoutes(r chi.Router, f httpFamilies) {
 	r.Route("/api", func(r chi.Router) {
 		// 多用户会话鉴权（Cookie session + CSRF + 角色）。必须在挂载任何子路由之前 Use，
 		// 中间件内部会放行公开鉴权端点（/api/auth/status|setup|login）与阅读协议前缀 /api/mihon/，
@@ -408,30 +410,29 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Delete("/users/{userId}", c.deleteUser)
 
 		r.Get("/events", c.serveEvents)
-
-		r.Get("/libraries", c.getLibraries)
-		r.Post("/libraries", c.createLibrary)
-		r.Put("/libraries/{libraryId}", c.updateLibrary)
-		r.Post("/libraries/{libraryId}/relocation-plans", c.createRelocationPlan)
-		r.Get("/libraries/{libraryId}/relocation-restoration", c.getRelocationRestoration)
-		r.Post("/libraries/{libraryId}/relocation-restoration/checks", c.createRestorationCheck)
-		r.Post("/libraries/{libraryId}/relocation-restoration/release", c.releaseRelocationProtection)
-		r.Get("/libraries/{libraryId}/relocation-source-roots", c.relocationSourceRoots)
-		r.Get("/libraries/{libraryId}/relocation-plans/latest", c.latestRelocationPlan)
-		r.Get("/relocation-plans/{planId}", c.getRelocationPlan)
-		r.Get("/relocation-plans/{planId}/details", c.relocationDetails)
-		r.Post("/relocation-plans/{planId}/commit", c.commitRelocationPlan)
-		r.Get("/relocation-operations/{operationId}", c.getRelocationOperation)
-		r.Post("/libraries/{libraryId}/scan", c.scanLibrary)
-		r.Post("/libraries/{libraryId}/external-libraries/session", c.createExternalLibrarySession)
-		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}", c.getExternalLibrarySession)
-		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}/series", c.getExternalLibrarySeries)
-		r.Post("/libraries/{libraryId}/external-libraries/session/{sessionId}/transfer", c.transferToExternalLibrary)
-		r.Post("/libraries/{libraryId}/scrape", c.scrapeLibrary)
+		r.Get("/libraries", f.library.getLibraries)
+		r.Post("/libraries", f.library.createLibrary)
+		r.Put("/libraries/{libraryId}", f.library.updateLibrary)
+		r.Post("/libraries/{libraryId}/relocation-plans", f.relocation.createRelocationPlan)
+		r.Get("/libraries/{libraryId}/relocation-restoration", f.relocation.getRelocationRestoration)
+		r.Post("/libraries/{libraryId}/relocation-restoration/checks", f.relocation.createRestorationCheck)
+		r.Post("/libraries/{libraryId}/relocation-restoration/release", f.relocation.releaseRelocationProtection)
+		r.Get("/libraries/{libraryId}/relocation-source-roots", f.relocation.relocationSourceRoots)
+		r.Get("/libraries/{libraryId}/relocation-plans/latest", f.relocation.latestRelocationPlan)
+		r.Get("/relocation-plans/{planId}", f.relocation.getRelocationPlan)
+		r.Get("/relocation-plans/{planId}/details", f.relocation.relocationDetails)
+		r.Post("/relocation-plans/{planId}/commit", f.relocation.commitRelocationPlan)
+		r.Get("/relocation-operations/{operationId}", f.relocation.getRelocationOperation)
+		r.Post("/libraries/{libraryId}/scan", f.library.scanLibrary)
+		r.Post("/libraries/{libraryId}/external-libraries/session", f.disk.createExternalLibrarySession)
+		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}", f.disk.getExternalLibrarySession)
+		r.Get("/libraries/{libraryId}/external-libraries/session/{sessionId}/series", f.disk.getExternalLibrarySeries)
+		r.Post("/libraries/{libraryId}/external-libraries/session/{sessionId}/transfer", f.disk.transferToExternalLibrary)
+		r.Post("/libraries/{libraryId}/scrape", f.maintenance.scrapeLibrary)
 		r.Post("/libraries/{libraryId}/ai-grouping", c.aiGroupingLibrary)
-		r.Post("/libraries/{libraryId}/cleanup", c.cleanupLibrary)
-		r.Delete("/libraries/{libraryId}", c.deleteLibrary)
-		r.Get("/browse-dirs", c.browseDirs)
+		r.Post("/libraries/{libraryId}/cleanup", f.library.cleanupLibrary)
+		r.Delete("/libraries/{libraryId}", f.library.deleteLibrary)
+		r.Get("/browse-dirs", f.library.browseDirs)
 		r.Get("/metadata/search", c.searchMetadata)
 		r.Get("/metadata/providers", c.listProviders)
 
@@ -441,24 +442,24 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Post("/bulk-update", c.bulkUpdateSeries)
 			c.organizationHTTP.setupSeriesRoutes(r)
 			r.Post("/{seriesId}/open-dir", c.openSeriesDirectory)
-			r.Post("/{seriesId}/rescan", c.scanSeries)
+			r.Post("/{seriesId}/rescan", f.library.scanSeries)
 			r.Post("/{seriesId}/scrape", c.scrapeSeriesMetadata)
 			r.Get("/{seriesId}/scrape-search", c.scrapeSearchMetadata)
 			r.Post("/{seriesId}/scrape-apply", c.applyScrapedMetadata)
 
 			r.Put("/{seriesId}/custom-fields", c.replaceSeriesCustomFields)
 
-			r.Get("/{seriesId}/comicinfo.zip", c.exportSeriesComicInfoArchive)
-			r.Post("/{seriesId}/comicinfo", c.writeSeriesComicInfo)
+			r.Get("/{seriesId}/comicinfo.zip", f.disk.exportSeriesComicInfoArchive)
+			r.Post("/{seriesId}/comicinfo", f.disk.writeSeriesComicInfo)
 		})
 
 		r.Route("/books", func(r chi.Router) {
 			c.readerHTTP().setupBooksRoutes(r)
-			r.Get("/duplicates", c.getDuplicateBooks)
-			r.Post("/remove", c.removeBooks)
+			r.Get("/duplicates", f.removal.getDuplicateBooks)
+			r.Post("/remove", f.removal.removeBooks)
 
-			r.Get("/{bookId}/comicinfo.xml", c.exportBookComicInfo)
-			r.Post("/{bookId}/comicinfo", c.writeBookComicInfo)
+			r.Get("/{bookId}/comicinfo.xml", f.disk.exportBookComicInfo)
+			r.Post("/{bookId}/comicinfo", f.disk.writeBookComicInfo)
 			r.Post("/{bookId}/cover", c.setBookCoverFromPage)
 			r.Post("/{bookId}/cover/upload", c.uploadBookCover)
 			r.Get("/{bookId}/file", c.serveBookFile)
@@ -482,31 +483,31 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Get("/system/capabilities", c.getSystemCapabilities)
 		r.Get("/system/client-connections", c.getClientConnections)
 		r.Get("/system/performance", c.getSystemPerformance)
-		r.Get("/system/storage-io", c.getStorageIODiagnostics)
+		r.Get("/system/storage-io", f.storage.getStorageIODiagnostics)
 		r.Post("/system/config", c.updateSystemConfig)
 		r.Get("/system/logs", c.getSystemLogs)
 		r.Get("/system/page-cache", c.getPageCacheStats)
 		r.Delete("/system/page-cache", c.clearPageCache)
-		r.Get("/system/tasks", c.listTasks)
-		r.Delete("/system/tasks", c.clearTasks)
-		r.Get("/system/tasks/live", c.getTaskCenterLive)
-		r.Get("/system/tasks/summary", c.listTaskSummaries)
-		r.Post("/system/tasks/pause-all", c.pauseAllTasks)
-		r.Post("/system/tasks/resume-all", c.resumeAllTasks)
+		r.Get("/system/tasks", f.runs.listTasks)
+		r.Delete("/system/tasks", f.runs.clearTasks)
+		r.Get("/system/tasks/live", f.runs.getTaskCenterLive)
+		r.Get("/system/tasks/summary", f.runs.listTaskSummaries)
+		r.Post("/system/tasks/pause-all", f.runs.pauseAllTasks)
+		r.Post("/system/tasks/resume-all", f.runs.resumeAllTasks)
 		// 重试与禁用作用在**任务**上（前者再发起一次同一件事，后者关掉它的自动发起），
 		// 三条一律按**任务 id** 寻址（ADR 0007：**任务键**退出寻址）——禁用是身份上的长期属性，
 		// 而外部库那两类的键带着会话 id，同一身份的两次运行键并不相同。
 		// 暂停 / 恢复 / 取消作用在**运行**上，按运行 id 寻址——同一个任务此刻可以有两条仍会变化的
 		// 运行（一条在跑、一条排队），按任务寻址答不出用户按的是哪一条。
-		r.Post("/system/tasks/{taskID}/retry", c.retryTask)
-		r.Post("/system/tasks/{taskID}/disable", c.disableTask)
-		r.Post("/system/tasks/{taskID}/enable", c.enableTask)
-		r.Post("/system/runs/{runID}/pause", c.pauseRun)
-		r.Post("/system/runs/{runID}/resume", c.resumeRun)
-		r.Post("/system/runs/{runID}/cancel", c.cancelRun)
+		r.Post("/system/tasks/{taskID}/retry", f.runs.retryTask)
+		r.Post("/system/tasks/{taskID}/disable", f.runs.disableTask)
+		r.Post("/system/tasks/{taskID}/enable", f.runs.enableTask)
+		r.Post("/system/runs/{runID}/pause", f.runs.pauseRun)
+		r.Post("/system/runs/{runID}/resume", f.runs.resumeRun)
+		r.Post("/system/runs/{runID}/cancel", f.runs.cancelRun)
 		// 事件流与**采样**都按**运行**寻址，且**不进推送通道**：详情页打开时才来问这两条。
-		r.Get("/system/runs/{runID}/events", c.getRunEvents)
-		r.Get("/system/runs/{runID}/samples", c.getRunSamples)
+		r.Get("/system/runs/{runID}/events", f.runs.getRunEvents)
+		r.Get("/system/runs/{runID}/samples", f.runs.getRunSamples)
 		r.Get("/system/koreader", c.getKOReaderSettings)
 		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
 		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)
@@ -516,16 +517,16 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/koreader/accounts/{accountId}/rotate-key", c.rotateKOReaderAccountKey)
 		r.Post("/system/koreader/accounts/{accountId}/toggle", c.toggleKOReaderAccount)
 		r.Delete("/system/koreader/accounts/{accountId}", c.deleteKOReaderAccount)
-		r.Post("/system/koreader/apply-matching", c.applyKOReaderMatching)
-		r.Post("/system/koreader/rebuild-hashes", c.rebuildKOReaderHashes)
-		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
+		r.Post("/system/koreader/apply-matching", f.maintenance.applyKOReaderMatching)
+		r.Post("/system/koreader/rebuild-hashes", f.maintenance.rebuildKOReaderHashes)
+		r.Post("/system/koreader/reconcile", f.maintenance.reconcileKOReaderProgress)
 		r.Delete("/system/koreader/progress/{progressId}", c.resetKOReaderProgress)
-		r.Post("/system/rebuild-index", c.rebuildIndex)
-		r.Post("/system/rebuild-initials", c.rebuildInitials)
-		r.Post("/system/rebuild-thumbnails", c.rebuildThumbnails)
-		r.Post("/system/cleanup-thumbnails", c.cleanupThumbnails)
-		r.Post("/system/rebuild-file-identities", c.rebuildFileIdentities)
-		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
+		r.Post("/system/rebuild-index", f.maintenance.rebuildIndex)
+		r.Post("/system/rebuild-initials", f.maintenance.rebuildInitials)
+		r.Post("/system/rebuild-thumbnails", f.maintenance.rebuildThumbnails)
+		r.Post("/system/cleanup-thumbnails", f.maintenance.cleanupThumbnails)
+		r.Post("/system/rebuild-file-identities", f.maintenance.rebuildFileIdentities)
+		r.Post("/system/batch-scrape", f.maintenance.batchScrapeAllSeries)
 		r.Post("/system/test-llm", c.testLLMConfig)
 
 		r.Route("/pages", func(r chi.Router) {
@@ -582,7 +583,7 @@ func jsonError(w http.ResponseWriter, status int, message string) {
 // getLibraries 返回资料库列表。整条端点对已登录用户开放——普通用户的侧栏、仪表盘与整理页
 // 都靠它拿 id 与 name；响应里的宿主机绝对路径由 jsonResponse 按角色统一裁掉（见 redactHostPaths），
 // 只有管理员的编辑弹窗拿得到真值。
-func (c *Controller) getLibraries(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) getLibraries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libs, err := c.store.ListLibraries(ctx)
 	if err != nil {
