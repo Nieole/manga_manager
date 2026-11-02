@@ -56,7 +56,7 @@ type LogsResponse struct {
 
 // getSystemLogs 提供分页或者只取最新的错误日志
 // 此处我们实现一个基本逻辑：从 data/manga_manager.log 倒序读取包含 level=ERROR 的行
-func (c *Controller) getSystemLogs(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getSystemLogs(w http.ResponseWriter, r *http.Request) {
 	limitStr := r.URL.Query().Get("limit")
 	limit := 100 // 默认返回最新的 100 条错误
 	if l, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil || l != 1 || limit <= 0 {

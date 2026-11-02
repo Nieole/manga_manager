@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	ksvc "manga-manager/internal/koreader"
@@ -157,7 +158,7 @@ func (c *Controller) SetupKOReaderRoutes(r chi.Router) {
 	})
 }
 
-func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getKOReaderSettings(w http.ResponseWriter, r *http.Request) {
 	stats, err := c.store.GetKOReaderStats(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch KOReader settings")
@@ -186,7 +187,7 @@ func (c *Controller) getKOReaderSettings(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (c *Controller) listKOReaderUnmatched(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) listKOReaderUnmatched(w http.ResponseWriter, r *http.Request) {
 	limit := 20
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
@@ -222,7 +223,7 @@ func (c *Controller) listKOReaderUnmatched(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, result)
 }
 
-func (c *Controller) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getKOReaderDeviceDiagnostics(w http.ResponseWriter, r *http.Request) {
 	limit := 30
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
@@ -438,7 +439,7 @@ func mapKOReaderAccountResponse(account database.KOReaderAccount) KOReaderAccoun
 	return resp
 }
 
-func (c *Controller) listKOReaderAccounts(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) listKOReaderAccounts(w http.ResponseWriter, r *http.Request) {
 	accounts, err := c.koreader.ListAccounts(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load KOReader accounts")
@@ -454,7 +455,7 @@ func (c *Controller) listKOReaderAccounts(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, result)
 }
 
-func (c *Controller) createKOReaderAccount(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) createKOReaderAccount(w http.ResponseWriter, r *http.Request) {
 	var req CreateKOReaderAccountRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid KOReader account payload")
@@ -508,7 +509,7 @@ func (c *Controller) createKOReaderAccount(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusCreated, mapKOReaderAccountResponse(account))
 }
 
-func (c *Controller) rotateKOReaderAccountKey(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) rotateKOReaderAccountKey(w http.ResponseWriter, r *http.Request) {
 	accountID, err := strconv.ParseInt(chi.URLParam(r, "accountId"), 10, 64)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid KOReader account ID")
@@ -533,7 +534,7 @@ func (c *Controller) rotateKOReaderAccountKey(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, mapKOReaderAccountResponse(account))
 }
 
-func (c *Controller) toggleKOReaderAccount(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) toggleKOReaderAccount(w http.ResponseWriter, r *http.Request) {
 	accountID, err := strconv.ParseInt(chi.URLParam(r, "accountId"), 10, 64)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid KOReader account ID")
@@ -569,7 +570,7 @@ func (c *Controller) toggleKOReaderAccount(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, mapKOReaderAccountResponse(account))
 }
 
-func (c *Controller) deleteKOReaderAccount(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) deleteKOReaderAccount(w http.ResponseWriter, r *http.Request) {
 	accountID, err := strconv.ParseInt(chi.URLParam(r, "accountId"), 10, 64)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid KOReader account ID")
@@ -587,7 +588,7 @@ func (c *Controller) deleteKOReaderAccount(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, map[string]string{"message": apiText(requestLocale(r), "koreader.account.deleted")})
 }
 
-func (c *Controller) resetKOReaderProgress(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) resetKOReaderProgress(w http.ResponseWriter, r *http.Request) {
 	progressID, err := strconv.ParseInt(chi.URLParam(r, "progressId"), 10, 64)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid KOReader progress ID")
@@ -611,60 +612,38 @@ func (c *Controller) resetKOReaderProgress(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Request) {
-	expected := c.currentConfig()
+func (c *administrationHTTP) updateKOReaderSettings(w http.ResponseWriter, r *http.Request) {
 	var req UpdateKOReaderSettingsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid KOReader settings payload")
 		return
 	}
-
-	var issues []config.ValidationIssue
-	req.BasePath = strings.TrimSpace(req.BasePath)
-	if req.BasePath == "" {
-		req.BasePath = "/koreader"
-	}
-	if !strings.HasPrefix(req.BasePath, "/") {
-		issues = append(issues, config.ValidationIssue{Field: "koreader.base_path", Message: apiText(requestLocale(r), "koreader.validation.base_path_slash"), Severity: "error"})
-	}
-	req.MatchMode = strings.TrimSpace(strings.ToLower(req.MatchMode))
-	if req.MatchMode == "" {
-		req.MatchMode = config.KOReaderMatchModeBinaryHash
-	}
-	switch req.MatchMode {
-	case config.KOReaderMatchModeBinaryHash, config.KOReaderMatchModeFilePath:
-	default:
-		issues = append(issues, config.ValidationIssue{Field: "koreader.match_mode", Message: apiText(requestLocale(r), "koreader.validation.match_mode"), Severity: "error"})
-	}
-	if len(issues) > 0 {
-		jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{
-			"error": "KOReader settings validation failed",
-			"validation": config.ValidationResult{
-				Valid:  false,
-				Issues: issues,
-			},
-		})
-		return
-	}
-
-	if !c.requireConfigVersion(w, r, expected) {
-		return
-	}
-	cfg := config.CloneConfig(expected)
-	cfg.KOReader.Enabled = req.Enabled
-	cfg.KOReader.BasePath = req.BasePath
-	cfg.KOReader.AllowRegistration = req.AllowRegistration
-	cfg.KOReader.MatchMode = req.MatchMode
-	cfg.KOReader.PathIgnoreExtension = req.PathIgnoreExtension
-	if err := c.persistConfigExpected(&expected, &cfg); err != nil {
-		if errors.Is(err, config.ErrConflict) {
+	_, err := c.configuration.SaveKOReaderSettings(r.Header.Get("If-Match"), configuration.KOReaderSettings{
+		Enabled: req.Enabled, BasePath: req.BasePath, AllowRegistration: req.AllowRegistration, MatchMode: req.MatchMode, PathIgnoreExtension: req.PathIgnoreExtension,
+	})
+	if err != nil {
+		var invalid *configuration.Invalid
+		switch {
+		case errors.As(err, &invalid):
+			validation := invalid.Validation
+			for i := range validation.Issues {
+				switch validation.Issues[i].Field {
+				case "koreader.base_path":
+					validation.Issues[i].Message = apiText(requestLocale(r), "koreader.validation.base_path_slash")
+				case "koreader.match_mode":
+					validation.Issues[i].Message = apiText(requestLocale(r), "koreader.validation.match_mode")
+				}
+			}
+			jsonResponse(w, http.StatusUnprocessableEntity, map[string]interface{}{"error": "KOReader settings validation failed", "validation": validation})
+		case errors.Is(err, configuration.ErrVersionRequired):
+			jsonError(w, http.StatusPreconditionRequired, "Read the configuration and send its ETag in If-Match before saving")
+		case errors.Is(err, config.ErrConflict):
 			jsonError(w, http.StatusConflict, err.Error())
-			return
+		default:
+			jsonError(w, http.StatusInternalServerError, "Failed to persist KOReader configuration")
 		}
-		jsonError(w, http.StatusInternalServerError, "Failed to persist KOReader configuration")
 		return
 	}
-
 	c.getKOReaderSettings(w, r)
 }
 

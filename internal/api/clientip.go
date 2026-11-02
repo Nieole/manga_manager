@@ -16,7 +16,7 @@ import (
 // 这条规则是必须的：限流以 IP 为键，无条件采信 XFF 意味着攻击者每个请求换一个伪造
 // 头就是一个全新的桶，登录暴破防护与 Basic 鉴权的 bcrypt CPU-DoS 防护双双失效。
 // 直连部署本就不该出现转发头；套了反代的部署把代理网段配上即可拿到真实 IP。
-func (c *Controller) clientIP(r *http.Request) string {
+func (c *administrationHTTP) clientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
@@ -35,7 +35,7 @@ func (c *Controller) clientIP(r *http.Request) string {
 // 这是「代理头可不可信」这个概念的唯一出口：clientIP 用它决定要不要采信 X-Forwarded-For，
 // 会话 Cookie 的 Secure 判定用它决定要不要采信 X-Forwarded-Proto。两者必须共用同一套
 // trusted_proxies 判定，否则限流侧收紧了、Cookie 侧却仍可能无条件采信，分叉早晚重新长出来。
-func (c *Controller) trustsForwardedHeaders(r *http.Request) bool {
+func (c *administrationHTTP) trustsForwardedHeaders(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
@@ -43,7 +43,7 @@ func (c *Controller) trustsForwardedHeaders(r *http.Request) bool {
 }
 
 // trustsProxy 判断直连对端是否属于已声明的可信代理。
-func (c *Controller) trustsProxy(remote string) bool {
+func (c *administrationHTTP) trustsProxy(remote string) bool {
 	if remote == "" {
 		return false
 	}

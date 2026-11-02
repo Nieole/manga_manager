@@ -286,42 +286,6 @@ func validateOutboundLLMTarget(baseURL, endpoint string) error {
 	}
 }
 
-func (c *Controller) persistConfig(cfg *config.Config) error {
-	expected := c.currentConfig()
-	return c.persistConfigExpected(&expected, cfg)
-}
-
-func (c *Controller) persistConfigExpected(expected, cfg *config.Config) error {
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
-	_, err := c.configuration.SaveExpected(expected, *cfg)
-	return err
-}
-
-func (c *Controller) systemCapabilities() SystemCapabilitiesResponse {
-	return SystemCapabilitiesResponse{
-		SupportedScanFormats:     append([]string{}, config.SupportedScanFormats...),
-		SupportedScanProfiles:    append([]string{}, config.SupportedScanProfiles...),
-		SupportedLogLevels:       append([]string{}, config.SupportedLogLevels...),
-		SupportedStorageProfiles: append([]string{}, config.SupportedStorageProfiles...),
-		DefaultScanFormats:       config.DefaultScanFormatsCSV,
-		DefaultScanInterval:      config.DefaultScanInterval,
-		SupportedLLMProviders:    []string{"ollama", "openai"},
-		SupportedLLMAPIModes:     []string{"responses", "chat_completions"},
-	}
-}
-
-func (c *Controller) buildSystemConfigResponse(cfg config.Config, publication configuration.Publication) SystemConfigResponse {
-	return SystemConfigResponse{
-		Config:       cfg,
-		Validation:   config.ValidateConfig(&cfg),
-		Capabilities: c.systemCapabilities(),
-		FieldEffects: config.FieldEffects(),
-		Publication:  publication,
-	}
-}
-
 func openPathInDefaultFileManager(path string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -385,26 +349,16 @@ func eventPrefix(event string) string {
 	return event
 }
 
-func (c *Controller) SetupRoutes(r chi.Router) {
+func (c *Controller) SetupRoutes(r chi.Router) { c.setupRoutes(r, c.administration()) }
+
+func (c *Controller) setupRoutes(r chi.Router, admin *administrationHTTP) {
 	r.Route("/api", func(r chi.Router) {
 		// 多用户会话鉴权（Cookie session + CSRF + 角色）。必须在挂载任何子路由之前 Use，
 		// 中间件内部会放行公开鉴权端点（/api/auth/status|setup|login）与阅读协议前缀 /api/mihon/，
-		// 且在「尚无账户」的首启阶段直通（首次建管理员前站点无数据需保护）。
-		r.Use(c.authGate)
+		// 首次建管理员前，其余管理端点也必须拒绝访问。
+		r.Use(admin.authGate)
+		admin.mount(r)
 		c.setupMihonRoutes(r)
-
-		// 鉴权与账户管理
-		r.Get("/auth/status", c.authStatus)
-		r.Post("/auth/setup", c.setupAdmin)
-		r.Post("/auth/login", c.login)
-		r.Post("/auth/logout", c.logout)
-		r.Get("/auth/me", c.authMe)
-		r.Post("/auth/change-password", c.changePassword)
-		r.Get("/users", c.listUsers)
-		r.Post("/users", c.createUser)
-		r.Patch("/users/{userId}", c.updateUser)
-		r.Post("/users/{userId}/password", c.resetUserPassword)
-		r.Delete("/users/{userId}", c.deleteUser)
 
 		r.Get("/events", c.serveEvents)
 		r.Get("/search", c.searchBooks)
@@ -431,11 +385,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/libraries/{libraryId}/ai-grouping", c.aiGroupingLibrary)
 		r.Post("/libraries/{libraryId}/cleanup", c.cleanupLibrary)
 		r.Delete("/libraries/{libraryId}", c.deleteLibrary)
-		r.Get("/browse-dirs", c.browseDirs)
 		r.Get("/metadata/search", c.searchMetadata)
 		r.Get("/metadata/providers", c.listProviders)
 		r.Get("/recommendations", c.getRecommendations)
-		r.Get("/health/report", c.getHealthReport)
 		r.Get("/metadata/reviews", c.listMetadataReviewInbox)
 		r.Post("/metadata/reviews/bulk-apply", c.bulkApplyMetadataReviews)
 		r.Post("/metadata/reviews/bulk-reject", c.bulkRejectMetadataReviews)
@@ -509,13 +461,7 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 			r.Get("/search", c.searchAuthors)
 		})
 
-		r.Get("/system/config", c.getSystemConfig)
-		r.Get("/system/capabilities", c.getSystemCapabilities)
-		r.Get("/system/client-connections", c.getClientConnections)
-		r.Get("/system/performance", c.getSystemPerformance)
 		r.Get("/system/storage-io", c.getStorageIODiagnostics)
-		r.Post("/system/config", c.updateSystemConfig)
-		r.Get("/system/logs", c.getSystemLogs)
 		r.Get("/system/page-cache", c.getPageCacheStats)
 		r.Delete("/system/page-cache", c.clearPageCache)
 		r.Get("/system/tasks", c.listTasks)
@@ -538,19 +484,9 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		// 事件流与**采样**都按**运行**寻址，且**不进推送通道**：详情页打开时才来问这两条。
 		r.Get("/system/runs/{runID}/events", c.getRunEvents)
 		r.Get("/system/runs/{runID}/samples", c.getRunSamples)
-		r.Get("/system/koreader", c.getKOReaderSettings)
-		r.Get("/system/koreader/accounts", c.listKOReaderAccounts)
-		r.Get("/system/koreader/unmatched", c.listKOReaderUnmatched)
-		r.Get("/system/koreader/devices", c.getKOReaderDeviceDiagnostics)
-		r.Post("/system/koreader", c.updateKOReaderSettings)
-		r.Post("/system/koreader/accounts", c.createKOReaderAccount)
-		r.Post("/system/koreader/accounts/{accountId}/rotate-key", c.rotateKOReaderAccountKey)
-		r.Post("/system/koreader/accounts/{accountId}/toggle", c.toggleKOReaderAccount)
-		r.Delete("/system/koreader/accounts/{accountId}", c.deleteKOReaderAccount)
 		r.Post("/system/koreader/apply-matching", c.applyKOReaderMatching)
 		r.Post("/system/koreader/rebuild-hashes", c.rebuildKOReaderHashes)
 		r.Post("/system/koreader/reconcile", c.reconcileKOReaderProgress)
-		r.Delete("/system/koreader/progress/{progressId}", c.resetKOReaderProgress)
 		r.Post("/system/rebuild-index", c.rebuildIndex)
 		r.Post("/system/rebuild-initials", c.rebuildInitials)
 		r.Post("/system/rebuild-franchises", c.rebuildFranchiseCollectionsHandler)
@@ -558,7 +494,6 @@ func (c *Controller) SetupRoutes(r chi.Router) {
 		r.Post("/system/cleanup-thumbnails", c.cleanupThumbnails)
 		r.Post("/system/rebuild-file-identities", c.rebuildFileIdentities)
 		r.Post("/system/batch-scrape", c.batchScrapeAllSeries)
-		r.Post("/system/test-llm", c.testLLMConfig)
 
 		// 统计看板
 		r.Get("/stats/dashboard", c.getDashboardStats)

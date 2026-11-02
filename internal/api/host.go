@@ -77,7 +77,12 @@ type LibraryDependencies struct {
 }
 
 // AdministrationDependencies supplies configuration publication, not a Runtime.
-type AdministrationDependencies struct{ Configuration *configuration.Service }
+type AdministrationDependencies struct {
+	Configuration *configuration.Service
+	Store         AdministrationStore
+	Manager       *config.Manager
+	KOReader      *koreader.Service
+}
 
 // HostDependencies groups capability inputs by the families migrating off Controller.
 // Legacy handlers consume these bindings until their family migration removes them.
@@ -139,7 +144,10 @@ func (t *Transport) TaskOptions(options task.Config) task.Config {
 
 // Host mounts feature adapters. Its compatibility controller is removed by the
 // reader, organization, library and administration migration tickets.
-type Host struct{ compatibility *Controller }
+type Host struct {
+	compatibility  *Controller
+	administration *administrationHTTP
+}
 
 // Bind installs capabilities without constructing or starting another application.
 func (t *Transport) Bind(d HostDependencies) *Host {
@@ -158,9 +166,9 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 	e := c.taskEngine
 	e.engine, e.runs, e.runStore, e.registry = d.Libraries.Runs.Engine, d.Libraries.Runs.Runs, d.Libraries.Runs.Store, d.Libraries.Runs.Registry
 	e.runBackground = d.Lifecycle.Go
-	return &Host{compatibility: c}
+	return &Host{compatibility: c, administration: newAdministration(d.Administration, c.auth, &c.untrustedProtoWarnOnce)}
 }
 
-func (h *Host) SetupRoutes(r chi.Router)         { h.compatibility.SetupRoutes(r) }
+func (h *Host) SetupRoutes(r chi.Router)         { h.compatibility.setupRoutes(r, h.administration) }
 func (h *Host) SetupOPDSRoutes(r chi.Router)     { h.compatibility.SetupOPDSRoutes(r) }
 func (h *Host) SetupKOReaderRoutes(r chi.Router) { h.compatibility.SetupKOReaderRoutes(r) }

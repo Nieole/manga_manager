@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) browseDirs(w http.ResponseWriter, r *http.Request) {
 	reqPath := r.URL.Query().Get("path")
 
 	// 如果没有传路径，返回系统根目录
@@ -98,7 +98,7 @@ func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, result)
 }
 
-func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.Config) {
+func (c *administrationHTTP) enrichConfigWithDatabase(ctx context.Context, cfg *config.Config) {
 	libs, err := c.store.ListLibraries(ctx)
 	if err == nil {
 		cfg.Library.Paths = make([]string, 0, len(libs))
@@ -108,7 +108,7 @@ func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.C
 	}
 }
 
-func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getSystemConfig(w http.ResponseWriter, r *http.Request) {
 	view := c.configuration.Read()
 	cfg := view.Config
 	w.Header().Set("ETag", view.Publication.Version)
@@ -117,11 +117,11 @@ func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, c.buildSystemConfigResponse(config.MaskSecrets(cfg), view.Publication))
 }
 
-func (c *Controller) getSystemCapabilities(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getSystemCapabilities(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, c.systemCapabilities())
 }
 
-func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) updateSystemConfig(w http.ResponseWriter, r *http.Request) {
 	var newCfg config.Config
 	if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid configuration format")
@@ -157,7 +157,7 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider    string `json:"provider"`
 		APIMode     string `json:"api_mode"`
@@ -204,16 +204,4 @@ func (c *Controller) testLLMConfig(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{
 		"response": response,
 	})
-}
-
-func (c *Controller) requireConfigVersion(w http.ResponseWriter, r *http.Request, expected config.Config) bool {
-	if r.Header.Get("If-Match") == "" {
-		jsonError(w, http.StatusPreconditionRequired, "Read the configuration and send its ETag in If-Match before saving")
-		return false
-	}
-	if r.Header.Get("If-Match") != c.config.Version(expected) {
-		jsonError(w, http.StatusConflict, config.ErrConflict.Error())
-		return false
-	}
-	return true
 }

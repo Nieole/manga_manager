@@ -200,7 +200,7 @@ func (b *requestDiagnosticsBuffer) reset() {
 	}
 }
 
-func (c *Controller) getSystemPerformance(w http.ResponseWriter, r *http.Request) {
+func (c *administrationHTTP) getSystemPerformance(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, buildSystemPerformanceSummary(requestDiagnostics.snapshot()))
 }
 
