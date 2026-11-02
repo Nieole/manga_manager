@@ -4,7 +4,7 @@ status: accepted
 
 # 按完整功能组织用例与查询，宿主独立装配
 
-实施状态：生产装配由 `bootstrap.Open` 持有唯一 `runtime.New` 调用，创建内容、缓存与应用资源，绑定 HTTP leaf effects 后才执行恢复并开放输入。`Host` 只保存已绑定的 HTTP 适配器，在同一鉴权 chi 子树组合阅读、编排、资料库/运行与管理家庭；不构造应用、不持有 Runtime 或全量 Store。旧 `Controller`、core/runtime HTTP 装配、家庭重建与兼容转发已删除。工单 47 已经独立评审、集成并关闭；全项目逐故事联合验收及其限制见架构整理 acceptance.md，工单 48 保持开放等待独立评审。
+实施状态：生产装配由 `bootstrap.Open` 持有唯一 `runtime.New` 调用，创建内容、缓存与应用资源，绑定 HTTP leaf effects 后才执行恢复并开放输入。`Host` 只保存已绑定的 HTTP 适配器，在同一鉴权 chi 子树组合阅读、编排、资料库/运行与管理家庭；不构造应用、不持有 Runtime 或全量 Store。旧 `Controller`、core/runtime HTTP 装配、家庭重建与兼容转发已删除。工单 47、48 已经独立评审、集成并关闭；全项目逐故事证据及两轴复审结论见架构整理 acceptance.md。该映射不是所有故事的穷尽认证，Linux/Darwin CGO 构建失败及非 Windows、真实设备/服务与浏览器存储未执行限制仍保留。
 
 阅读、目录、评价及 OPDS/Mihon 由 `ReaderHTTP` 消费阅读命令、查询与只读目录投影；元数据、提案裁决、合集、智能书架、关系、阅读清单与 AI 分组审核由编排家庭持有。阅读协议经窄回调共享同一编排查询、认证和内容访问适配器，不按需回退重建家庭。
 
