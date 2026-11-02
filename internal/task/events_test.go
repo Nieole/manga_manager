@@ -6,6 +6,7 @@ package task
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"manga-manager/internal/runhandle"
@@ -301,5 +302,29 @@ func TestEventsAreRefusedOnceTheRunIsTerminal(t *testing.T) {
 	late.Warn("degraded", "too late", 0)
 	if got := len(harness.eventsOf(t, run.ID)); got != 0 {
 		t.Fatalf("终态之后又落下 %d 条事件", got)
+	}
+}
+
+func TestEveryLossyCoalesceRetainsIncomingDeclaration(t *testing.T) {
+	h := newTestEngine(t, registerOnly, 1)
+	spec := libraryScanSpec(1)
+	spec.Args = map[string]string{"force": "false"}
+	h.start(t, spec, idleBody)
+	queued := h.start(t, spec, idleBody)
+	h.start(t, spec, idleBody)
+	spec.Labels = map[string]string{"volume_key": "other"}
+	h.start(t, spec, idleBody)
+	spec.Args = map[string]string{"force": "true"}
+	for range 2 {
+		h.start(t, spec, idleBody)
+	}
+	events := eventsByKind(h.eventsOf(t, queued.ID), EventControl)
+	if len(events) != 3 {
+		t.Fatalf("events = %+v, want first lossless and both lossy", events)
+	}
+	for _, event := range events[1:] {
+		if !strings.Contains(event.Detail, `"force":"true"`) || !strings.Contains(event.Detail, `"volume_key":"other"`) {
+			t.Fatalf("incoming declaration missing: %+v", event)
+		}
 	}
 }

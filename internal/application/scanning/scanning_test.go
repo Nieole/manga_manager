@@ -108,7 +108,7 @@ func TestWatchRenameCompletesBeforeCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshots) != 2 || snapshots[0].Run.Trigger != task.TriggerWatch || snapshots[0].Side.Args["force"] != "false" {
+	if len(snapshots) != 2 || snapshots[0].Run.Trigger != task.TriggerWatch || snapshots[0].Side.Args["force"] != "false" || len(snapshots[0].Side.Args) != 1 || snapshots[0].Side.Limits == nil {
 		t.Fatalf("scan declaration: %+v", snapshots)
 	}
 }

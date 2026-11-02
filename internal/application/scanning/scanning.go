@@ -89,8 +89,6 @@ func (c *Service) scanLibrary(lib database.Library, force bool, trigger task.Tri
 			return task.Launched{}, err
 		}
 	}
-	cfg := c.config()
-	storagePolicy := config.ResolveStoragePolicy(cfg, lib.Path)
 
 	spec := task.RunSpec{
 		ValidateAccess: func() error {
@@ -111,20 +109,13 @@ func (c *Service) scanLibrary(lib database.Library, force bool, trigger task.Tri
 			}
 			return nil
 		},
-		Key:         fmt.Sprintf("scan_library_%d", lib.ID),
-		StartCode:   "task.msg.scan_library.start",
-		StartParams: map[string]string{"name": lib.Name},
-		CanCancel:   true,
-		CanPause:    true,
-		ScopeName:   lib.Name,
-		Args: map[string]string{
-			"force":                    strconv.FormatBool(force),
-			"scan_profile":             cfg.Scanner.ScanProfile,
-			"storage_profile":          storagePolicy.StorageProfile,
-			"volume_key":               storagePolicy.VolumeKey,
-			"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
-			"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
-		},
+		Key:          fmt.Sprintf("scan_library_%d", lib.ID),
+		StartCode:    "task.msg.scan_library.start",
+		StartParams:  map[string]string{"name": lib.Name},
+		CanCancel:    true,
+		CanPause:     true,
+		ScopeName:    lib.Name,
+		Args:         map[string]string{"force": strconv.FormatBool(force)},
 		Limits:       LimitsForPath(c.config(), lib.Path),
 		CompleteCode: "task.msg.scan_library.complete",
 		CancelCode:   "task.msg.scan_library.cancelled",
@@ -174,7 +165,6 @@ func (c *Service) ScanSeries(seriesID int64, force bool, trigger task.Trigger) e
 	}
 	idParams := map[string]string{"id": strconv.FormatInt(seriesID, 10)}
 	scopeName := ""
-	storagePolicy := config.ResolvedStoragePolicy{}
 	// 并发上限只在真找到了所属资料库时才有意义：查不到就让任务声明里的 Limits 留零值，
 	// 引擎不会为它凭空造一份全零的上限（那会在任务面板上显示成「0 并发」的假数据）。
 	limits := task.Limits{}
@@ -184,7 +174,6 @@ func (c *Service) ScanSeries(seriesID int64, force bool, trigger task.Trigger) e
 			scopeName = series.Title.String
 		}
 		if lib, libErr := c.store.GetLibrary(context.Background(), series.LibraryID); libErr == nil {
-			storagePolicy = config.ResolveStoragePolicy(c.config(), lib.Path)
 			limits = LimitsForPath(c.config(), lib.Path)
 		}
 	}
@@ -203,20 +192,13 @@ func (c *Service) ScanSeries(seriesID int64, force bool, trigger task.Trigger) e
 			}
 			return c.requireAutomaticProcessing(context.Background(), current.LibraryID)
 		},
-		Key:         fmt.Sprintf("scan_series_%d", seriesID),
-		StartCode:   "task.msg.scan_series.start",
-		StartParams: idParams,
-		CanCancel:   true,
-		CanPause:    true,
-		ScopeName:   scopeName,
-		Args: map[string]string{
-			"force":                    strconv.FormatBool(force),
-			"scan_profile":             c.config().Scanner.ScanProfile,
-			"storage_profile":          storagePolicy.StorageProfile,
-			"volume_key":               storagePolicy.VolumeKey,
-			"archive_open_concurrency": strconv.Itoa(storagePolicy.IOPolicy.ArchiveOpenConcurrency),
-			"cover_concurrency":        strconv.Itoa(storagePolicy.IOPolicy.CoverConcurrency),
-		},
+		Key:          fmt.Sprintf("scan_series_%d", seriesID),
+		StartCode:    "task.msg.scan_series.start",
+		StartParams:  idParams,
+		CanCancel:    true,
+		CanPause:     true,
+		ScopeName:    scopeName,
+		Args:         map[string]string{"force": strconv.FormatBool(force)},
 		Limits:       limits,
 		CompleteCode: "task.msg.scan_series.complete",
 		CancelCode:   "task.msg.scan_series.cancelled",

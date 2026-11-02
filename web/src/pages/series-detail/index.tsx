@@ -81,7 +81,7 @@ export default function SeriesDetailPage() {
     resetKey: seriesId, // 跳到别的系列时清空选择，避免批量操作写到上一个系列的书
   });
 
-  const progress = useSeriesProgress({ reload: ctx.reload, showToast, t });
+  const progress = useSeriesProgress({ seriesId, reload: ctx.reload, showToast, t });
   const actions = useSeriesActions({ seriesId, showToast, t });
   const scrape = useSeriesScrape({ seriesId, series: ctx.series, reload: ctx.reload, showToast, t });
   const edit = useSeriesEdit({

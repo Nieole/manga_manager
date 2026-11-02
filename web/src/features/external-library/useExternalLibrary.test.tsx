@@ -42,7 +42,7 @@ it('keeps the transfer active through pause and resume, then refreshes committed
   await act(async () => view.result.current.external.startExternalTransfer([7], () => {}));
   await waitFor(() => expect(view.result.current.external.externalSeriesMap[7]?.external_match_count).toBe(1));
   const push = async (sequence: number, status: string) => {
-    await act(async () => Source.current.onmessage?.({ data: 'run_snapshot:' + JSON.stringify({ sequence, prev: sequence - 1, run: { type: 'transfer_external_library', scope_id: 1, status, params: { session_id: 's1' } } }) }));
+    await act(async () => Source.current.onmessage?.({ data: 'run_snapshot:' + JSON.stringify({ sequence, prev: sequence - 1, run: { type: 'transfer_external_library', scope_id: 1, status, labels: { session_id: 's1' } } }) }));
   };
   await push(1, 'paused');
   expect(view.result.current.external.externalTransferTaskKey).toBe('transfer');
@@ -96,7 +96,7 @@ it.each(['cancelled', 'failed'])('uses the session to refresh coverage and catal
   await act(async () => view.result.current.external.startExternalLibraryScan());
   await act(async () => view.result.current.external.startExternalTransfer([7], () => {}));
   const before = requests.length;
-  await act(async () => Source.current.onmessage?.({ data: 'run_snapshot:' + JSON.stringify({ sequence: 1, prev: 0, run: { type: 'transfer_external_library', status, params: { session_id: 's1' }, message_params: { added: '1', committed_book_ids: '21' } } }) }));
+  await act(async () => Source.current.onmessage?.({ data: 'run_snapshot:' + JSON.stringify({ sequence: 1, prev: 0, run: { type: 'transfer_external_library', status, labels: { session_id: 's1' }, message_params: { added: '1', committed_book_ids: '21' } } }) }));
   expect(requests.slice(before).some(url => url.endsWith('/s1'))).toBe(true);
   expect(view.result.current.refresh).toBe(1);
   expect(view.result.current.external.externalTransferTaskKey).toBeNull();
@@ -132,7 +132,7 @@ it('recovers a missed transfer terminal after reconnect without a snapshot DOM b
     const url = config.url ?? ''; requests.push(url);
     const session = { session_id: 's1', library_id: 1, status: 'ready' };
     const data = config.method === 'post' ? url.endsWith('/transfer') ? { task_key: 'transfer' } : { session, task_key: 'scan' }
-      : url.startsWith('/api/system/tasks?') ? [{ run_id: 8, task_id: 3, scope_id: 1, type: 'transfer_external_library', status: 'failed', params: { session_id: 's1' } }]
+      : url.startsWith('/api/system/tasks?') ? [{ run_id: 8, task_id: 3, scope_id: 1, type: 'transfer_external_library', status: 'failed', labels: { session_id: 's1' } }]
         : url.endsWith('/series') ? [] : session;
     return { data, status: 200, statusText: 'OK', headers: {}, config };
   };

@@ -482,6 +482,15 @@ describe('日志入口按运行给', () => {
 });
 
 describe('事件流', () => {
+  it('shows the submitted declaration on a lossy coalescing event', () => {
+    renderCenter({
+      live: makeLive({ active: 1, runs: [makeRun({ run_id: 3 })] }),
+      detail: { cardId: runCardId('live', 3), events: { run_id: 3, phases: [], events: [
+        { at: '2026-08-31T00:00:00Z', kind: 'control', action: 'coalesced', detail: '{"trigger":"manual","args":{"force":"true"},"lossy":true}' },
+      ] } },
+    });
+    expect(screen.getByText(/"force":"true"/)).toBeTruthy();
+  });
   const runWithEvents = (events: RunEventsResponse) => ({
     live: makeLive({ active: 1, runs: [makeRun({ run_id: 3 })] }),
     detail: { cardId: runCardId('live', 3), events },
@@ -546,7 +555,7 @@ describe('事件流', () => {
       onToggleTask: vi.fn(),
       detail: {
         cardId: runCardId('history', 3),
-        events: { run_id: 3, events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
+        events: { run_id: 3, phases: [], events: [{ at: '2026-08-31T00:00:01Z', kind: 'item', item: '/lib/only-mine.cbz' }], phases: [] },
       },
     });
 
@@ -743,9 +752,9 @@ describe('筛选语义', () => {
 describe('存储 IO 那一条', () => {
   // 那五个数已从**重启入参**搬进指标（见 taskScanObserver.Metrics）。这一条只读参数的话，
   // 搬完之后它会少五格——而用户没做任何事，只是升了个级。
-  it('数搬进指标之后照样显示那五个', () => {
+  it.each(['labels', 'effective_limit'] as const)('reads IO environment from %s and counts from metrics', (declaration) => {
     renderLiveRuns([makeRun({
-      params: { storage_profile: 'hdd_external', volume_key: 'e:' },
+      [declaration]: { storage_profile: 'hdd_external', volume_key: 'e:' },
       metrics: { opened_archives: 5, hashed_files: 3, io_wait_ms: 123, paused_ms: 45, duration_ms: 6789 },
     })]);
     fireEvent.click(screen.getByText('common.viewDetails'));
@@ -755,7 +764,7 @@ describe('存储 IO 那一条', () => {
     expect(screen.getByText(/logs\.task\.io\.io_wait_ms: 123/)).toBeTruthy();
     expect(screen.getByText(/logs\.task\.io\.paused_ms: 45/)).toBeTruthy();
     expect(screen.getByText(/logs\.task\.io\.duration_ms: 6789/)).toBeTruthy();
-    // 描述性的那两格仍读入参：它们是发起时就声明下来的，不随报文走。
+    // 环境从声明读取，不依赖重启入参。
     expect(screen.getByText(/logs\.task\.io\.storage_profile: hdd_external/)).toBeTruthy();
   });
 

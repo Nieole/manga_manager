@@ -61,6 +61,7 @@ func TestIncrementalSkipRespectsScanProfileCapability(t *testing.T) {
 		cfg := newProfileScanTestConfig(t, config.ScanProfileFast)
 		manager := config.NewManager(cfg)
 		s := NewScanner(store, manager)
+		t.Cleanup(s.Close)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -96,6 +97,7 @@ func TestIncrementalSkipRespectsScanProfileCapability(t *testing.T) {
 		seedProfileScanBook(t, libraryPath)
 
 		s := NewScanner(store, config.NewManager(newProfileScanTestConfig(t, config.ScanProfileFast)))
+		t.Cleanup(s.Close)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := s.ScanLibrary(ctx, lib.ID, libraryPath, false, nil); err != nil {
@@ -120,6 +122,7 @@ func TestIncrementalSkipRespectsScanProfileCapability(t *testing.T) {
 		cfg := newProfileScanTestConfig(t, config.ScanProfileFast)
 		manager := config.NewManager(cfg)
 		s := NewScanner(store, manager)
+		t.Cleanup(s.Close)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -146,6 +149,7 @@ func TestIncrementalSkipRespectsScanProfileCapability(t *testing.T) {
 		seedProfileScanBook(t, libraryPath)
 
 		s := NewScanner(store, config.NewManager(newProfileScanTestConfig(t, config.ScanProfileMetadata)))
+		t.Cleanup(s.Close)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := s.ScanLibrary(ctx, lib.ID, libraryPath, false, nil); err != nil {

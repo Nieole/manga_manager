@@ -98,9 +98,9 @@ func TestRetryRestartsTheSameVariant(t *testing.T) {
 				t.Fatalf("重启后的 %q 终态为 %q / %q, want completed + %s", tc.key, task.Status, task.MessageCode, tc.wantCode)
 			}
 			for name, want := range tc.wantParams {
-				if task.Params[name] != want {
+				if task.Labels[name] != want {
 					t.Fatalf("重启后的 %q 参数 %s=%q, want %q —— 它换成了另一条键的跑法：%v",
-						tc.key, name, task.Params[name], want, task.Params)
+						tc.key, name, task.Labels[name], want, task.Labels)
 				}
 			}
 		})

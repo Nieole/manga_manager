@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { useLibraryInvalidation } from '../../../session/ApplicationSessionProvider';
 import { apiClient } from '../../../api/client';
 import type { MetaTag, SearchResult, Series as DetailSeries } from '../../series-detail/types';
 import type { Series } from '../types';
@@ -32,6 +33,7 @@ interface UseSeriesScrapingResult {
 }
 
 export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParams): UseSeriesScrapingResult {
+  const invalidateLibrary = useLibraryInvalidation();
   const [scrapeProvider, setScrapeProvider] = useState('');
   const [scrapeModalSearchQuery, setScrapeModalSearchQuery] = useState('');
   const [showScrapeModal, setShowScrapeModal] = useState(false);
@@ -146,6 +148,7 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
             onError('series.toast.scrapeDuplicate');
           }
         } else {
+          if (res.data?.queued || res.data?.outcome === 'queued') invalidateLibrary({ areas: ['reviews'] });
           onSuccess(scrapingSeries.id);
         }
         closeScrapeModal();
@@ -156,7 +159,7 @@ export function useSeriesScraping({ onSuccess, onError }: UseSeriesScrapingParam
         setIsScraping(false);
       }
     },
-    [scrapingSeries, scrapeProvider, onSuccess, closeScrapeModal, onError],
+    [scrapingSeries, scrapeProvider, onSuccess, closeScrapeModal, onError, invalidateLibrary],
   );
 
   return {

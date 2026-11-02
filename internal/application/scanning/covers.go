@@ -116,17 +116,14 @@ func (c *Service) startCoverRun(ctx context.Context, libraryID int64, trigger ta
 	}
 	policy := config.ResolveStoragePolicy(c.config(), lib.Path)
 	spec := task.RunSpec{
-		Key:         fmt.Sprintf("generate_covers_%d", libraryID),
-		StartCode:   "task.msg.generate_covers.start",
-		StartParams: map[string]string{"name": lib.Name},
-		CanCancel:   true,
-		CanPause:    true,
-		ScopeName:   lib.Name,
-		Args: map[string]string{
-			"storage_profile":   policy.StorageProfile,
-			"volume_key":        policy.VolumeKey,
-			"cover_concurrency": strconv.Itoa(policy.IOPolicy.CoverConcurrency),
-		},
+		Key:          fmt.Sprintf("generate_covers_%d", libraryID),
+		StartCode:    "task.msg.generate_covers.start",
+		StartParams:  map[string]string{"name": lib.Name},
+		CanCancel:    true,
+		CanPause:     true,
+		ScopeName:    lib.Name,
+		Args:         map[string]string{"backfill": strconv.FormatBool(backfill)},
+		Limits:       task.Limits{StorageProfile: policy.StorageProfile, VolumeKey: policy.VolumeKey, CoverConcurrency: policy.IOPolicy.CoverConcurrency},
 		CompleteCode: "task.msg.generate_covers.complete",
 		CancelCode:   "task.msg.generate_covers.cancelled",
 		FailCode:     "task.msg.generate_covers.failed",

@@ -270,7 +270,7 @@ func TestCleanupThumbnailsReportsPhaseThenCounts(t *testing.T) {
 // 计数、阶段、指标与标签都来自同一本书。拆成 Advance / Phase / Metrics / Labels 四次分报即变红
 // （撕开之后是什么样见 runhandle.Handle.Report）。
 func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
-	c, snapshots, clock := newMaintenanceRig(t, &maintenanceStore{})
+	c, snapshots, _ := newMaintenanceRig(t, &maintenanceStore{})
 	const key = "rebuild_file_identities"
 	progress := seedTask(t, c.taskEngine, taskSeed{Key: key, Identity: systemTask(key, variantSole), CanCancel: true, CanPause: true})
 
@@ -291,16 +291,11 @@ func TestHashProgressFrameIsPublishedWhole(t *testing.T) {
 	if task.Metrics["hashed_files"] != 7 || task.Metrics["io_wait_ms"] != 120 || task.Metrics["paused_ms"] != 30 {
 		t.Fatalf("指标与计数不是同一本书：%v", task.Metrics)
 	}
-	if task.Labels["storage_profile"] != "hdd_external" || task.Labels["volume_key"] != "/srv" {
-		t.Fatalf("存储画像标签没落地：%v", task.Labels)
+	if task.Labels["storage_profile"] != "" || task.Labels["volume_key"] != "" {
+		t.Fatalf("cross-library run claims a disk: %v", task.Labels)
 	}
-
-	// IO 参数走的是另一条通道（RunSnapshot.Params），存储 IO 面板按参数名读它；
-	// 它与上面那一帧各自投递一次，因此要推过节流窗口才看得见。
-	clock.advance(taskProgressPublishInterval * 2)
-	reportHashProgress(progress, 8, 40, "task.msg.rebuild_file_identities.progress", metrics)
-	if task := lastPublishedTask(t, snapshots(), key); task.Params["hashed_files"] != "7" || task.Params["io_wait_ms"] != "120" {
-		t.Fatalf("IO 参数没有走到**任务参数**那条通道：%v", task.Params)
+	if len(task.Params) != 0 {
+		t.Fatalf("IO metrics duplicated in replay input: %v", task.Params)
 	}
 }
 
@@ -315,7 +310,7 @@ func TestRebuildFileIdentitiesCompletesWithCounts(t *testing.T) {
 	}
 
 	first := firstPublishedTask(t, snapshots(), "rebuild_file_identities")
-	if first.Params["profile"] != "quick_hash" {
+	if first.Labels["profile"] != "quick_hash" {
 		t.Fatalf("首帧没带上元数据：%v", first.Params)
 	}
 	if first.EffectiveLimit != nil {

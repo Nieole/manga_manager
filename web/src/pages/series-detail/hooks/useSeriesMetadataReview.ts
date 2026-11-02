@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useLibraryInvalidation } from '../../../session/ApplicationSessionProvider';
 import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 
@@ -10,13 +11,15 @@ interface UseSeriesMetadataReviewParams {
 }
 
 export function useSeriesMetadataReview({ reload, showToast, t }: UseSeriesMetadataReviewParams) {
+  const invalidateLibrary = useLibraryInvalidation();
   const [busyMetadataReviewId, setBusyMetadataReviewId] = useState<number | null>(null);
 
   const apply = useCallback(
     async (reviewId: number) => {
       setBusyMetadataReviewId(reviewId);
       try {
-        await apiClient.post(`/api/metadata/reviews/${reviewId}/apply`);
+        const response = await apiClient.post(`/api/metadata/reviews/${reviewId}/apply`);
+        if (response.data.applied) invalidateLibrary({ areas: ['catalog', 'collections', 'organize', 'stats', 'reading-lists', 'reviews'] });
         await reload();
         showToast(t('series.toast.metadataReviewApplied'), 'success');
       } catch (err) {
@@ -25,7 +28,7 @@ export function useSeriesMetadataReview({ reload, showToast, t }: UseSeriesMetad
         setBusyMetadataReviewId(null);
       }
     },
-    [reload, showToast, t],
+    [reload, showToast, t, invalidateLibrary],
   );
 
   const reject = useCallback(
@@ -33,6 +36,7 @@ export function useSeriesMetadataReview({ reload, showToast, t }: UseSeriesMetad
       setBusyMetadataReviewId(reviewId);
       try {
         await apiClient.post(`/api/metadata/reviews/${reviewId}/reject`);
+        invalidateLibrary({ areas: ['reviews'] });
         await reload();
         showToast(t('series.toast.metadataReviewRejected'), 'success');
       } catch (err) {
@@ -41,7 +45,7 @@ export function useSeriesMetadataReview({ reload, showToast, t }: UseSeriesMetad
         setBusyMetadataReviewId(null);
       }
     },
-    [reload, showToast, t],
+    [reload, showToast, t, invalidateLibrary],
   );
 
   return { busyMetadataReviewId, apply, reject };

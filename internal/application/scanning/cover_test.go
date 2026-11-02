@@ -427,3 +427,38 @@ func TestCoverWorkerLogsUseItsOwnRunAfterTheScanFinishes(t *testing.T) {
 		t.Fatalf("cover worker lost its own context: %s", warning)
 	}
 }
+
+func TestCoverRestartReplaysBackfillIndependentlyOfTrigger(t *testing.T) {
+	for _, trigger := range []task.Trigger{task.TriggerManual, task.TriggerResumed} {
+		t.Run(string(trigger), func(t *testing.T) {
+			service, store, lib, scan, engine, _ := newCoverService(t, func(fn func()) { fn() }, nil)
+			coverArchive(t, lib, "missing.cbz")
+			scan.SetCoverRunLauncher(nil)
+			if err := scan.ScanLibrary(context.Background(), lib.ID, lib.Path, true, nil); err != nil {
+				t.Fatal(err)
+			}
+			id := task.Identity{Type: "generate_covers", Scope: task.ScopeLibrary, ScopeID: lib.ID}
+			for _, backfill := range []string{"false", "legacy", "true"} {
+				args := map[string]string{"backfill": backfill}
+				if backfill == "legacy" {
+					args = nil
+				}
+				launched, err := service.Restart(context.Background(), id, args, trigger)
+				if err != nil {
+					t.Fatal(err)
+				}
+				run, err := engine.Await(context.Background(), launched.Run.ID)
+				if err != nil || run.Status != task.StatusCompleted {
+					t.Fatalf("run: %+v %v", run, err)
+				}
+				want := 0
+				if backfill != "false" {
+					want = 1
+				}
+				if got := coverCount(t, store, lib.ID); got != want {
+					t.Fatalf("backfill=%s covers=%d want=%d", backfill, got, want)
+				}
+			}
+		})
+	}
+}
