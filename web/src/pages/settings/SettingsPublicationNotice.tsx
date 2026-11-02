@@ -1,5 +1,5 @@
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings } from './SettingsContext';
+import { useSettings } from '../../features/settings-editor';
 
 export function SettingsPublicationNotice() {
   const { t } = useI18n();

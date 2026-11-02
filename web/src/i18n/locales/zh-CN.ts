@@ -1,6 +1,8 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'settings.editor.conflict': '服务器设置已变化。本分区未保存的修改和原版本仍保留；请检查，或明确放弃本分区修改后重新载入。',
+    'settings.editor.reloadSection': '放弃本分区修改并重新载入',
     'settings.toast.configSavedRestart': '配置已保存并发布；部分字段仍需重启服务后生效。',
     'settings.toast.configSavedNext': '配置已保存并发布；相关字段由后续请求或作业读取。',
     'settings.toast.configRefreshFailed': '保存已成功，但设置视图刷新失败；请重新加载后核对。',

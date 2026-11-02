@@ -1,11 +1,15 @@
 import { Sparkles, Terminal } from 'lucide-react';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings } from './SettingsContext';
+import { useSettings } from '../../features/settings-editor/SettingsEditorProvider';
+import { useConnectionTest } from '../../features/settings-actions/ConnectionTestingProvider';
 import { FieldErrors, SettingsPageIntro, SettingsSaveBar, inputClassName, sectionClassName } from './shared';
 
 export function SettingsAIPage() {
   const { t } = useI18n();
-  const { config, setConfig, fieldErrors, testingLLM, handleTestLLM, llmTestPrompt, setLlmTestPrompt, llmTestResult, saving, saveConfig } = useSettings();
+  const { testingLLM, handleTestLLM, llmTestPrompt, setLlmTestPrompt, llmTestResult } = useConnectionTest();
+  const { config, setConfig, fieldErrors, isSectionSaving, saveConfig } = useSettings();
+
+  const saving = isSectionSaving('ai');
 
   if (!config) return null;
 
