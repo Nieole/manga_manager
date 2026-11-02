@@ -109,7 +109,7 @@ func (c *Controller) enrichConfigWithDatabase(ctx context.Context, cfg *config.C
 }
 
 func (c *Controller) getSystemConfig(w http.ResponseWriter, r *http.Request) {
-	view := c.runtime.Configuration.Read()
+	view := c.configuration.Read()
 	cfg := view.Config
 	w.Header().Set("ETag", view.Publication.Version)
 	c.enrichConfigWithDatabase(r.Context(), &cfg)
@@ -127,7 +127,7 @@ func (c *Controller) updateSystemConfig(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid configuration format")
 		return
 	}
-	result, err := c.runtime.Configuration.SaveSettings(r.Header.Get("If-Match"), newCfg)
+	result, err := c.configuration.SaveSettings(r.Header.Get("If-Match"), newCfg)
 	if err != nil {
 		var invalid *configuration.Invalid
 		if errors.As(err, &invalid) {
