@@ -31,7 +31,9 @@
 
 11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
 
-当前完成 35/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、27、28、29、30、31、36、38、39、40、41。32、42 在独立工作树实施，25 将按依赖继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+当前已关闭 35/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、27、28、29、30、31、36、38、39、40、41。25、32、33、34、35、42 已经独立审查并合入集成分支，仍待组合门禁和逐票关闭；37、43–46 在各自隔离工作树继续实施，47/48 尚待前置完成。32 的协议并发保存误报、KOReader 冲突重载后诊断陈旧，以及 34 的自身失效竞争吞掉刷新告警均在修复、回归和复审通过后才合入。
+
+25/33 首次组合验证的前端 104 文件 / 958 项及 lint/build 通过，但全量 Go 实际失败于 scanner 临时目录清理，HTTP race 实际发现 restoration fixture 的 slotLimit 并发读写；两项正在独立工作树诊断，不记作绿色（`.tmp/wave-next-integration-*.log`）。32 合入后前端 976 项及 lint/build 通过（`.tmp/settings-integration-web-*.log`）。42 合入后 bootstrap/runtime/relocating/cmd 四包完整 race 实际通过（`.tmp/bootstrap-combined-integration-race.log`），计划级独立审查通过但不代表全仓绿色。34/35 合入后的前端组合门禁正在运行，保留 `.tmp/frontend-feature-combined-*.log`；文档检查超时与其他平台/真实设备未执行的限制不计通过。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
 
 12 已合入并关闭：主树 AI 分组 owner race 13.910s、数据库窄能力 race 7.706s、集成后全前端 99 文件 / 937 测试及 lint/build 通过，Go lint 0 issues、格式和 diff 检查通过。主树 API 多次被 Application Control 拦截，稳定二进制启动也未确认执行，已停止精确启动器并保留限制；API 实际通过依据为实现树完整 104.921s、focused race 17.835s 和合并集成后 focused 普通 7.710s。日志位于 .tmp/merge-wave10-*.log。
 
