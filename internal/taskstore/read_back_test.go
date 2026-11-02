@@ -6,7 +6,9 @@ package taskstore
 import (
 	"context"
 	"errors"
+	"manga-manager/internal/runhandle"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -375,4 +377,52 @@ func loadTask(t *testing.T, store *Store, taskID int64) task.Task {
 		t.Fatalf("身份 %d 读不回来", taskID)
 	}
 	return owner
+}
+
+func TestCoalescingPersistsDiscardedDeclarationsWithoutReplacingQueuedBody(t *testing.T) {
+	store := newStoreForTest(t)
+	ctx := context.Background()
+	engine := task.New(task.Config{Store: store, Slots: func() int { return 1 }, RunBackground: func(fn func()) { fn() }})
+	if _, err := engine.PauseAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ran := ""
+	spec := task.RunSpec{Identity: libraryIdentity(1), Trigger: task.TriggerWatch, Args: map[string]string{"force": "false"}}
+	first, err := engine.Start(ctx, spec, func(context.Context, *runhandle.Handle) (task.Result, error) {
+		ran = "first"
+		return task.Result{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, force := range []string{"false", "true", "true", "false"} {
+		spec.Args = map[string]string{"force": force}
+		spec.Labels = map[string]string{"volume_key": "incoming"}
+		if _, err := engine.Start(ctx, spec, func(context.Context, *runhandle.Handle) (task.Result, error) {
+			ran = "discarded"
+			return task.Result{}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := task.New(task.Config{Store: New(store.db), RunBackground: func(func()) {}})
+	events, err := reader.RunEvents(ctx, first.Run.ID, 0)
+	if err != nil || len(events) != 3 {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+	for _, event := range events[1:] {
+		if !strings.Contains(event.Detail, `"force":"true"`) {
+			t.Fatalf("lost incoming input: %+v", event)
+		}
+	}
+	if _, err := engine.ResumeAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ran != "first" {
+		t.Fatalf("selected body=%s", ran)
+	}
+	snaps, err := reader.ListSnapshots(ctx, task.RunFilter{})
+	if err != nil || len(snaps) != 1 || snaps[0].Side.Args["force"] != "false" || len(snaps[0].Side.Labels) != 0 || snaps[0].Run.CoalescedCount != 4 {
+		t.Fatalf("snapshot=%+v err=%v", snaps, err)
+	}
 }

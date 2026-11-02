@@ -300,7 +300,11 @@ func TestKOReaderTasksCarryMatchConfigMetadata(t *testing.T) {
 			}
 
 			first := firstPublishedTask(t, snapshots(), tc.key)
-			if first.Params["match_mode"] != config.KOReaderMatchModeFilePath || first.Params["path_ignore_extension"] != "true" {
+			extension := first.Params["path_ignore_extension"]
+			if tc.key == "rebuild_book_hashes" {
+				extension = first.Labels["path_ignore_extension"]
+			}
+			if first.Params["match_mode"] != config.KOReaderMatchModeFilePath || extension != "true" {
 				t.Fatalf("首帧的匹配配置元数据为 %v", first.Params)
 			}
 			if first.EffectiveLimit != nil {
@@ -361,11 +365,14 @@ func TestRebuildBookHashesReportsDiskWorkIO(t *testing.T) {
 	}
 
 	task := lastPublishedTask(t, snapshots(), "rebuild_book_hashes")
-	if task.Params["hashed_files"] != "1" {
-		t.Fatalf("任务参数里 hashed_files=%q, want \"1\" —— 磁盘作业的实况没有汇回任务指标：%v", task.Params["hashed_files"], task.Params)
+	if task.Metrics["hashed_files"] != 1 {
+		t.Fatalf("disk IO metrics missing: %v", task.Metrics)
 	}
-	if task.Params["storage_profile"] == "" || task.Params["volume_key"] == "" {
-		t.Fatalf("存储档位与卷键没落到**任务参数**上：%v", task.Params)
+	if _, ok := task.Params["hashed_files"]; ok {
+		t.Fatalf("IO duplicated in replay args: %v", task.Params)
+	}
+	if task.Labels["storage_profile"] != "" || task.Labels["volume_key"] != "" {
+		t.Fatalf("cross-library run claims a single disk: %v", task.Labels)
 	}
 }
 

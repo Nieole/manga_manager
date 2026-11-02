@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"manga-manager/internal/database"
@@ -83,6 +84,10 @@ func TestForcedRescanSaysItWasCoalescedIntoTheQueuedScan(t *testing.T) {
 		t.Fatalf("第二次播种返回 %v, want 停在排队中", err)
 	}
 	queuedBefore := currentTask(t, controller.taskEngine, key)
+	// First record a lossless launch; neither subsequent forced declaration may disappear.
+	if code, _ := postScan(t, srv, cl, csrf, lib, false); code != http.StatusOK {
+		t.Fatalf("lossless launch status=%d", code)
+	}
 
 	code, body := postScan(t, srv, cl, csrf, lib, true)
 	if code != http.StatusOK {
@@ -95,9 +100,21 @@ func TestForcedRescanSaysItWasCoalescedIntoTheQueuedScan(t *testing.T) {
 		t.Fatalf("回话为 %q —— 要么没回，要么文案词条缺了一侧、apiText 把 key 原样交了出来", body["message"])
 	}
 
+	if code, _ := postScan(t, srv, cl, csrf, lib, true); code != http.StatusOK {
+		t.Fatalf("second forced launch status=%d", code)
+	}
+	events := runEventsOf(t, controller, queuedBefore.RunID)
+	if len(events.Events) != 3 {
+		t.Fatalf("coalesced events=%+v", events.Events)
+	}
+	for _, event := range events.Events[1:] {
+		if event.Action != "coalesced" || !strings.Contains(event.Detail, `"force":"true"`) {
+			t.Fatalf("incoming input absent from HTTP event: %+v", event)
+		}
+	}
 	// 语义没变：合并仍是合并，排队那条的声明一个字不动。
 	queuedAfter := currentTask(t, controller.taskEngine, key)
-	if queuedAfter.RunID != queuedBefore.RunID || queuedAfter.CoalescedCount != 1 {
+	if queuedAfter.RunID != queuedBefore.RunID || queuedAfter.CoalescedCount != 3 {
 		t.Fatalf("这次发起没有并进排队那条：run_id=%d(want %d) coalesced=%d(want 1)",
 			queuedAfter.RunID, queuedBefore.RunID, queuedAfter.CoalescedCount)
 	}

@@ -58,7 +58,6 @@ func (c *Service) WriteComicInfoPrepared(ctx context.Context, series database.Se
 		StartCode:    "task.msg.write_comicinfo.start",
 		Total:        len(books),
 		CanCancel:    true,
-		Args:         map[string]string{"series_id": strconv.FormatInt(series.ID, 10)},
 		ScopeName:    series.Name,
 		CompleteCode: "task.msg.write_comicinfo.complete",
 		CancelCode:   "task.msg.write_comicinfo.cancelled",

@@ -329,3 +329,45 @@ func TestInterruptedHistoryReplaysThroughFirstProcessRegistry(t *testing.T) {
 		t.Fatalf("original history=%+v err=%v", interrupted, err)
 	}
 }
+
+func TestInterruptedCoverRunReplaysDeclaredDiscoveryThroughRegistry(t *testing.T) {
+	for _, backfill := range []string{"false", "true"} {
+		t.Run(backfill, func(t *testing.T) {
+			store, cfg := runtimeFixture(t)
+			ctx := context.Background()
+			lib, err := store.CreateLibrary(ctx, database.CreateLibraryParams{Name: "Library", Path: t.TempDir(), ScanMode: "none", ScanFormats: "cbz", ScanInterval: 60})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := task.New(task.Config{Store: taskstore.New(store.DB()), RunBackground: func(func()) {}})
+			_, err = old.Start(ctx, task.RunSpec{Identity: task.Identity{Type: "generate_covers", Scope: task.ScopeLibrary, ScopeID: lib.ID}, Trigger: task.TriggerChained, Args: map[string]string{"backfill": backfill}}, func(context.Context, *runhandle.Handle) (task.Result, error) {
+				t.Fatal("crashed process body must not run")
+				return task.Result{}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := runtime.New(store, cfg, runtime.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer app.Close()
+			if err = app.Recover(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err = app.RecoverRuns(ctx); err != nil {
+				t.Fatal(err)
+			}
+			snapshots, err := app.Engine.ListSnapshots(ctx, task.RunFilter{Types: []task.Type{"generate_covers"}, Order: task.OrderSequenceDesc})
+			if err != nil || len(snapshots) != 2 {
+				t.Fatalf("history=%+v err=%v", snapshots, err)
+			}
+			timeout, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			replayed, err := app.Engine.Await(timeout, snapshots[0].Run.ID)
+			if err != nil || replayed.Status != task.StatusCompleted || replayed.Trigger != task.TriggerResumed || snapshots[0].Side.Args["backfill"] != backfill {
+				t.Fatalf("replay=%+v args=%v err=%v", replayed, snapshots[0].Side.Args, err)
+			}
+		})
+	}
+}

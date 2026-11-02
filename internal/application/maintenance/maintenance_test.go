@@ -125,7 +125,7 @@ func TestRestartPreservesForegroundMatchingArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshots) != 1 || snapshots[0].Run.Trigger != task.TriggerResumed || snapshots[0].Side.Args["path_ignore_extension"] != "true" || snapshots[0].Side.Args["match_mode"] != config.KOReaderMatchModeFilePath {
+	if len(snapshots) != 1 || snapshots[0].Run.Trigger != task.TriggerResumed || snapshots[0].Side.Labels["path_ignore_extension"] != "true" || snapshots[0].Side.Args["match_mode"] != config.KOReaderMatchModeFilePath || len(snapshots[0].Side.Args) != 1 {
 		t.Fatalf("replay=%+v", snapshots)
 	}
 

@@ -88,7 +88,7 @@ func (c *Service) RebuildThumbnails(trigger task.Trigger) error {
 		StartCode: "task.msg.rebuild_thumbnails.start",
 		CanCancel: true,
 		CanPause:  true,
-		Args: map[string]string{
+		Labels: map[string]string{
 			"execution_mode": "low_impact",
 		},
 		CompleteCode: "task.msg.rebuild_thumbnails.complete",
@@ -159,7 +159,7 @@ func (c *Service) RebuildFileIdentities(trigger task.Trigger) error {
 		StartCode:    "task.msg.rebuild_file_identities.start",
 		CanCancel:    true,
 		CanPause:     true,
-		Args:         map[string]string{"profile": "quick_hash"},
+		Labels:       map[string]string{"profile": "quick_hash"},
 		CompleteCode: "task.msg.rebuild_file_identities.complete",
 		CancelCode:   "task.msg.rebuild_file_identities.cancelled",
 		FailCode:     "task.msg.rebuild_file_identities.failed",
@@ -254,10 +254,9 @@ func (c *Service) BackfillBookHashes(reason string, trigger task.Trigger) error 
 		CanCancel: true,
 		CanPause:  true,
 		Args: map[string]string{
-			"match_mode": config.KOReaderMatchModeBinaryHash,
-			"profile":    "full_hash_low_priority",
-			"reason":     reason,
+			"reason": reason,
 		},
+		Labels:       map[string]string{"profile": "full_hash_low_priority", "match_mode": config.KOReaderMatchModeBinaryHash},
 		CompleteCode: "task.msg.book_hash_backfill.complete",
 		CancelCode:   "task.msg.book_hash_backfill.cancelled",
 		FailCode:     "task.msg.book_hash_backfill.failed",
@@ -302,12 +301,7 @@ func ReportHashProgress(handle *runhandle.Handle, current, total int, code strin
 		Code:    code,
 		Params:  map[string]string{"current": strconv.Itoa(current), "total": strconv.Itoa(total)},
 		Metrics: taskIOFrameMetrics(handleIO),
-		Labels: map[string]string{
-			"storage_profile": handleIO.StorageProfile,
-			"volume_key":      handleIO.VolumeKey,
-		},
 	})
-	handle.MergeParams(taskIOMetricsParams(handleIO))
 }
 
 // hashingFrameHandle 是两处哈希回填的批循环共同收下的**运行句柄**，分工同
@@ -325,9 +319,8 @@ func (h hashingFrameHandle) Advance(current, total int) {
 
 const koreaderTaskBatchSize = 500
 
-// koreaderMatchMetadata 是三个 KOReader 任务共同的**任务参数**：任务中心按 match_mode 与
-// path_ignore_extension 渲染「路径索引 / 二进制哈希索引」那块标签（前端 formatKOReaderIndexLabel）。
-// 三处必须写同一份，缺一个键界面就回落到默认标签，用户看到的索引类型是错的。
+// koreaderMatchMetadata 声明进度对账读取的两个行为输入。
+// 仅重建指纹的运行只读取 match_mode，扩展名选项在那里只是展示标签。
 func koreaderMatchMetadata(cfg config.Config) map[string]string {
 	return map[string]string{
 		"match_mode":            cfg.KOReader.MatchMode,
@@ -339,9 +332,7 @@ func koreaderMatchMetadata(cfg config.Config) map[string]string {
 // 指标同属一次事件，拆开报会被投递水位撕断（撕开的样子见 runhandle.Handle.Report）。
 // 书籍指纹重建与匹配刷新的第一阶段共用它，帧的内容因此只有一份。
 //
-// 档位与卷键不进帧的**标签**，只走**任务参数**那条通道（`taskIOMetricsParams` 会把空值滤掉）：
-// **路径**匹配模式下这个任务一次盘都不读，两项恒为空，而标签是有一个显示一个——写进去等于
-// 把「没有这回事」显示成「实况为空」。IO 那几项指标同样恒为零，但面板只显示大于零的指标。
+// 跨库工作没有单一存储档位或卷键；IO 累计量只报指标。
 func koreaderFingerprintFrame(current, total int, handleIO runhandle.IOMetrics) runhandle.Frame {
 	frameMetrics := taskIOFrameMetrics(handleIO)
 	frameMetrics["processed_books"] = int64(current)
@@ -396,8 +387,6 @@ func (h koreaderFingerprintHandle) Advance(current, total int) {
 		frame = holdingStepCount(frame)
 	}
 	h.Report(frame)
-	// IO 参数走的是另一条通道（存储 IO 面板按参数名读），只能单独报一次。
-	h.MergeParams(taskIOMetricsParams(handleIO))
 }
 
 // koreaderReconcileHandle 是进度对账批循环收下的运行句柄，分工同 koreaderFingerprintHandle。
@@ -426,7 +415,8 @@ func (c *Service) rebuildBookHashes(trigger task.Trigger, cfg config.Config) err
 		StartCode:    "task.msg.koreader_rebuild_hashes.start",
 		CanCancel:    true,
 		CanPause:     true,
-		Args:         koreaderMatchMetadata(cfg),
+		Args:         map[string]string{"match_mode": cfg.KOReader.MatchMode},
+		Labels:       map[string]string{"path_ignore_extension": strconv.FormatBool(cfg.KOReader.PathIgnoreExtension)},
 		CompleteCode: "task.msg.koreader_rebuild_hashes.complete",
 		CancelCode:   "task.msg.koreader_rebuild_hashes.cancelled",
 		FailCode:     "task.msg.koreader_rebuild_hashes.failed",
@@ -535,18 +525,4 @@ func taskIOFrameMetrics(handleIO runhandle.IOMetrics) map[string]int64 {
 		"io_wait_ms":   handleIO.IOWaitMillis,
 		"paused_ms":    handleIO.PausedMillis,
 	}
-}
-func taskIOMetricsParams(handleIO runhandle.IOMetrics) map[string]string {
-	params := map[string]string{
-		"io_wait_ms":   strconv.FormatInt(handleIO.IOWaitMillis, 10),
-		"paused_ms":    strconv.FormatInt(handleIO.PausedMillis, 10),
-		"hashed_files": strconv.FormatInt(handleIO.HashedFiles, 10),
-	}
-	if handleIO.StorageProfile != "" {
-		params["storage_profile"] = handleIO.StorageProfile
-	}
-	if handleIO.VolumeKey != "" {
-		params["volume_key"] = handleIO.VolumeKey
-	}
-	return params
 }
