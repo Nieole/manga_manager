@@ -668,7 +668,7 @@ func (c *Controller) updateKOReaderSettings(w http.ResponseWriter, r *http.Reque
 	c.getKOReaderSettings(w, r)
 }
 
-func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Request) {
+func (c *maintenanceHTTP) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRebuildBookHashesTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A KOReader index rebuild is already running", "Failed to start KOReader index rebuild")
 		return
@@ -676,7 +676,7 @@ func (c *Controller) rebuildKOReaderHashes(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.index_rebuild_started")})
 }
 
-func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Request) {
+func (c *maintenanceHTTP) applyKOReaderMatching(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchRefreshKOReaderMatchingTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A KOReader matching refresh is already running", "Failed to start KOReader matching refresh")
 		return
@@ -684,7 +684,7 @@ func (c *Controller) applyKOReaderMatching(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "koreader.task.match_apply_started")})
 }
 
-func (c *Controller) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Request) {
+func (c *maintenanceHTTP) reconcileKOReaderProgress(w http.ResponseWriter, r *http.Request) {
 	if err := c.launchReconcileKOReaderProgressTask(task.TriggerManual); err != nil {
 		writeTaskLaunchError(w, err, "A KOReader progress reconciliation is already running", "Failed to start KOReader progress reconciliation")
 		return

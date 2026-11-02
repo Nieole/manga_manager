@@ -18,6 +18,7 @@ import (
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/metadata"
 	"manga-manager/internal/organize"
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/recommendation"
@@ -61,6 +62,10 @@ type RunDependencies struct {
 
 // LibraryDependencies supplies library and disk-use cases to their transport family.
 type LibraryDependencies struct {
+	Removal      BookRemovalStore
+	Initials     interface{ BackfillSeriesInitials(context.Context) error }
+	Queries      LibraryQueries
+	ComicInfo    ComicInfoQueries
 	Management   *libraries.Service
 	Scans        *scanning.Service
 	Maintenance  *maintenance.Service
@@ -139,7 +144,10 @@ func (t *Transport) TaskOptions(options task.Config) task.Config {
 
 // Host mounts feature adapters. Its compatibility controller is removed by the
 // reader, organization, library and administration migration tickets.
-type Host struct{ compatibility *Controller }
+type Host struct {
+	compatibility *Controller
+	families      httpFamilies
+}
 
 // Bind installs capabilities without constructing or starting another application.
 func (t *Transport) Bind(d HostDependencies) *Host {
@@ -150,17 +158,17 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 	c.stats, c.recommendations = d.Reading.Statistics, d.Reading.Recommendations
 	c.koreader = d.Reading.KOReader
 	c.relations, c.proposals = d.Organization.Relations, d.Organization.Proposals
-	c.libraryManagement, c.scans = d.Libraries.Management, d.Libraries.Scans
-	c.maintenance, c.moves, c.diskJobs = d.Libraries.Maintenance, d.Libraries.Moves, d.Libraries.Disk
-	c.intelligence, c.external, c.relocation = d.Libraries.Intelligence, d.Libraries.External, d.Libraries.Relocation
-	c.scanner, c.watcher, c.watcherInitErr = d.Libraries.Scanner, d.Libraries.Watcher, d.Libraries.WatcherError
-	c.diskWork = d.Libraries.DiskWork
+	// Retained reader/organization consumers migrate in 43/44. No library
+	// application graph is mirrored back onto the compatibility controller.
+	c.intelligence = d.Libraries.Intelligence
+	c.scanner = d.Libraries.Scanner
 	e := c.taskEngine
 	e.engine, e.runs, e.runStore, e.registry = d.Libraries.Runs.Engine, d.Libraries.Runs.Runs, d.Libraries.Runs.Store, d.Libraries.Runs.Registry
 	e.runBackground = d.Lifecycle.Go
-	return &Host{compatibility: c}
+	cfg := c.config
+	return &Host{compatibility: c, families: bindHTTPFamilies(d.Libraries, d.Reading.Content, cfg.Snapshot, e, func(name string) metadata.Fetcher { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }, d.Administration.Configuration.DatabasePath, c.invalidateDashboardStatsCache)}
 }
 
-func (h *Host) SetupRoutes(r chi.Router)         { h.compatibility.SetupRoutes(r) }
+func (h *Host) SetupRoutes(r chi.Router)         { h.compatibility.setupRoutes(r, h.families) }
 func (h *Host) SetupOPDSRoutes(r chi.Router)     { h.compatibility.SetupOPDSRoutes(r) }
 func (h *Host) SetupKOReaderRoutes(r chi.Router) { h.compatibility.SetupKOReaderRoutes(r) }

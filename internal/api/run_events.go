@@ -71,7 +71,7 @@ type RunEventsResponse struct {
 }
 
 // getRunEvents 取一条运行的事件流与阶段时间线。
-func (c *Controller) getRunEvents(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	runID, err := parseID(r, "runID")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid run ID")

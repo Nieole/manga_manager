@@ -61,7 +61,7 @@ func (c *Controller) runSampleInterval() time.Duration { return sampleIntervalOf
 func sampleIntervalOf(cfg config.Config) time.Duration { return runtime.SampleInterval(cfg) }
 
 // getRunSamples 取一条运行的吞吐曲线。
-func (c *Controller) getRunSamples(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) getRunSamples(w http.ResponseWriter, r *http.Request) {
 	runID, err := parseID(r, "runID")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid run ID")

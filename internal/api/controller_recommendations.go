@@ -50,8 +50,8 @@ func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusAccepted, map[string]string{"message": apiText(requestLocale(r), "recommendations.ai_grouping_submitted")})
 }
 
-func (c *Controller) rebuildInitials(w http.ResponseWriter, r *http.Request) {
-	if err := c.store.BackfillSeriesInitials(r.Context()); err != nil {
+func (c *maintenanceHTTP) rebuildInitials(w http.ResponseWriter, r *http.Request) {
+	if err := c.initials.BackfillSeriesInitials(r.Context()); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

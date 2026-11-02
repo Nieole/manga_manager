@@ -46,7 +46,7 @@ type StorageIOLibraryResponse struct {
 	HeavyBackgroundConcurrency int                    `json:"heavy_background_concurrency"`
 }
 
-func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Request) {
+func (c *storageHTTP) getStorageIODiagnostics(w http.ResponseWriter, r *http.Request) {
 	cfg := c.currentConfig()
 	response := StorageIODiagnosticsResponse{
 		CacheDir:    cfg.Cache.Dir,
@@ -96,7 +96,7 @@ func (c *Controller) getStorageIODiagnostics(w http.ResponseWriter, r *http.Requ
 	jsonResponse(w, http.StatusOK, response)
 }
 
-func (c *Controller) recentStorageIOTaskRates() (float64, float64, int64) {
+func (c *storageHTTP) recentStorageIOTaskRates() (float64, float64, int64) {
 	latestScan := c.taskEngine.latestRunByTypes("scan_library", "scan_series")
 	// 封面那一格读的是**封面运行**：只有它生成封面，归档打开与缩略图落盘的耗时也只记在那边。
 	// 缩略图重建只跑逐库强扫，封面归它**串联**出来的那些运行。

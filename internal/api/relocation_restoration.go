@@ -17,7 +17,7 @@ type RelocationRestoration struct {
 	Check      *RelocationPlan              `json:"check"`
 }
 
-func (c *Controller) getRelocationRestoration(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) getRelocationRestoration(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, 400, "Invalid library ID")
@@ -52,7 +52,7 @@ func (c *Controller) getRelocationRestoration(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, state)
 }
 
-func (c *Controller) createRestorationCheck(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) createRestorationCheck(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, 400, "Invalid library ID")
@@ -66,7 +66,7 @@ func (c *Controller) createRestorationCheck(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, http.StatusAccepted, plan)
 }
 
-func (c *Controller) releaseRelocationProtection(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) releaseRelocationProtection(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, 400, "Invalid library ID")

@@ -43,16 +43,15 @@ func (c *Controller) taskLibraries(ctx context.Context, identity TaskIdentity) (
 }
 
 func (c *Controller) guardLibraryRead(w http.ResponseWriter, libraryID int64) (func(), bool) {
-	release, err := c.taskEngine.engine.AcquireLibraryRead(libraryID)
-	if err != nil {
-		writeLibraryUnavailable(w)
-		return nil, false
-	}
-	return release, true
+	return guardLibraryRead(w, libraryID, c.taskEngine.engine)
 }
 
 func (c *Controller) guardBookRead(w http.ResponseWriter, r *http.Request, bookID int64) (func(), bool) {
-	release, err := c.content.AcquireRead(r.Context(), bookID, c.taskEngine.engine)
+	return guardContentRead(w, r, bookID, c.content, c.taskEngine.engine)
+}
+
+func guardContentRead(w http.ResponseWriter, r *http.Request, bookID int64, content *bookcontent.Service, engine *task.Engine) (func(), bool) {
+	release, err := content.AcquireRead(r.Context(), bookID, engine)
 	if errors.Is(err, bookcontent.ErrSourceMissing) {
 		jsonError(w, http.StatusNotFound, "Book entity not found")
 		return nil, false

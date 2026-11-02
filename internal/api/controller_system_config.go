@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-func (c *Controller) browseDirs(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) browseDirs(w http.ResponseWriter, r *http.Request) {
 	reqPath := r.URL.Query().Get("path")
 
 	// 如果没有传路径，返回系统根目录
