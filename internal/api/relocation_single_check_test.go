@@ -118,6 +118,7 @@ func TestRelocationTransactionProgressRemainsLiveAndRollsBack(t *testing.T) {
 			c.taskEngine = newTaskEngine(taskEngineConfig{
 				Store: taskstore.New(store.DB()), RunBackground: func(fn func()) { fn() }, Now: clock.Now,
 			})
+			c.families.runs.taskEngine = c.taskEngine
 			_, err := c.taskEngine.start(libraryTask("relocation_commit", lib.ID, variantSole), task.TriggerManual,
 				RunSpec{CanCancel: true}, func(ctx context.Context, handle *runhandle.Handle) (RunResult, error) {
 					if err := handle.DisableCancellation(); err != nil {
@@ -140,7 +141,7 @@ func TestRelocationTransactionProgressRemainsLiveAndRollsBack(t *testing.T) {
 					c.taskEngine.engine.SampleActiveRuns(ctx)
 					handle.AdvanceLive(100, 200)
 					rec := httptest.NewRecorder()
-					c.getTaskCenterLive(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
+					c.families.runs.getTaskCenterLive(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
 					var live RunLive
 					if err := json.Unmarshal(rec.Body.Bytes(), &live); err != nil || rec.Code != http.StatusOK || len(live.Runs) != 1 {
 						t.Fatalf("live progress: %d %s %v", rec.Code, rec.Body.String(), err)
@@ -161,7 +162,7 @@ func TestRelocationTransactionProgressRemainsLiveAndRollsBack(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
-			c.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil))
+			c.families.runs.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil))
 			var runs []RunSnapshot
 			if err := json.Unmarshal(rec.Body.Bytes(), &runs); err != nil || len(runs) != 1 {
 				t.Fatalf("terminal runs: %s %v", rec.Body.String(), err)

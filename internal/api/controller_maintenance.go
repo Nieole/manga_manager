@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"manga-manager/internal/task"
 	"net/http"
 )
@@ -51,10 +50,6 @@ func (c *maintenanceHTTP) launchRebuildFileIdentitiesTask(trigger task.Trigger) 
 
 func (c *maintenanceHTTP) launchLowPriorityBookHashBackfillTask(reason string, trigger task.Trigger) error {
 	return taskLaunchError(c.maintenance.BackfillBookHashes(reason, trigger))
-}
-
-func (c *maintenanceHTTP) chainBookHashBackfill(ctx context.Context, reason string) {
-	c.maintenance.ChainBookHashBackfill(ctx, reason)
 }
 
 func (c *maintenanceHTTP) launchRebuildBookHashesTask(trigger task.Trigger) error {

@@ -51,7 +51,7 @@ func TestGetClientConnections(t *testing.T) {
 	req.Header.Set("X-Forwarded-Proto", "https")
 	rec := httptest.NewRecorder()
 
-	controller.getClientConnections(rec, req)
+	controller.admin.getClientConnections(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -119,7 +119,7 @@ func TestGetClientConnectionsHidesDisabledProtocolEndpoints(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	rec := httptest.NewRecorder()
-	controller.getClientConnections(rec, httptest.NewRequest(http.MethodGet, "/api/system/client-connections", nil))
+	controller.admin.getClientConnections(rec, httptest.NewRequest(http.MethodGet, "/api/system/client-connections", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}

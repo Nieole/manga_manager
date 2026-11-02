@@ -23,12 +23,12 @@ func TestConfigSaveRejectsStaleSnapshot(t *testing.T) {
 	original := c.currentConfig()
 	newer := config.CloneConfig(original)
 	newer.Scanner.ArchivePoolSize = 9
-	if err := c.persistConfigExpected(&original, &newer); err != nil {
+	if err := c.admin.persistConfigExpected(&original, &newer); err != nil {
 		t.Fatal(err)
 	}
 	stale := config.CloneConfig(original)
 	stale.Scanner.MaxAiConcurrency = 7
-	if err := c.persistConfigExpected(&original, &stale); !errors.Is(err, config.ErrConflict) {
+	if err := c.admin.persistConfigExpected(&original, &stale); !errors.Is(err, config.ErrConflict) {
 		t.Fatalf("stale save = %v, want conflict", err)
 	}
 	disk, err := config.LoadConfigFile(c.configPath)
@@ -43,7 +43,7 @@ func TestConfigSaveRejectsStaleSnapshot(t *testing.T) {
 func TestConfigUpdatesSerializeSaveAndReload(t *testing.T) {
 	c, _, _, _ := newTestController(t)
 	original := c.currentConfig()
-	if err := c.persistConfig(&original); err != nil {
+	if err := c.admin.persistConfig(&original); err != nil {
 		t.Fatal(err)
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -63,7 +63,7 @@ func TestConfigUpdatesSerializeSaveAndReload(t *testing.T) {
 	go func() {
 		stale := config.CloneConfig(original)
 		stale.Scanner.MaxAiConcurrency = 7
-		staleFinished <- c.persistConfigExpected(&original, &stale)
+		staleFinished <- c.admin.persistConfigExpected(&original, &stale)
 	}()
 	go func() { reloadFinished <- c.config.Reload(c.configPath, runtimecfg.Apply, nil) }()
 	if c.currentConfig().Scanner.ArchivePoolSize != 5 {
@@ -91,7 +91,7 @@ func TestConfigUpdatesSerializeSaveAndReload(t *testing.T) {
 func TestConfigFailedApplicationRestoresDiskAndRuntime(t *testing.T) {
 	c, _, _, _ := newTestController(t)
 	original := c.currentConfig()
-	if err := c.persistConfig(&original); err != nil {
+	if err := c.admin.persistConfig(&original); err != nil {
 		t.Fatal(err)
 	}
 	failure := errors.New("derived resource unavailable")
@@ -118,7 +118,7 @@ func TestConfigFailedApplicationRestoresDiskAndRuntime(t *testing.T) {
 		t.Fatal("failed update was not restored")
 	}
 	original.Scanner.ArchivePoolSize = 8
-	if err := c.persistConfig(&original); err != nil {
+	if err := c.admin.persistConfig(&original); err != nil {
 		t.Fatalf("save after failed application: %v", err)
 	}
 }
@@ -126,7 +126,7 @@ func TestConfigFailedApplicationRestoresDiskAndRuntime(t *testing.T) {
 func TestConfigSaveDoesNotOverwritePendingExternalEdit(t *testing.T) {
 	c, _, _, _ := newTestController(t)
 	original := c.currentConfig()
-	if err := c.persistConfig(&original); err != nil {
+	if err := c.admin.persistConfig(&original); err != nil {
 		t.Fatal(err)
 	}
 	external := config.CloneConfig(original)
@@ -139,7 +139,7 @@ func TestConfigSaveDoesNotOverwritePendingExternalEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	original.Scanner.MaxAiConcurrency = 7
-	if err := c.persistConfig(&original); !errors.Is(err, config.ErrConflict) {
+	if err := c.admin.persistConfig(&original); !errors.Is(err, config.ErrConflict) {
 		t.Fatalf("save before reload = %v", err)
 	}
 	if err := c.config.Reload(c.configPath, runtimecfg.Apply, nil); err != nil {
@@ -159,13 +159,13 @@ func TestConfigPersistenceFailureAllowsLaterSave(t *testing.T) {
 	}
 	bad := config.CloneConfig(original)
 	bad.Cache.Dir = filepath.Join(blocker, "cache")
-	if err := c.persistConfig(&bad); err == nil {
+	if err := c.admin.persistConfig(&bad); err == nil {
 		t.Fatal("failed persistence reported success")
 	}
 	if c.currentConfig().Cache.Dir != original.Cache.Dir {
 		t.Fatal("failed persistence published configuration")
 	}
-	if err := c.persistConfig(&original); err != nil {
+	if err := c.admin.persistConfig(&original); err != nil {
 		t.Fatalf("subsequent save: %v", err)
 	}
 }
@@ -196,7 +196,7 @@ func TestConfigHTTPOverlappingSaveReturnsConflict(t *testing.T) {
 	firstRequest.Header.Set("If-Match", c.config.Version(old))
 	firstResponse := httptest.NewRecorder()
 	done := make(chan struct{})
-	go func() { defer close(done); c.updateSystemConfig(firstResponse, firstRequest) }()
+	go func() { defer close(done); c.admin.updateSystemConfig(firstResponse, firstRequest) }()
 	<-body.entered
 	second := config.CloneConfig(old)
 	second.Scanner.ArchivePoolSize = 9
@@ -205,7 +205,7 @@ func TestConfigHTTPOverlappingSaveReturnsConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondResponse := httptest.NewRecorder()
-	c.updateSystemConfig(secondResponse, versionedConfigRequest(c, secondData, "/api/system/config"))
+	c.admin.updateSystemConfig(secondResponse, versionedConfigRequest(c, secondData, "/api/system/config"))
 	close(body.release)
 	<-done
 	if secondResponse.Code != http.StatusOK {
@@ -219,7 +219,7 @@ func TestConfigHTTPOverlappingSaveReturnsConflict(t *testing.T) {
 	}
 }
 
-func versionedConfigRequest(c *Controller, data []byte, path string) *http.Request {
+func versionedConfigRequest(c *apiFixture, data []byte, path string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
 	req.Header.Set("If-Match", c.config.Version(c.currentConfig()))
 	return req
@@ -230,14 +230,14 @@ func TestConfigHTTPRejectsCompletedUpdateFromStaleBrowser(t *testing.T) {
 		t.Run(endpoint, func(t *testing.T) {
 			c, _, _, _ := newTestController(t)
 			get := httptest.NewRecorder()
-			c.getSystemConfig(get, httptest.NewRequest(http.MethodGet, "/api/system/config", nil))
+			c.admin.getSystemConfig(get, httptest.NewRequest(http.MethodGet, "/api/system/config", nil))
 			oldVersion := get.Header().Get("ETag")
 			if oldVersion == "" {
 				t.Fatal("GET omitted expected-state token")
 			}
 			cfg := c.currentConfig()
 			cfg.Scanner.ArchivePoolSize = 9
-			if err := c.persistConfig(&cfg); err != nil {
+			if err := c.admin.persistConfig(&cfg); err != nil {
 				t.Fatal(err)
 			}
 			var body []byte
@@ -250,9 +250,9 @@ func TestConfigHTTPRejectsCompletedUpdateFromStaleBrowser(t *testing.T) {
 			req.Header.Set("If-Match", oldVersion)
 			rec := httptest.NewRecorder()
 			if endpoint == "/api/system/config" {
-				c.updateSystemConfig(rec, req)
+				c.admin.updateSystemConfig(rec, req)
 			} else {
-				c.updateKOReaderSettings(rec, req)
+				c.admin.updateKOReaderSettings(rec, req)
 			}
 			if rec.Code != http.StatusConflict {
 				t.Fatalf("stale browser save = %d: %s", rec.Code, rec.Body.String())
@@ -260,9 +260,9 @@ func TestConfigHTTPRejectsCompletedUpdateFromStaleBrowser(t *testing.T) {
 			req = httptest.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 			rec = httptest.NewRecorder()
 			if endpoint == "/api/system/config" {
-				c.updateSystemConfig(rec, req)
+				c.admin.updateSystemConfig(rec, req)
 			} else {
-				c.updateKOReaderSettings(rec, req)
+				c.admin.updateKOReaderSettings(rec, req)
 			}
 			if rec.Code != http.StatusPreconditionRequired {
 				t.Fatalf("unversioned save = %d: %s", rec.Code, rec.Body.String())
@@ -277,7 +277,7 @@ func TestConfigHTTPRejectsCompletedUpdateFromStaleBrowser(t *testing.T) {
 func TestConfigFailedReloadCanBeFollowedBySave(t *testing.T) {
 	c, _, _, _ := newTestController(t)
 	original := c.currentConfig()
-	if err := c.persistConfig(&original); err != nil {
+	if err := c.admin.persistConfig(&original); err != nil {
 		t.Fatal(err)
 	}
 	external := config.CloneConfig(original)
@@ -299,7 +299,7 @@ func TestConfigFailedReloadCanBeFollowedBySave(t *testing.T) {
 		t.Fatalf("reload=%v", err)
 	}
 	original.Scanner.MaxAiConcurrency = 6
-	if err := c.persistConfig(&original); err != nil {
+	if err := c.admin.persistConfig(&original); err != nil {
 		t.Fatalf("save after failed reload: %v", err)
 	}
 }

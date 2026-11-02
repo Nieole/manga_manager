@@ -1,7 +1,6 @@
 package api
 
 import (
-	"github.com/go-chi/chi/v5"
 	"manga-manager/internal/database"
 	"manga-manager/internal/organize"
 	"net/http"
@@ -9,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // The organization adapter can serve a committed collection without any Controller,

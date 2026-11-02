@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"manga-manager/internal/seriescontext"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,10 +14,12 @@ import (
 func TestFranchiseStateHTTPSeparatesUnavailableStaleFailedAndRepaired(t *testing.T) {
 	controller, store, _, _ := newTestController(t)
 	controller.relations = organize.NewRelations(store, func(func()) {})
+	controller.organizationHTTP.relations = controller.relations
+	controller.reader.context = seriescontext.New(store, controller.relations, controller.proposals, controller.taskEngine.engine)
 	read := func() organize.FranchiseState {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		controller.getFranchiseState(rec, httptest.NewRequest(http.MethodGet, "/api/franchise-state", nil))
+		controller.organizationHTTP.getFranchiseState(rec, httptest.NewRequest(http.MethodGet, "/api/franchise-state", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("state HTTP%d: %s", rec.Code, rec.Body.String())
 		}
@@ -59,7 +62,7 @@ func TestFranchiseStateHTTPSeparatesUnavailableStaleFailedAndRepaired(t *testing
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	controller.rebuildFranchiseCollectionsHandler(rec, httptest.NewRequest(http.MethodPost, "/api/system/rebuild-franchises", nil))
+	controller.organizationHTTP.rebuildFranchiseCollectionsHandler(rec, httptest.NewRequest(http.MethodPost, "/api/system/rebuild-franchises", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("retry HTTP%d: %s", rec.Code, rec.Body.String())
 	}

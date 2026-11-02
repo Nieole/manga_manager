@@ -1,16 +1,20 @@
 package api
 
-import "manga-manager/internal/application/scanning"
+import (
+	"context"
+	"manga-manager/internal/application/scanning"
+)
 
 // assembleScanUseCases binds application effects before opening scan inputs.
-func (c *Controller) assembleScanUseCases() {
+func (c *apiFixture) assembleScanUseCases() {
 	c.scans = scanning.New(c.taskEngine.runs, c.store, c.scanner, c.currentConfig, scanning.Effects{
-		PurgeReadingPaths: c.purgeReadingPathCaches,
+		PurgeReadingPaths: c.media.purgeReadingPathCaches,
 		InvalidateStats:   c.invalidateDashboardStatsCache,
 		WarmStats:         c.warmDashboardStatsCacheAsync,
-		Backfill:          c.chainBookHashBackfill,
+		Backfill:          func(ctx context.Context, reason string) { c.maintenance.ChainBookHashBackfill(ctx, reason) },
 		Publish:           c.PublishEvent,
 	})
+	c.families.library = &libraryHTTP{store: c.store, scans: c.scans, libraryManagement: c.libraryManagement}
 	if c.runtime != nil {
 		c.runtime.Scans = c.scans
 	}

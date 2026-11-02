@@ -49,7 +49,7 @@ func TestReviewInboxSummaryCountsUnmatchedKOReaderProgress(t *testing.T) {
 			}
 
 			rec := httptest.NewRecorder()
-			controller.getReviewInboxSummary(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox/summary", nil))
+			controller.organizationHTTP.getReviewInboxSummary(rec, httptest.NewRequest(http.MethodGet, "/api/reviews/inbox/summary", nil))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
 			}

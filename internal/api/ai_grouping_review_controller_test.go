@@ -18,7 +18,7 @@ import (
 	"manga-manager/internal/metadata"
 )
 
-func seedAIGroupingReviewFixture(t *testing.T) (*Controller, database.Store, database.Library, database.Series, database.Series) {
+func seedAIGroupingReviewFixture(t *testing.T) (*apiFixture, database.Store, database.Library, database.Series, database.Series) {
 	t.Helper()
 
 	controller, store, _, rootDir := newTestController(t)
@@ -67,7 +67,7 @@ func TestCreateAIGroupingReviewDoesNotCreateCollectionsUntilApply(t *testing.T) 
 	}
 
 	listRec := httptest.NewRecorder()
-	controller.listAIGroupingReviews(listRec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews?status=pending", nil))
+	controller.organizationHTTP.listAIGroupingReviews(listRec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews?status=pending", nil))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected list reviews 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -87,7 +87,7 @@ func TestCreateAIGroupingReviewDoesNotCreateCollectionsUntilApply(t *testing.T) 
 	}
 
 	applyRec := httptest.NewRecorder()
-	controller.applyAIGroupingReview(applyRec, requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10)))
+	controller.organizationHTTP.applyAIGroupingReview(applyRec, requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10)))
 	if applyRec.Code != http.StatusOK {
 		t.Fatalf("expected apply review 200, got %d body=%s", applyRec.Code, applyRec.Body.String())
 	}
@@ -131,7 +131,7 @@ func TestRejectAIGroupingReviewDoesNotCreateCollections(t *testing.T) {
 	}
 
 	rejectRec := httptest.NewRecorder()
-	controller.rejectAIGroupingReview(rejectRec, requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/reject", nil, "reviewId", strconv.FormatInt(review.ID, 10)))
+	controller.organizationHTTP.rejectAIGroupingReview(rejectRec, requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/reject", nil, "reviewId", strconv.FormatInt(review.ID, 10)))
 	if rejectRec.Code != http.StatusOK {
 		t.Fatalf("expected reject review 200, got %d body=%s", rejectRec.Code, rejectRec.Body.String())
 	}
@@ -180,7 +180,7 @@ func TestAIGroupingReviewCollectionEditAndPartialActions(t *testing.T) {
 	updateReq := requestWithRouteParam(http.MethodPut, "/api/ai-grouping/reviews/1/collections/1", updateBody, "reviewId", strconv.FormatInt(review.ID, 10))
 	updateReq = withRouteParam(updateReq, "collectionId", strconv.FormatInt(collections[0].ID, 10))
 	updateRec := httptest.NewRecorder()
-	controller.updateAIGroupingReviewCollection(updateRec, updateReq)
+	controller.organizationHTTP.updateAIGroupingReviewCollection(updateRec, updateReq)
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected update review collection 200, got %d body=%s", updateRec.Code, updateRec.Body.String())
 	}
@@ -188,7 +188,7 @@ func TestAIGroupingReviewCollectionEditAndPartialActions(t *testing.T) {
 	applyReq := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 	applyReq = withRouteParam(applyReq, "collectionId", strconv.FormatInt(collections[0].ID, 10))
 	applyRec := httptest.NewRecorder()
-	controller.applyAIGroupingReviewCollection(applyRec, applyReq)
+	controller.organizationHTTP.applyAIGroupingReviewCollection(applyRec, applyReq)
 	if applyRec.Code != http.StatusOK {
 		t.Fatalf("expected apply review collection 200, got %d body=%s", applyRec.Code, applyRec.Body.String())
 	}
@@ -196,7 +196,7 @@ func TestAIGroupingReviewCollectionEditAndPartialActions(t *testing.T) {
 	rejectReq := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/2/reject", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 	rejectReq = withRouteParam(rejectReq, "collectionId", strconv.FormatInt(collections[1].ID, 10))
 	rejectRec := httptest.NewRecorder()
-	controller.rejectAIGroupingReviewCollection(rejectRec, rejectReq)
+	controller.organizationHTTP.rejectAIGroupingReviewCollection(rejectRec, rejectReq)
 	if rejectRec.Code != http.StatusOK {
 		t.Fatalf("expected reject review collection 200, got %d body=%s", rejectRec.Code, rejectRec.Body.String())
 	}

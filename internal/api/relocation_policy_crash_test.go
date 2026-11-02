@@ -30,7 +30,7 @@ func TestRelocationPolicyCrashRecoversFromActualDurabilityBoundaries(t *testing.
 			cfg := c.currentConfig()
 			cfg.Library.StoragePolicies = []config.LibraryStoragePolicy{{Path: lib.Path, StorageProfile: "hdd_external"}}
 			cfg.LLM.APIKey = "test-secret-must-not-enter-journal"
-			if err := c.persistConfig(&cfg); err != nil {
+			if err := c.admin.persistConfig(&cfg); err != nil {
 				t.Fatal(err)
 			}
 			plan := startRelocationPreview(t, c, lib.ID, target)
@@ -62,7 +62,7 @@ func TestRelocationPolicyCrashRecoversFromActualDurabilityBoundaries(t *testing.
 				t.Fatal(err)
 			}
 			fresh := config.NewManager(disk)
-			reopened := newControllerCore(store, scanner.NewScanner(store, fresh), fresh, c.configPath, defaultControllerCacheSizes())
+			reopened := newAPIFixture(store, scanner.NewScanner(store, fresh), fresh, c.configPath, defaultControllerCacheSizes())
 			t.Cleanup(reopened.Close)
 			var id int64
 			if err = store.DB().QueryRow(`SELECT id FROM relocation_operations WHERE plan_id=?`, plan.ID).Scan(&id); err != nil {
@@ -98,7 +98,7 @@ func TestRelocationPolicyCrashRecoversFromActualDurabilityBoundaries(t *testing.
 				t.Fatal(err)
 			}
 			secondManager := config.NewManager(secondCfg)
-			second := newControllerCore(store, scanner.NewScanner(store, secondManager), secondManager, c.configPath, defaultControllerCacheSizes())
+			second := newAPIFixture(store, scanner.NewScanner(store, secondManager), secondManager, c.configPath, defaultControllerCacheSizes())
 			t.Cleanup(second.Close)
 			if result := awaitRelocationOperation(t, second, id); result.Status != wantStatus {
 				t.Fatalf("repeated recovery: %+v", result)
@@ -132,7 +132,7 @@ func TestRelocationPolicyCrashProcess(t *testing.T) {
 		return nil
 	})
 	mgr := config.NewManager(cfg, writer)
-	c := newControllerCore(store, scanner.NewScanner(store, mgr), mgr, path, defaultControllerCacheSizes())
+	c := newAPIFixture(store, scanner.NewScanner(store, mgr), mgr, path, defaultControllerCacheSizes())
 	defer c.Close()
 	if phase == "runtime_apply" {
 		c.relocation.ApplyConfig = func(cfg *config.Config) error {

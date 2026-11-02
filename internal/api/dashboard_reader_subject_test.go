@@ -20,7 +20,7 @@ func TestDashboardRecentReadRejectsInvalidSubjectInsteadOfAnonymousFallback(t *t
 	}
 	req := withUserContext(httptest.NewRequest(http.MethodGet, "/?limit=1", nil), database.User{ID: -1})
 	rec := httptest.NewRecorder()
-	c.getRecentReadAll(rec, req)
+	c.reader.getRecentReadAll(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid reader inherited anonymous results: %d %s", rec.Code, rec.Body.String())
 	}

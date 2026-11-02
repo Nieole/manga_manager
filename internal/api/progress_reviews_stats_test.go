@@ -144,7 +144,7 @@ func TestUpdateBookProgressClampingAndErrors(t *testing.T) {
 	call := func(bookIDParam, body string) *httptest.ResponseRecorder {
 		req := requestWithRouteParam(http.MethodPost, "/x", []byte(body), "bookId", bookIDParam)
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, req)
+		controller.reader.updateBookProgress(rec, req)
 		return rec
 	}
 
@@ -196,7 +196,7 @@ func TestUpdateBookProgressStaleUpdatedAtSkipped(t *testing.T) {
 		b, _ := json.Marshal(UpdateProgressRequest{Page: page, UpdatedAt: updatedAt})
 		req := requestWithRouteParam(http.MethodPost, "/x", b, "bookId", bid)
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, req)
+		controller.reader.updateBookProgress(rec, req)
 		return rec
 	}
 
@@ -235,7 +235,7 @@ func TestUpdateBookProgressPerUserIsolation(t *testing.T) {
 			u,
 		)
 		rec := httptest.NewRecorder()
-		controller.updateBookProgress(rec, req)
+		controller.reader.updateBookProgress(rec, req)
 		return rec
 	}
 
@@ -273,7 +273,7 @@ func TestBulkSyncBookProgressPerUserAndClamp(t *testing.T) {
 	}})
 	req := withUserContext(httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body)), user)
 	rec := httptest.NewRecorder()
-	controller.bulkSyncBookProgress(rec, req)
+	controller.reader.bulkSyncBookProgress(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200 got %d", rec.Code)
 	}
@@ -300,7 +300,7 @@ func TestBulkSyncBookProgressPerUserAndClamp(t *testing.T) {
 func TestBulkSyncBookProgressInvalidPayload(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	rec := httptest.NewRecorder()
-	controller.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader([]byte(`{bad`))))
+	controller.reader.bulkSyncBookProgress(rec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader([]byte(`{bad`))))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid payload want 400 got %d", rec.Code)
 	}
@@ -336,7 +336,7 @@ func TestBookProgressPageClampAcrossEndpoints(t *testing.T) {
 
 			body := []byte(`{"page":` + strconv.FormatInt(tc.page, 10) + `}`)
 			singleRec := httptest.NewRecorder()
-			controller.updateBookProgress(singleRec, requestWithRouteParam(
+			controller.reader.updateBookProgress(singleRec, requestWithRouteParam(
 				http.MethodPost, "/x", body, "bookId", strconv.FormatInt(singleBook.ID, 10)))
 			if singleRec.Code != http.StatusOK || statusOf(singleRec) != "Progress updated" {
 				t.Fatalf("单本端点 want 200/Progress updated, got %d/%q", singleRec.Code, statusOf(singleRec))
@@ -346,7 +346,7 @@ func TestBookProgressPageClampAcrossEndpoints(t *testing.T) {
 				{BookID: bulkBook.ID, Page: tc.page},
 			}})
 			bulkRec := httptest.NewRecorder()
-			controller.bulkSyncBookProgress(bulkRec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(bulkBody)))
+			controller.reader.bulkSyncBookProgress(bulkRec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(bulkBody)))
 			if bulkRec.Code != http.StatusOK {
 				t.Fatalf("批量端点 want 200 got %d", bulkRec.Code)
 			}
@@ -392,7 +392,7 @@ func TestAddBookReadingTimeBehavior(t *testing.T) {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		controller.addBookReadingTime(rec, req)
+		controller.reader.addBookReadingTime(rec, req)
 		return rec
 	}
 	totalFor := func(u database.User) int64 {
@@ -492,7 +492,7 @@ func TestSeriesReviewRatingValidationAndClearOnEmpty(t *testing.T) {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		controller.putSeriesReview(rec, req)
+		controller.reader.putSeriesReview(rec, req)
 		return rec
 	}
 
@@ -504,7 +504,7 @@ func TestSeriesReviewRatingValidationAndClearOnEmpty(t *testing.T) {
 	}
 	// 非法 series id -> 400。
 	badRec := httptest.NewRecorder()
-	controller.putSeriesReview(badRec, withUserContext(requestWithRouteParam(http.MethodPut, "/x", []byte(`{"rating":3}`), "seriesId", "abc"), user))
+	controller.reader.putSeriesReview(badRec, withUserContext(requestWithRouteParam(http.MethodPut, "/x", []byte(`{"rating":3}`), "seriesId", "abc"), user))
 	if badRec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid series id want 400 got %d", badRec.Code)
 	}
@@ -565,7 +565,7 @@ func TestSeriesReviewPerUserGetAndDelete(t *testing.T) {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		controller.getSeriesReview(rec, req)
+		controller.reader.getSeriesReview(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("get review want 200 got %d", rec.Code)
 		}
@@ -586,7 +586,7 @@ func TestSeriesReviewPerUserGetAndDelete(t *testing.T) {
 
 	// A 删除自己的短评。
 	delRec := httptest.NewRecorder()
-	controller.deleteSeriesReview(delRec, withUserContext(requestWithRouteParam(http.MethodDelete, "/x", nil, "seriesId", sid), userA))
+	controller.reader.deleteSeriesReview(delRec, withUserContext(requestWithRouteParam(http.MethodDelete, "/x", nil, "seriesId", sid), userA))
 	if delRec.Code != http.StatusOK {
 		t.Fatalf("delete want 200 got %d", delRec.Code)
 	}
@@ -601,7 +601,7 @@ func TestStatsAnonymousZeroValues(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	streakRec := httptest.NewRecorder()
-	controller.getReadingStreak(streakRec, httptest.NewRequest(http.MethodGet, "/api/stats/streak", nil))
+	controller.reader.getReadingStreak(streakRec, httptest.NewRequest(http.MethodGet, "/api/stats/streak", nil))
 	var streak map[string]int
 	_ = json.Unmarshal(streakRec.Body.Bytes(), &streak)
 	if streakRec.Code != http.StatusOK || streak["current"] != 0 || streak["longest"] != 0 {
@@ -609,7 +609,7 @@ func TestStatsAnonymousZeroValues(t *testing.T) {
 	}
 
 	rtRec := httptest.NewRecorder()
-	controller.getReadingTimeStats(rtRec, httptest.NewRequest(http.MethodGet, "/api/stats/reading-time", nil))
+	controller.reader.getReadingTimeStats(rtRec, httptest.NewRequest(http.MethodGet, "/api/stats/reading-time", nil))
 	var rt struct {
 		TotalSeconds int64                         `json:"total_seconds"`
 		Top          []database.BookReadingTimeRow `json:"top"`
@@ -623,7 +623,7 @@ func TestStatsAnonymousZeroValues(t *testing.T) {
 	}
 
 	perRec := httptest.NewRecorder()
-	controller.getPeriodStats(perRec, httptest.NewRequest(http.MethodGet, "/api/stats/period?year=2024&month=3", nil))
+	controller.reader.getPeriodStats(perRec, httptest.NewRequest(http.MethodGet, "/api/stats/period?year=2024&month=3", nil))
 	var period database.UserPeriodStats
 	_ = json.Unmarshal(perRec.Body.Bytes(), &period)
 	if perRec.Code != http.StatusOK || period.TopSeries == nil || len(period.TopSeries) != 0 {
@@ -655,7 +655,7 @@ func TestReadingStatsDualPathPerUser(t *testing.T) {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		controller.getReadingTimeStats(rec, req)
+		controller.reader.getReadingTimeStats(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("reading-time want 200 got %d", rec.Code)
 		}
@@ -686,7 +686,7 @@ func TestReadingStatsDualPathPerUser(t *testing.T) {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		controller.getActivityHeatmap(rec, req)
+		controller.reader.getActivityHeatmap(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("heatmap want 200 got %d", rec.Code)
 		}
@@ -841,13 +841,13 @@ func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 		body := []byte(`{"page":` + strconv.Itoa(page) + `,"note":"` + note + `"}`)
 		req := withUserContext(requestWithRouteParam(http.MethodPost, "/x", body, "bookId", bid), u)
 		rec := httptest.NewRecorder()
-		controller.upsertReadingBookmark(rec, req)
+		controller.reader.upsertReadingBookmark(rec, req)
 		return rec
 	}
 	list := func(u database.User) []database.ReadingBookmark {
 		req := withUserContext(requestWithRouteParam(http.MethodGet, "/x", nil, "bookId", bid), u)
 		rec := httptest.NewRecorder()
-		controller.listReadingBookmarks(rec, req)
+		controller.reader.listReadingBookmarks(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("list bookmarks want 200 got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -885,7 +885,7 @@ func TestReadingBookmarksPerUserIsolation(t *testing.T) {
 		userA,
 	)
 	rec := httptest.NewRecorder()
-	controller.deleteReadingBookmark(rec, req)
+	controller.reader.deleteReadingBookmark(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-user bookmark delete should 404, got %d", rec.Code)
 	}
@@ -927,14 +927,14 @@ func TestRecommendationCacheIsPartitionedPerUser(t *testing.T) {
 // 那个 N 是别人的阅读活跃度，属于跨用户泄露。
 func TestDashboardActiveDaysIsPerUser(t *testing.T) {
 	// fetchStats 取某用户（u 为 nil 表示未启用多用户）的看板统计。
-	fetchStats := func(t *testing.T, c *Controller, u *database.User) database.DashboardStats {
+	fetchStats := func(t *testing.T, c *apiFixture, u *database.User) database.DashboardStats {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/stats/dashboard", nil)
 		if u != nil {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		c.getDashboardStats(rec, req)
+		c.reader.getDashboardStats(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("dashboard stats want 200 got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -945,14 +945,14 @@ func TestDashboardActiveDaysIsPerUser(t *testing.T) {
 		return stats
 	}
 	// fetchHeatmap 取某用户（u 为 nil 表示未启用多用户）的活动热力数据。
-	fetchHeatmap := func(t *testing.T, c *Controller, u *database.User) []database.ActivityDay {
+	fetchHeatmap := func(t *testing.T, c *apiFixture, u *database.User) []database.ActivityDay {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/stats/activity?weeks=16", nil)
 		if u != nil {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		c.getActivityHeatmap(rec, req)
+		c.reader.getActivityHeatmap(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("activity heatmap want 200 got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -963,7 +963,7 @@ func TestDashboardActiveDaysIsPerUser(t *testing.T) {
 		return days
 	}
 	// readPage 以某用户（u 为 nil 表示未启用多用户）的身份上报一次阅读进度，落下当天活动。
-	readPage := func(t *testing.T, c *Controller, u *database.User, bookID int64, page int) {
+	readPage := func(t *testing.T, c *apiFixture, u *database.User, bookID int64, page int) {
 		t.Helper()
 		req := requestWithRouteParam(http.MethodPost, "/api/books/progress",
 			[]byte(`{"page":`+strconv.Itoa(page)+`}`), "bookId", strconv.FormatInt(bookID, 10))
@@ -971,7 +971,7 @@ func TestDashboardActiveDaysIsPerUser(t *testing.T) {
 			req = withUserContext(req, *u)
 		}
 		rec := httptest.NewRecorder()
-		c.updateBookProgress(rec, req)
+		c.reader.updateBookProgress(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("update progress want 200 got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -1045,7 +1045,7 @@ func TestReadingTimeStorageFailureIsObservable(t *testing.T) {
 	}
 	req := withUserContext(requestWithRouteParam(http.MethodPost, "/x", []byte(`{"seconds":30}`), "bookId", "1"), user)
 	rec := httptest.NewRecorder()
-	controller.addBookReadingTime(rec, req)
+	controller.reader.addBookReadingTime(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("storage failure status=%d body=%s", rec.Code, rec.Body.String())
 	}

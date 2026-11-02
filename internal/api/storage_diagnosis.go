@@ -126,7 +126,7 @@ func (f storageFailure) response() StorageFailureResponse {
 //
 // cause 只作为日志证据保留，不参与判定：底层错误的措辞随归档库、平台而变，
 // 而磁盘现状是可以当场探测的。探测顺序见分类常量的说明。
-func (c *Controller) diagnoseStorageFailure(ctx context.Context, target storageTarget, cause error) storageFailure {
+func (c *contentHTTP) diagnoseStorageFailure(ctx context.Context, target storageTarget, cause error) storageFailure {
 	failure := storageFailure{
 		Reason:    storageReasonArchiveUnreadable,
 		BookID:    target.BookID,

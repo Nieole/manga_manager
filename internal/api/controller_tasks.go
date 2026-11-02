@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"manga-manager/internal/application/scanning"
 	"manga-manager/internal/task"
 )
 
@@ -82,20 +81,7 @@ func runDomainIdentity(run RunSnapshot) task.Identity {
 	return id
 }
 
-// ---- 任务指标与并发上限的上报（依赖运行时配置，不属于任务引擎的内部状态）----
-
-// runLimitsForPath 拼出任务面板上那块并发徽章：这条路径上的存储画像，加上 scanner.WorkerCount
-// 在它上面给出的 worker 数。
-//
-// 入参必须是一条**真的会被扫**的库路径，否则报出来的数字没有对应的实物——只有扫描任务调它，
-// 别的后台任务受**磁盘作业**按工种裁定的上限约束，与扫描 worker 数无关。
-func (c *Controller) runLimitsForPath(path string) RunLimits {
-	return *runLimitsFromDomain(scanning.LimitsForPath(c.currentConfig(), path))
-}
-
-// ---- HTTP 端点 ----
-
-// taskFiltersFromQuery 解析任务端点共用的过滤参数。无法解析的 scope_id/task_id/limit 按「不过滤」处理。
+// taskFiltersFromQuery parses the shared run/task query filters.
 func taskFiltersFromQuery(r *http.Request) taskFilters {
 	query := r.URL.Query()
 	filters := taskFilters{

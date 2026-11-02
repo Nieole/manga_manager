@@ -65,7 +65,7 @@ func TestGetPagesByBookStorageFailureDiagnostics(t *testing.T) {
 
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
-		controller.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
+		controller.media.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
 
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("存储离线应回 503，实际 %d（body %q）", rec.Code, rec.Body.String())
@@ -103,7 +103,7 @@ func TestGetPagesByBookStorageFailureDiagnostics(t *testing.T) {
 		// 资料库根目录还在，只有这一本书没落盘。
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
-		controller.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
+		controller.media.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("单文件缺失应回 404，实际 %d（body %q）", rec.Code, rec.Body.String())
@@ -128,7 +128,7 @@ func TestGetPagesByBookStorageFailureDiagnostics(t *testing.T) {
 
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
-		controller.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
+		controller.media.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
 
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("归档损坏应回 422，实际 %d（body %q）", rec.Code, rec.Body.String())
@@ -146,7 +146,7 @@ func TestGetPagesByBookStorageFailureDiagnostics(t *testing.T) {
 
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
-		controller.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
+		controller.media.getPagesByBook(rec, requestWithRouteParam(http.MethodGet, "/api/pages/"+idStr, nil, "bookId", idStr))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("正常取页应回 200，实际 %d（body %q）", rec.Code, rec.Body.String())
@@ -177,7 +177,7 @@ func TestPageImageAndBookFileStorageFailureDiagnostics(t *testing.T) {
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
 		req := requestWithRouteParams(http.MethodGet, "/api/pages/"+idStr+"/1", nil, map[string]string{"bookId": idStr, "pageNumber": "1"})
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("存储离线取页图应回 503，实际 %d（body %q）", rec.Code, rec.Body.String())
@@ -197,7 +197,7 @@ func TestPageImageAndBookFileStorageFailureDiagnostics(t *testing.T) {
 
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
-		controller.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+idStr+"/file", nil, "bookId", idStr))
+		controller.media.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+idStr+"/file", nil, "bookId", idStr))
 
 		if rec.Code != http.StatusServiceUnavailable {
 			t.Fatalf("存储离线整卷下载应回 503，实际 %d（body %q）", rec.Code, rec.Body.String())
@@ -213,7 +213,7 @@ func TestPageImageAndBookFileStorageFailureDiagnostics(t *testing.T) {
 
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
-		controller.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+idStr+"/file", nil, "bookId", idStr))
+		controller.media.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+idStr+"/file", nil, "bookId", idStr))
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("单文件缺失整卷下载应回 404，实际 %d", rec.Code)
@@ -233,7 +233,7 @@ func TestPageImageAndBookFileStorageFailureDiagnostics(t *testing.T) {
 
 		idStr := strconv.FormatInt(book.ID, 10)
 		rec := httptest.NewRecorder()
-		controller.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+idStr+"/file", nil, "bookId", idStr))
+		controller.media.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+idStr+"/file", nil, "bookId", idStr))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("正常整卷下载应回 200，实际 %d", rec.Code)
@@ -284,7 +284,7 @@ func TestDiagnoseStorageFailureKeepsAmbiguousErrorsOutOfMissing(t *testing.T) {
 	}
 
 	target := storageTarget{BookID: book.ID, LibraryID: lib.ID, Path: book.Path}
-	failure := controller.diagnoseStorageFailure(t.Context(), target, os.ErrInvalid)
+	failure := controller.media.diagnoseStorageFailure(t.Context(), target, os.ErrInvalid)
 	if failure.Reason == storageReasonFileMissing {
 		t.Fatal("权限错误被误判成文件消失了")
 	}

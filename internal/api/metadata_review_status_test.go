@@ -22,7 +22,7 @@ import (
 )
 
 // seedPendingMetadataReview 造一个系列 + 一条待裁决的提案。
-func seedPendingMetadataReview(t *testing.T, controller *Controller, store database.Store, name string) (database.Series, database.MetadataReview) {
+func seedPendingMetadataReview(t *testing.T, controller *apiFixture, store database.Store, name string) (database.Series, database.MetadataReview) {
 	t.Helper()
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib-"+name, name, "book-"+name+".cbz", 10)
 
@@ -73,9 +73,9 @@ func TestMetadataReviewTerminalStatusIsGuarded(t *testing.T) {
 				req := requestWithRouteParam(http.MethodPost, "/api/metadata/reviews/x", nil,
 					"reviewId", strconv.FormatInt(review.ID, 10))
 				if action == "apply" {
-					controller.applyMetadataReview(rec, req)
+					controller.organizationHTTP.applyMetadataReview(rec, req)
 				} else {
-					controller.rejectMetadataReview(rec, req)
+					controller.organizationHTTP.rejectMetadataReview(rec, req)
 				}
 				return rec
 			}
@@ -99,7 +99,7 @@ func TestMetadataReviewTerminalStatusIsGuarded(t *testing.T) {
 }
 
 // invokeBulk 让两个批量入口共用同一段请求构造与解析，断言因此只落在归桶上。
-func invokeBulk(t *testing.T, controller *Controller, action string, ids ...int64) metadataReviewBulkResponse {
+func invokeBulk(t *testing.T, controller *apiFixture, action string, ids ...int64) metadataReviewBulkResponse {
 	t.Helper()
 	encoded := make([]string, 0, len(ids))
 	for _, id := range ids {
@@ -109,9 +109,9 @@ func invokeBulk(t *testing.T, controller *Controller, action string, ids ...int6
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk", bytes.NewReader(body))
 	if action == "apply" {
-		controller.bulkApplyMetadataReviews(rec, req)
+		controller.organizationHTTP.bulkApplyMetadataReviews(rec, req)
 	} else {
-		controller.bulkRejectMetadataReviews(rec, req)
+		controller.organizationHTTP.bulkRejectMetadataReviews(rec, req)
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
@@ -134,7 +134,7 @@ func TestBulkMetadataReviewPutsPreemptedInConflict(t *testing.T) {
 
 			// 先把它拒了，等价于另一个标签页抢先处理。
 			rec := httptest.NewRecorder()
-			controller.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
+			controller.organizationHTTP.rejectMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
 				"reviewId", strconv.FormatInt(review.ID, 10)))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("抢先拒绝失败：%d %s", rec.Code, rec.Body.String())

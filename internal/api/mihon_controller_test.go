@@ -51,7 +51,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 
 	librariesRec := httptest.NewRecorder()
-	controller.mihonLibraries(librariesRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/libraries", nil))
+	controller.reader.mihonLibraries(librariesRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/libraries", nil))
 	if librariesRec.Code != http.StatusOK {
 		t.Fatalf("expected libraries 200, got %d", librariesRec.Code)
 	}
@@ -64,7 +64,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 
 	recentRec := httptest.NewRecorder()
-	controller.mihonRecentlyAdded(recentRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/recently-added?libraryId="+strconv.FormatInt(lib.ID, 10)+"&page=1&limit=10", nil))
+	controller.reader.mihonRecentlyAdded(recentRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/recently-added?libraryId="+strconv.FormatInt(lib.ID, 10)+"&page=1&limit=10", nil))
 	if recentRec.Code != http.StatusOK {
 		t.Fatalf("expected recently added 200, got %d", recentRec.Code)
 	}
@@ -77,7 +77,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 
 	continueRec := httptest.NewRecorder()
-	controller.mihonContinueReading(continueRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/continue?limit=10", nil))
+	controller.reader.mihonContinueReading(continueRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/continue?limit=10", nil))
 	if continueRec.Code != http.StatusOK {
 		t.Fatalf("expected continue 200, got %d", continueRec.Code)
 	}
@@ -90,7 +90,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 
 	seriesRec := httptest.NewRecorder()
-	controller.mihonSeries(seriesRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/series?libraryId="+strconv.FormatInt(lib.ID, 10)+"&q=alpha&page=1&limit=10", nil))
+	controller.reader.mihonSeries(seriesRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/series?libraryId="+strconv.FormatInt(lib.ID, 10)+"&q=alpha&page=1&limit=10", nil))
 	if seriesRec.Code != http.StatusOK {
 		t.Fatalf("expected series 200, got %d", seriesRec.Code)
 	}
@@ -103,7 +103,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 
 	detailRec := httptest.NewRecorder()
-	controller.mihonSeriesDetail(detailRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.mihonSeriesDetail(detailRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if detailRec.Code != http.StatusOK {
 		t.Fatalf("expected detail 200, got %d", detailRec.Code)
 	}
@@ -116,7 +116,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 
 	booksRec := httptest.NewRecorder()
-	controller.mihonSeriesBooks(booksRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+	controller.reader.mihonSeriesBooks(booksRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/series/1/books", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 	if booksRec.Code != http.StatusOK {
 		t.Fatalf("expected books 200, got %d", booksRec.Code)
 	}
@@ -129,7 +129,7 @@ func TestMihonAPILifecycle(t *testing.T) {
 	}
 
 	pagesRec := httptest.NewRecorder()
-	controller.mihonBookPages(pagesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/books/1/pages?format=webp&q=80", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+	controller.reader.mihonBookPages(pagesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/books/1/pages?format=webp&q=80", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 	if pagesRec.Code != http.StatusOK {
 		t.Fatalf("expected pages 200, got %d", pagesRec.Code)
 	}
@@ -146,7 +146,7 @@ func TestMihonRoutesRespectProtocolToggle(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 	router := chi.NewRouter()
 	router.Route("/api", func(r chi.Router) {
-		controller.setupMihonRoutes(r)
+		controller.reader.setupMihonRoutes(r)
 	})
 
 	rec := httptest.NewRecorder()
@@ -185,7 +185,7 @@ func TestMihonReadingListEndpoints(t *testing.T) {
 	}
 
 	listRec := httptest.NewRecorder()
-	controller.mihonReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/reading-lists", nil))
+	controller.reader.mihonReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/reading-lists", nil))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected reading lists 200, got %d", listRec.Code)
 	}
@@ -198,7 +198,7 @@ func TestMihonReadingListEndpoints(t *testing.T) {
 	}
 
 	seriesRec := httptest.NewRecorder()
-	controller.mihonReadingListSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/reading-lists/1/series", nil, "listId", strconv.FormatInt(list.ID, 10)))
+	controller.reader.mihonReadingListSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/reading-lists/1/series", nil, "listId", strconv.FormatInt(list.ID, 10)))
 	if seriesRec.Code != http.StatusOK {
 		t.Fatalf("expected reading list series 200, got %d body=%s", seriesRec.Code, seriesRec.Body.String())
 	}
@@ -246,7 +246,7 @@ func TestMihonCollectionEndpoints(t *testing.T) {
 	filterID, _ := filterResult.LastInsertId()
 
 	listRec := httptest.NewRecorder()
-	controller.mihonCollections(listRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/collections", nil))
+	controller.reader.mihonCollections(listRec, httptest.NewRequest(http.MethodGet, "/api/mihon/v1/collections", nil))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected collections 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -265,7 +265,7 @@ func TestMihonCollectionEndpoints(t *testing.T) {
 	}
 
 	staticRec := httptest.NewRecorder()
-	controller.mihonCollectionSeries(staticRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/collections/1/series", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
+	controller.reader.mihonCollectionSeries(staticRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/collections/1/series", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
 	if staticRec.Code != http.StatusOK {
 		t.Fatalf("expected static collection series 200, got %d body=%s", staticRec.Code, staticRec.Body.String())
 	}
@@ -278,7 +278,7 @@ func TestMihonCollectionEndpoints(t *testing.T) {
 	}
 
 	smartRec := httptest.NewRecorder()
-	controller.mihonSmartCollectionSeries(smartRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series", nil, "filterId", strconv.FormatInt(filterID, 10)))
+	controller.reader.mihonSmartCollectionSeries(smartRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/smart-collections/1/series", nil, "filterId", strconv.FormatInt(filterID, 10)))
 	if smartRec.Code != http.StatusOK {
 		t.Fatalf("expected smart collection series 200, got %d body=%s", smartRec.Code, smartRec.Body.String())
 	}
@@ -295,13 +295,13 @@ func TestMihonAPIRejectsInvalidIDs(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	seriesRec := httptest.NewRecorder()
-	controller.mihonSeriesDetail(seriesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/series/bad", nil, "seriesId", "bad"))
+	controller.reader.mihonSeriesDetail(seriesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/series/bad", nil, "seriesId", "bad"))
 	if seriesRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid series 400, got %d", seriesRec.Code)
 	}
 
 	pagesRec := httptest.NewRecorder()
-	controller.mihonBookPages(pagesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/books/bad/pages", nil, "bookId", "bad"))
+	controller.reader.mihonBookPages(pagesRec, requestWithRouteParam(http.MethodGet, "/api/mihon/v1/books/bad/pages", nil, "bookId", "bad"))
 	if pagesRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid book 400, got %d", pagesRec.Code)
 	}
@@ -320,7 +320,7 @@ func TestMihonPageIndexIsOneBased(t *testing.T) {
 	controller.config.Replace(&cfg)
 	router := chi.NewRouter()
 	router.Route("/api", func(r chi.Router) {
-		controller.setupMihonRoutes(r)
+		controller.reader.setupMihonRoutes(r)
 	})
 
 	pagesRec := httptest.NewRecorder()

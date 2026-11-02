@@ -27,7 +27,7 @@ func TestUnknownReadMarksRemainCompletedWithoutPagesInSeriesResponses(t *testing
 			if perUser {
 				markRequest = withUserContext(markRequest, user)
 			}
-			controller.bulkUpdateBookProgress(marked, markRequest)
+			controller.reader.bulkUpdateBookProgress(marked, markRequest)
 			if marked.Code != 200 {
 				t.Fatalf("%d %s", marked.Code, marked.Body.String())
 			}
@@ -38,7 +38,7 @@ func TestUnknownReadMarksRemainCompletedWithoutPagesInSeriesResponses(t *testing
 				if perUser {
 					request = withUserContext(request, user)
 				}
-				controller.getSeriesContext(rec, request)
+				controller.reader.getSeriesContext(rec, request)
 				if rec.Code != 200 {
 					t.Fatalf("%d %s", rec.Code, rec.Body.String())
 				}

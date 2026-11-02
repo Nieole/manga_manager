@@ -30,7 +30,7 @@ func TestOrganizedReaderEndpointsRejectInvalidSubject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, err := c.readingLists().Create(context.Background(), "List", "")
+	list, err := c.organizationHTTP.readingLists().Create(context.Background(), "List", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,9 +40,9 @@ func TestOrganizedReaderEndpointsRejectInvalidSubject(t *testing.T) {
 		param   string
 		id      int64
 	}{
-		{"views", c.listCollectionViews, "", 0}, {"smart", c.getSmartCollectionSeries, "filterId", filter.ID},
-		{"items", c.listReadingListItems, "listId", list.ID}, {"opds views", c.opdsCollections, "", 0},
-		{"mihon views", c.mihonCollections, "", 0}, {"opds list", c.opdsReadingListSeries, "listId", list.ID}, {"mihon list", c.mihonReadingListSeries, "listId", list.ID},
+		{"views", c.organizationHTTP.listCollectionViews, "", 0}, {"smart", c.organizationHTTP.getSmartCollectionSeries, "filterId", filter.ID},
+		{"items", c.organizationHTTP.listReadingListItems, "listId", list.ID}, {"opds views", c.reader.opdsCollections, "", 0},
+		{"mihon views", c.reader.mihonCollections, "", 0}, {"opds list", c.reader.opdsReadingListSeries, "listId", list.ID}, {"mihon list", c.reader.mihonReadingListSeries, "listId", list.ID},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()

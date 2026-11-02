@@ -25,7 +25,7 @@ func TestApplyAIGroupingReviewRejectsDuplicateCollectionName(t *testing.T) {
 
 		req := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 		rec := httptest.NewRecorder()
-		controller.applyAIGroupingReview(rec, req)
+		controller.organizationHTTP.applyAIGroupingReview(rec, req)
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("状态码 = %d，期望 %d body=%s", rec.Code, http.StatusConflict, rec.Body.String())
 		}
@@ -46,7 +46,7 @@ func TestApplyAIGroupingReviewRejectsDuplicateCollectionName(t *testing.T) {
 
 		req := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 		rec := httptest.NewRecorder()
-		controller.applyAIGroupingReview(rec, req)
+		controller.organizationHTTP.applyAIGroupingReview(rec, req)
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("状态码 = %d，期望 %d body=%s", rec.Code, http.StatusConflict, rec.Body.String())
 		}
@@ -66,7 +66,7 @@ func TestApplyAIGroupingReviewRejectsDuplicateCollectionName(t *testing.T) {
 		conflictReq := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 		conflictReq = withRouteParam(conflictReq, "collectionId", strconv.FormatInt(collections[0].ID, 10))
 		conflictRec := httptest.NewRecorder()
-		controller.applyAIGroupingReviewCollection(conflictRec, conflictReq)
+		controller.organizationHTTP.applyAIGroupingReviewCollection(conflictRec, conflictReq)
 		if conflictRec.Code != http.StatusConflict {
 			t.Fatalf("状态码 = %d，期望 %d body=%s", conflictRec.Code, http.StatusConflict, conflictRec.Body.String())
 		}
@@ -78,7 +78,7 @@ func TestApplyAIGroupingReviewRejectsDuplicateCollectionName(t *testing.T) {
 		okReq := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/2/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 		okReq = withRouteParam(okReq, "collectionId", strconv.FormatInt(collections[1].ID, 10))
 		okRec := httptest.NewRecorder()
-		controller.applyAIGroupingReviewCollection(okRec, okReq)
+		controller.organizationHTTP.applyAIGroupingReviewCollection(okRec, okReq)
 		if okRec.Code != http.StatusOK {
 			t.Fatalf("不撞名的候选状态码 = %d，期望 200 body=%s", okRec.Code, okRec.Body.String())
 		}

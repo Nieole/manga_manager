@@ -19,7 +19,7 @@ import (
 
 // seedCoverRunLibrary 建一个真的能查回来的资料库：封面运行的任务声明要读它的名字与存储画像，
 // 读不到就一条运行都发不起来。
-func seedCoverRunLibrary(t *testing.T, c *Controller) database.Library {
+func seedCoverRunLibrary(t *testing.T, c *apiFixture) database.Library {
 	t.Helper()
 	lib, err := c.store.CreateLibrary(context.Background(), database.CreateLibraryParams{
 		Name:         "Main",
@@ -155,7 +155,7 @@ func TestDeletingABusyLibraryCancelsOnlyLocalRuns(t *testing.T) {
 	}
 	seedTask(t, controller.taskEngine, taskSeed{Key: coverRunKey(10), Identity: libraryTask("generate_covers", 10, variantSole), CanCancel: true})
 	rec := httptest.NewRecorder()
-	controller.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/9", nil, "libraryId", "9"))
+	controller.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/9", nil, "libraryId", "9"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("busy delete HTTP%d: %s", rec.Code, rec.Body.String())
 	}

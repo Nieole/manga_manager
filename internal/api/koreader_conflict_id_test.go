@@ -43,7 +43,7 @@ func TestKOReaderConflictIDsAreNotBareProgressPrimaryKeys(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.getKOReaderDeviceDiagnostics(rec,
+	controller.admin.getKOReaderDeviceDiagnostics(rec,
 		httptest.NewRequest(http.MethodGet, "/api/system/koreader/devices", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())

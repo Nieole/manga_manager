@@ -23,7 +23,7 @@ func newRebuildThumbTestController(t testing.TB, clock *fakeClock) (*thumbTestCo
 	t.Helper()
 	e, snapshots := newBackgroundTestEngine(t, runTaskBodySynchronously, nil)
 	e.now = clock.Now
-	return &thumbTestController{Controller: &Controller{taskEngine: e}, rebuildThumbAgg: maintenance.NewThumbnailProgress()}, snapshots
+	return &thumbTestController{apiFixture: &apiFixture{Host: &Host{}, taskEngine: e}, rebuildThumbAgg: maintenance.NewThumbnailProgress()}, snapshots
 }
 
 // startedRebuildThumbRig 造一条「任务已启动、句柄已交给聚合器」的现场，
@@ -307,7 +307,7 @@ func TestRebuildThumbReportDropsTheStorageProfile(t *testing.T) {
 
 // thumbTestController adapts the retained observer contract tests to application-owned aggregation.
 type thumbTestController struct {
-	*Controller
+	*apiFixture
 	rebuildThumbAgg *maintenance.ThumbnailProgress
 }
 

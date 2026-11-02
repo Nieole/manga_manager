@@ -22,7 +22,7 @@ import (
 // protocolGateFixture 是三条协议链路共用的装配：两个站点账号（一个待改密、一个正常），
 // 各自绑定一个 KOReader 账户，并把三套路由挂在同一棵路由树上。
 type protocolGateFixture struct {
-	controller  *Controller
+	controller  *apiFixture
 	store       database.Store
 	server      *httptest.Server
 	pendingKey  string // 待改密账号名下 KOReader 账户的客户端密钥（md5）

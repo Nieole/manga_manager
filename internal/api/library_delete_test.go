@@ -48,7 +48,7 @@ func TestDeleteLibraryHTTPReportsSharedCoverageWithoutCancellingWork(t *testing.
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
-			c.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+			c.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 			if rec.Code != http.StatusConflict {
 				t.Fatalf("busy delete HTTP%d %s", rec.Code, rec.Body.String())
 			}
@@ -109,7 +109,7 @@ func TestDeleteLibraryHTTPPreservesCancellationFactsOnEveryOutcome(t *testing.T)
 				t.Fatal(err)
 			}
 			rec := httptest.NewRecorder()
-			c.deleteLibrary(rec, req.WithContext(ctx))
+			c.families.library.deleteLibrary(rec, req.WithContext(ctx))
 			want := map[string]int{"success": 200, "read-busy": 409, "database-failure": 500, "request-cancel": 408}[mode]
 			if rec.Code != want {
 				t.Fatalf("HTTP%d %s", rec.Code, rec.Body.String())
@@ -144,18 +144,18 @@ func TestDeleteLibraryHTTPPreservesReadConflictAndMissingIdentity(t *testing.T) 
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	c.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("read conflict HTTP%d %s", rec.Code, rec.Body.String())
 	}
 	release()
 	rec = httptest.NewRecorder()
-	c.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("idle delete HTTP%d %s", rec.Code, rec.Body.String())
 	}
 	rec = httptest.NewRecorder()
-	c.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("removed identity HTTP%d %s", rec.Code, rec.Body.String())
 	}
@@ -172,7 +172,7 @@ func TestDeleteLibraryWaitsForActualBookDownloadClosure(t *testing.T) {
 	gate := &downloadFlushGate{ResponseWriter: httptest.NewRecorder(), entered: entered, resume: resume}
 	go func() {
 		defer close(done)
-		c.serveBookFile(gate, requestWithRouteParam(http.MethodGet, "/api/books/x/file", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+		c.media.serveBookFile(gate, requestWithRouteParam(http.MethodGet, "/api/books/x/file", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 	}()
 	defer func() {
 		select {
@@ -192,7 +192,7 @@ func TestDeleteLibraryWaitsForActualBookDownloadClosure(t *testing.T) {
 		t.Fatal("download did not begin")
 	}
 	rec := httptest.NewRecorder()
-	c.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("active download delete HTTP%d %s", rec.Code, rec.Body.String())
 	}
@@ -206,7 +206,7 @@ func TestDeleteLibraryWaitsForActualBookDownloadClosure(t *testing.T) {
 		t.Fatal("download did not close after response resumed")
 	}
 	rec = httptest.NewRecorder()
-	c.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.deleteLibrary(rec, requestWithRouteParam(http.MethodDelete, "/api/libraries/x", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("closed download delete HTTP%d %s", rec.Code, rec.Body.String())
 	}

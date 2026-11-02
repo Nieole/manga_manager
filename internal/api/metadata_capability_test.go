@@ -20,9 +20,9 @@ func (s *searchOnlySource) SearchMetadata(_ context.Context, title string, limit
 func TestMetadataSearchConsumesSearchOnlySource(t *testing.T) {
 	c, _, _, _ := newTestController(t)
 	source := &searchOnlySource{}
-	c.searcherFactory = func(string) metadata.Searcher { return source }
+	c.providers.searcherFactory = func(string) metadata.Searcher { return source }
 	rec := httptest.NewRecorder()
-	c.scrapeSearchMetadata(rec, requestWithRouteParam(http.MethodGet, "/?q=sample&limit=999&offset=2", nil, "seriesId", "1"))
+	c.providers.scrapeSearchMetadata(rec, requestWithRouteParam(http.MethodGet, "/?q=sample&limit=999&offset=2", nil, "seriesId", "1"))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "sample") || !strings.Contains(rec.Body.String(), `"total":72`) || source.limit != 50 || source.offset != 2 {
 		t.Fatalf("response=%d %s limit=%d offset=%d", rec.Code, rec.Body.String(), source.limit, source.offset)
 	}

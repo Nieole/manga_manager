@@ -15,10 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/scanner"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T) {
@@ -68,11 +69,11 @@ func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T)
 				{Path: lib.Path, StorageProfile: "hdd_external"},
 				{Path: series.Path, StorageProfile: "custom", IOPolicy: config.StorageIOPolicy{ArchiveOpenConcurrency: 3}},
 			}
-			if err = c.persistConfig(&cfg); err != nil {
+			if err = c.admin.persistConfig(&cfg); err != nil {
 				t.Fatal(err)
 			}
 			hintsRec := httptest.NewRecorder()
-			c.relocationSourceRoots(hintsRec, requestWithRouteParam(http.MethodGet, "/sources", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+			c.families.relocation.relocationSourceRoots(hintsRec, requestWithRouteParam(http.MethodGet, "/sources", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 			var hints RelocationSourceRoots
 			if err = json.Unmarshal(hintsRec.Body.Bytes(), &hints); err != nil || hintsRec.Code != http.StatusOK || !hints.RecordsOutsideCurrentRoot {
 				t.Fatalf("legacy repair detection: %d %s %v", hintsRec.Code, hintsRec.Body.String(), err)
@@ -83,7 +84,7 @@ func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T)
 			}
 			cfg = c.currentConfig()
 			cfg.Tasks.RunSlots = 7
-			if err = c.persistConfig(&cfg); err != nil {
+			if err = c.admin.persistConfig(&cfg); err != nil {
 				t.Fatal(err)
 			}
 			if runtimeFailure {
@@ -97,10 +98,10 @@ func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T)
 			if op.Status != wantStatus || !op.Protected {
 				t.Fatalf("combined commit: %+v", op)
 			}
-			readPage := func(current *Controller, want int) {
+			readPage := func(current *apiFixture, want int) {
 				t.Helper()
 				rec := httptest.NewRecorder()
-				current.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(readable.ID, 10), "pageNumber": "1"}))
+				current.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(readable.ID, 10), "pageNumber": "1"}))
 				if rec.Code != want || want == http.StatusOK && !bytes.Equal(rec.Body.Bytes(), png1x1) {
 					t.Fatalf("combined page: %d %s", rec.Code, rec.Body.String())
 				}
@@ -127,7 +128,7 @@ func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T)
 				t.Fatal(err)
 			}
 			manager := config.NewManager(disk)
-			fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, c.configPath, defaultControllerCacheSizes())
+			fresh := newAPIFixture(freshStore, scanner.NewScanner(freshStore, manager), manager, c.configPath, defaultControllerCacheSizes())
 			t.Cleanup(fresh.Close)
 			op = awaitRelocationOperation(t, fresh, op.ID)
 			if op.Status != "completed" || !op.Protected {
@@ -242,7 +243,7 @@ func TestRelocationCombinedLegacyRepairProtectionAndPolicyRecovery(t *testing.T)
 				t.Fatalf("release changed migrated configuration: %v", err)
 			}
 			releasedManager := config.NewManager(releasedDisk)
-			released := newControllerCore(releasedStore, scanner.NewScanner(releasedStore, releasedManager), releasedManager, c.configPath, defaultControllerCacheSizes())
+			released := newAPIFixture(releasedStore, scanner.NewScanner(releasedStore, releasedManager), releasedManager, c.configPath, defaultControllerCacheSizes())
 			t.Cleanup(released.Close)
 			protection, err = releasedStore.LibraryRelocationProtection(ctx, lib.ID)
 			if err != nil || protection != nil {

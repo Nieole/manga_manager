@@ -45,7 +45,7 @@ func BenchmarkServePageImage_RawConsecutivePages(b *testing.B) {
 
 	req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
 	req = withRouteParam(req, "pageNumber", "1")
-	controller.servePageImage(httptest.NewRecorder(), req)
+	controller.media.servePageImage(httptest.NewRecorder(), req)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -54,7 +54,7 @@ func BenchmarkServePageImage_RawConsecutivePages(b *testing.B) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", strconv.FormatInt(page, 10))
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusOK {
 			b.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -142,14 +142,14 @@ func BenchmarkGetPagesByBook_WithManifestCache(b *testing.B) {
 	}
 
 	req := requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
-	controller.getPagesByBook(httptest.NewRecorder(), req)
+	controller.media.getPagesByBook(httptest.NewRecorder(), req)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page-list/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		rec := httptest.NewRecorder()
-		controller.getPagesByBook(rec, req)
+		controller.media.getPagesByBook(rec, req)
 		if rec.Code != http.StatusOK {
 			b.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 		}

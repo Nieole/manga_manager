@@ -19,7 +19,7 @@ import (
 
 // seedScanLibrary 建一个真的能查回来的资料库：扫描的**重启函数**要读它的名字与存储画像，
 // 读不到就一条运行都发不起来（那是 500，不是重放了错的东西）。
-func seedScanLibrary(t *testing.T, c *Controller) (database.Library, string, TaskIdentity) {
+func seedScanLibrary(t *testing.T, c *apiFixture) (database.Library, string, TaskIdentity) {
 	t.Helper()
 	lib, err := c.store.CreateLibrary(t.Context(), database.CreateLibraryParams{
 		Name:         "Main",

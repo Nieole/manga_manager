@@ -50,7 +50,7 @@ func TestPartialApplyHTTPClassifiesTransactionCurrentOutcome(t *testing.T) {
 			}})
 			body := []byte(`{"review_ids":[` + strconv.FormatInt(review.ID, 10) + `],"mode":"fill_empty"}`)
 			rec := httptest.NewRecorder()
-			controller.bulkApplyMetadataReviews(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-apply", bytes.NewReader(body)))
+			controller.organizationHTTP.bulkApplyMetadataReviews(rec, httptest.NewRequest(http.MethodPost, "/api/metadata/reviews/bulk-apply", bytes.NewReader(body)))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
 			}

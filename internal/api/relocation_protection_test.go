@@ -63,7 +63,7 @@ func TestRelocationPreviewPollingCannotOverwriteCompletedFacts(t *testing.T) {
 	c.assembleRelocationUseCases()
 	body, _ := json.Marshal(map[string]string{"target_root": target})
 	created := httptest.NewRecorder()
-	c.createRelocationPlan(created, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRelocationPlan(created, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var plan RelocationPlan
 	if err := json.Unmarshal(created.Body.Bytes(), &plan); err != nil || created.Code != http.StatusAccepted {
 		t.Fatalf("create: %d %s %v", created.Code, created.Body.String(), err)
@@ -75,7 +75,7 @@ func TestRelocationPreviewPollingCannotOverwriteCompletedFacts(t *testing.T) {
 		defer close(done)
 		req := requestWithRouteParam(http.MethodGet, "/api/relocation-plans/1", nil, "planId", strconv.FormatInt(plan.ID, 10))
 		req = req.WithContext(context.WithValue(req.Context(), previewReadBarrierKey{}, true))
-		c.getRelocationPlan(response, req)
+		c.families.relocation.getRelocationPlan(response, req)
 	}()
 	<-runs.entered
 	close(files.resume)
@@ -133,7 +133,7 @@ func TestProtectedRelocationRejectsPreviouslyCheckedSeriesResume(t *testing.T) {
 	c.store = delayed
 	c.assembleScanUseCases()
 	result := make(chan error, 1)
-	go func() { result <- c.launchSeriesScanTask(series.ID, false, task.TriggerResumed) }()
+	go func() { result <- c.families.library.launchSeriesScanTask(series.ID, false, task.TriggerResumed) }()
 	<-delayed.entered
 	op := acceptRelocationAnomalies(t, c, plan.ID)
 	close(delayed.resume)
@@ -141,7 +141,7 @@ func TestProtectedRelocationRejectsPreviouslyCheckedSeriesResume(t *testing.T) {
 		t.Fatalf("series resume crossed protected commit: operation=%+v error=%v", op, err)
 	}
 	runs := httptest.NewRecorder()
-	c.listTasks(runs, httptest.NewRequest(http.MethodGet, "/api/system/tasks?type=scan_series", nil))
+	c.families.runs.listTasks(runs, httptest.NewRequest(http.MethodGet, "/api/system/tasks?type=scan_series", nil))
 	var snapshots []RunSnapshot
 	if err := json.Unmarshal(runs.Body.Bytes(), &snapshots); err != nil || runs.Code != http.StatusOK || len(snapshots) != 0 {
 		t.Fatalf("protected series resume created a run: %d %s %v", runs.Code, runs.Body.String(), err)
@@ -161,7 +161,7 @@ func TestRelocationAcceptsMissingBookAndProtectsEveryRecord(t *testing.T) {
 	}
 	submit := func(body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(body), "planId", strconv.FormatInt(plan.ID, 10)))
+		c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(body), "planId", strconv.FormatInt(plan.ID, 10)))
 		return rec
 	}
 	if rec := submit(`{}`); rec.Code != http.StatusConflict {
@@ -180,7 +180,7 @@ func TestRelocationAcceptsMissingBookAndProtectsEveryRecord(t *testing.T) {
 		t.Fatalf("operation: %+v", op)
 	}
 	libraries := httptest.NewRecorder()
-	c.getLibraries(libraries, httptest.NewRequest(http.MethodGet, "/api/libraries", nil))
+	c.families.library.getLibraries(libraries, httptest.NewRequest(http.MethodGet, "/api/libraries", nil))
 	var libraryStatus []struct {
 		ID        int64 `json:"id"`
 		Protected bool  `json:"relocation_protected"`
@@ -206,24 +206,24 @@ func TestRelocationAcceptsMissingBookAndProtectsEveryRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	gotLib, _ = store.GetLibrary(context.Background(), lib.ID)
-	if _, err = c.startLibraryScanRun(gotLib, false, task.TriggerScheduled); err == nil {
+	if _, err = c.families.library.startLibraryScanRun(gotLib, false, task.TriggerScheduled); err == nil {
 		t.Fatal("protected automatic scan admitted")
 	}
-	if err = c.launchSeriesScanTask(series.ID, false, task.TriggerResumed); err == nil {
+	if err = c.families.library.launchSeriesScanTask(series.ID, false, task.TriggerResumed); err == nil {
 		t.Fatal("protected series resume admitted")
 	}
 	edit := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string]any{"name": "renamed", "path": target, "scan_mode": "watch", "scan_formats": "cbz"})
-	c.updateLibrary(edit, requestWithRouteParam(http.MethodPut, "/api/libraries/1", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.updateLibrary(edit, requestWithRouteParam(http.MethodPut, "/api/libraries/1", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if edit.Code != http.StatusConflict {
 		t.Fatalf("ordinary edit bypass: %d %s", edit.Code, edit.Body.String())
 	}
 }
 
-func acceptRelocationAnomalies(t *testing.T, c *Controller, planID int64) RelocationOperation {
+func acceptRelocationAnomalies(t *testing.T, c *apiFixture, planID int64) RelocationOperation {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{"accept_anomalies":true}`), "planId", strconv.FormatInt(planID, 10)))
+	c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{"accept_anomalies":true}`), "planId", strconv.FormatInt(planID, 10)))
 	var op RelocationOperation
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("accept: %d %s", rec.Code, rec.Body.String())
@@ -269,7 +269,7 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 		t.Fatalf("protected commit: %+v", op)
 	}
 	for _, trigger := range []task.Trigger{task.TriggerManual, task.TriggerScheduled, task.TriggerWatch, task.TriggerResumed} {
-		if _, err = c.startCleanupLibraryRun(lib.ID, trigger); !errors.Is(err, database.ErrLibraryProtected) {
+		if _, err = c.families.library.startCleanupLibraryRun(lib.ID, trigger); !errors.Is(err, database.ErrLibraryProtected) {
 			t.Fatalf("cleanup %s: %v", trigger, err)
 		}
 	}
@@ -290,7 +290,7 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 	}
 	rename := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string]any{"name": "Protected renamed", "path": target, "scan_mode": "none", "scan_formats": "cbz", "scan_interval": 17})
-	c.updateLibrary(rename, requestWithRouteParam(http.MethodPut, "/api/libraries/1", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.updateLibrary(rename, requestWithRouteParam(http.MethodPut, "/api/libraries/1", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rename.Code != http.StatusOK {
 		t.Fatalf("harmless edit rejected: %d %s", rename.Code, rename.Body.String())
 	}
@@ -328,7 +328,7 @@ func TestRelocationProtectionSurvivesFreshStartupAndAllCleanupEntrypoints(t *tes
 		t.Fatal(err)
 	}
 	manager := config.NewManager(freshConfig)
-	fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, filepath.Join(root, "config.yaml"), controllerCacheSizes{imageBytes: 8192, page: 8, bookPageSource: 8})
+	fresh := newAPIFixture(freshStore, scanner.NewScanner(freshStore, manager), manager, filepath.Join(root, "config.yaml"), controllerCacheSizes{imageBytes: 8192, page: 8, bookPageSource: 8})
 	t.Cleanup(fresh.Close)
 	gotPlan, err := fresh.relocation.Get(ctx, plan.ID)
 	if err != nil || gotPlan.Protection == nil || gotPlan.Protection.ScanMode != "watch" || gotPlan.Protection.ScanInterval != 17 || gotPlan.Protection.ScanFormats != "cbz" {
@@ -354,7 +354,7 @@ func TestRelocationAnomalyConsentExpiresWhenOriginalSettingsChange(t *testing.T)
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{"accept_anomalies":true}`), "planId", strconv.FormatInt(plan.ID, 10)))
+	c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/relocation-plans/1/commit", []byte(`{"accept_anomalies":true}`), "planId", strconv.FormatInt(plan.ID, 10)))
 	var op RelocationOperation
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("admission: %d %s", rec.Code, rec.Body.String())
@@ -506,7 +506,7 @@ func TestRelocationProtectionAndPathsShareFailureBoundary(t *testing.T) {
 					t.Fatalf("untruthful recovery state: %+v %+v %+v", op, got, p)
 				}
 				read := httptest.NewRecorder()
-				c.servePageImage(read, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+				c.media.servePageImage(read, requestWithRouteParams(http.MethodGet, "/api/books/page/1/1", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 				if read.Code != http.StatusServiceUnavailable {
 					t.Fatalf("half commit readable: %d", read.Code)
 				}

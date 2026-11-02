@@ -65,7 +65,7 @@ func TestExternalLibraryTasksDeclareTheirLibraryScope(t *testing.T) {
 func TestAIGroupingDeclaresItsLibraryScope(t *testing.T) {
 	const libraryID = int64(3)
 	engine, snapshots := newBackgroundTestEngine(t, func(func()) {}, nil)
-	c := &Controller{
+	c := &apiFixture{Host: &Host{},
 		taskEngine: engine,
 		store:      &externalTaskStore{lib: database.Library{ID: libraryID, Name: "Library C"}},
 	}

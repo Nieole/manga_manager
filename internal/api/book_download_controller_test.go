@@ -32,7 +32,7 @@ func TestServeBookFileWholeArchiveDownload(t *testing.T) {
 	req := requestWithRouteParam(http.MethodGet, "/api/books/"+idStr+"/file", nil, "bookId", idStr)
 	rec := httptest.NewRecorder()
 
-	controller.serveBookFile(rec, req)
+	controller.media.serveBookFile(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (body %q)", rec.Code, rec.Body.String())
@@ -129,7 +129,7 @@ func TestWholeBookClientDisconnectReturnsAccess(t *testing.T) {
 	}
 	entered, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	router := chi.NewRouter()
-	router.Get("/books/{bookId}/file", c.serveBookFile)
+	router.Get("/books/{bookId}/file", c.media.serveBookFile)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
 		router.ServeHTTP(&downloadFlushGate{ResponseWriter: w, entered: entered, resume: resume}, r)

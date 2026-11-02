@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"github.com/go-chi/chi/v5"
 	"manga-manager/internal/application/seriesediting"
 	"manga-manager/internal/database"
 	"manga-manager/internal/organize"
@@ -10,6 +9,8 @@ import (
 	"manga-manager/internal/reading"
 	"manga-manager/internal/seriesmeta"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // Organization capabilities are consumer contracts, not an application or Store mirror.
@@ -104,6 +105,7 @@ type OrganizationDependencies struct {
 	ReadingLists      ReadingListsCapability
 	Relations         RelationsCapability
 	Proposals         ProposalCapability
+	ProposalQueue     ProposalQueue
 	Grouping          GroupingCapability
 	Metadata          MetadataEditor
 	Selection         SelectionEditor

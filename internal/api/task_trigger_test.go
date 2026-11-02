@@ -46,7 +46,7 @@ func (s blockingScanStore) ListBooksByLibrary(ctx context.Context, libraryID int
 
 // newAutomaticScanRig 造一台扫描会停在可控点上的 Controller，并建好一个 interval 模式的资料库。
 // 返回的 release 放行那次扫描；用例结束时自动放行一次，卡住的运行不会拖着停机。
-func newAutomaticScanRig(t *testing.T) (*Controller, database.Library, func()) {
+func newAutomaticScanRig(t *testing.T) (*apiFixture, database.Library, func()) {
 	t.Helper()
 
 	controller, store, _, _ := newTestController(t)
@@ -180,7 +180,7 @@ func TestWatchedScanWaitsForTheScanToFinish(t *testing.T) {
 	controller, lib, release := newAutomaticScanRig(t)
 
 	returned := make(chan error, 1)
-	go func() { returned <- controller.runWatchedLibraryScan(context.Background(), lib.ID) }()
+	go func() { returned <- controller.families.library.runWatchedLibraryScan(context.Background(), lib.ID) }()
 
 	// 扫描卡在可控点上，出口因此不该返回。
 	select {
@@ -218,7 +218,7 @@ func TestWatchedScanReportsCoalescedInsteadOfWaitingForever(t *testing.T) {
 	}
 
 	returned := make(chan error, 1)
-	go func() { returned <- controller.runWatchedLibraryScan(context.Background(), lib.ID) }()
+	go func() { returned <- controller.families.library.runWatchedLibraryScan(context.Background(), lib.ID) }()
 	select {
 	case err := <-returned:
 		if err != scanner.ErrScanCoalesced {
@@ -245,7 +245,7 @@ func TestWatchedScanStopsWaitingWhenTheQueuedRunIsCancelled(t *testing.T) {
 	})
 
 	returned := make(chan error, 1)
-	go func() { returned <- controller.runWatchedLibraryScan(context.Background(), lib.ID) }()
+	go func() { returned <- controller.families.library.runWatchedLibraryScan(context.Background(), lib.ID) }()
 
 	// 等那条排队运行落地（发起是同步的，但它跑在另一条 goroutine 上）。
 	var queuedID int64
@@ -277,7 +277,7 @@ func TestWatchedScanStopsWaitingWhenTheQueuedRunIsCancelled(t *testing.T) {
 func TestWatchedCleanupCreatesARunWithTheWatchTrigger(t *testing.T) {
 	controller, lib, _ := newAutomaticScanRig(t)
 
-	if err := controller.runWatchedLibraryCleanup(context.Background(), lib.ID); err != nil {
+	if err := controller.families.library.runWatchedLibraryCleanup(context.Background(), lib.ID); err != nil {
 		t.Fatalf("监听器派生的清理失败: %v", err)
 	}
 
@@ -304,7 +304,7 @@ func TestInitialLibraryScanIsVisible(t *testing.T) {
 		t.Fatalf("序列化建库请求失败: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	controller.createLibrary(rec, httptest.NewRequest(http.MethodPost, "/api/libraries", bytes.NewReader(payload)))
+	controller.families.library.createLibrary(rec, httptest.NewRequest(http.MethodPost, "/api/libraries", bytes.NewReader(payload)))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("建库返回 %d: %s", rec.Code, rec.Body.String())
 	}

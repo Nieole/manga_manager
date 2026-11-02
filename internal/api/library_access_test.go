@@ -27,7 +27,7 @@ func TestLibraryExclusiveAccessPausesDownloads(t *testing.T) {
 	defer release()
 	id := strconv.FormatInt(book.ID, 10)
 	rec := httptest.NewRecorder()
-	c.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+id+"/file", nil, "bookId", id))
+	c.media.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/api/books/"+id+"/file", nil, "bookId", id))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("download during exclusive: %d %s", rec.Code, rec.Body.String())
 	}
@@ -42,11 +42,11 @@ func TestLibraryExclusiveSeesQueuedAndCancellingRuns(t *testing.T) {
 	lib, _, _ := seedBookFixture(t, store, root, "Queued", "Series", "1.cbz", 1)
 	var bodies []func()
 	c.taskEngine.runBackground = func(fn func()) { bodies = append(bodies, fn) }
-	first, err := c.startLibraryScanRun(lib, false, task.TriggerManual)
+	first, err := c.families.library.startLibraryScanRun(lib, false, task.TriggerManual)
 	if err != nil {
 		t.Fatal(err)
 	}
-	queued, err := c.startLibraryScanRun(lib, false, task.TriggerWatch)
+	queued, err := c.families.library.startLibraryScanRun(lib, false, task.TriggerWatch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestLibraryExclusiveSeesQueuedAndCancellingRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	if _, err := c.startLibraryScanRun(lib, false, task.TriggerScheduled); !errors.Is(err, errLibraryUnavailable) {
+	if _, err := c.families.library.startLibraryScanRun(lib, false, task.TriggerScheduled); !errors.Is(err, errLibraryUnavailable) {
 		t.Fatalf("scheduled scan admitted: %v", err)
 	}
 }
@@ -152,7 +152,7 @@ func TestLibraryExclusiveWaitsForDownloadExit(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		c.serveBookFile(w, requestWithRouteParam(http.MethodGet, "/file", nil, "bookId", id))
+		c.media.serveBookFile(w, requestWithRouteParam(http.MethodGet, "/file", nil, "bookId", id))
 	}()
 	<-w.entered
 	if got := parser.ActiveArchiveBorrows(book.Path); got != 1 {
@@ -191,7 +191,11 @@ func TestLibraryExclusiveAndNewRunHaveOneWinner(t *testing.T) {
 			release, err = c.acquireLibraryExclusive(context.Background(), lib.ID)
 			exclusive <- err
 		}()
-		go func() { <-start; _, err := c.startLibraryScanRun(lib, false, task.TriggerWatch); launched <- err }()
+		go func() {
+			<-start
+			_, err := c.families.library.startLibraryScanRun(lib, false, task.TriggerWatch)
+			launched <- err
+		}()
 		close(start)
 		exErr, runErr := <-exclusive, <-launched
 		if (exErr == nil) == (runErr == nil) {
@@ -282,11 +286,11 @@ func TestExclusiveBlocksAllLibraryDispatchesAndKeepsOtherLibraryUsable(t *testin
 	}
 	defer release()
 	for _, launch := range []func() error{
-		func() error { return c.launchLibraryScanTask(lib, false, task.TriggerManual) },
-		func() error { return c.launchLibraryScanTask(lib, false, task.TriggerScheduled) },
-		func() error { return c.launchSeriesScanTask(series.ID, false, task.TriggerManual) },
-		func() error { return c.runWatchedLibraryScan(context.Background(), lib.ID) },
-		func() error { return c.runWatchedLibraryCleanup(context.Background(), lib.ID) },
+		func() error { return c.families.library.launchLibraryScanTask(lib, false, task.TriggerManual) },
+		func() error { return c.families.library.launchLibraryScanTask(lib, false, task.TriggerScheduled) },
+		func() error { return c.families.library.launchSeriesScanTask(series.ID, false, task.TriggerManual) },
+		func() error { return c.families.library.runWatchedLibraryScan(context.Background(), lib.ID) },
+		func() error { return c.families.library.runWatchedLibraryCleanup(context.Background(), lib.ID) },
 		func() error { return c.launchCoverRun(lib.ID, task.TriggerChained, true) },
 	} {
 		if err := launch(); !errors.Is(err, errLibraryUnavailable) {
@@ -295,13 +299,13 @@ func TestExclusiveBlocksAllLibraryDispatchesAndKeepsOtherLibraryUsable(t *testin
 	}
 	id := strconv.FormatInt(book.ID, 10)
 	rec := httptest.NewRecorder()
-	c.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/file", nil, "bookId", id))
+	c.media.serveBookFile(rec, requestWithRouteParam(http.MethodGet, "/file", nil, "bookId", id))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("other library download: %d %s", rec.Code, rec.Body.String())
 	}
 	var body func()
 	c.taskEngine.runBackground = func(fn func()) { body = fn }
-	if err := c.launchLibraryScanTask(other, false, task.TriggerManual); err != nil {
+	if err := c.families.library.launchLibraryScanTask(other, false, task.TriggerManual); err != nil {
 		t.Fatal(err)
 	}
 	body()
@@ -319,7 +323,7 @@ func TestOldScanSnapshotCannotRunAfterRelocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.startLibraryScanRun(lib, false, task.TriggerWatch); !errors.Is(err, errLibraryUnavailable) {
+	if _, err := c.families.library.startLibraryScanRun(lib, false, task.TriggerWatch); !errors.Is(err, errLibraryUnavailable) {
 		t.Fatalf("old path closure admitted: %v", err)
 	}
 }

@@ -22,7 +22,7 @@ func TestExternalSessionHTTPRejectsOtherLibraryWithConflictCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	c.createExternalLibrarySession(rec, requestWithRouteParam(http.MethodPost, "/external", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.disk.createExternalLibrarySession(rec, requestWithRouteParam(http.MethodPost, "/external", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var response struct {
 		Code string `json:"code"`
 	}
@@ -40,7 +40,7 @@ func TestExternalSessionHTTPRejectsOtherLibraryWithConflictCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	c.createExternalLibrarySession(rec, requestWithRouteParam(http.MethodPost, "/external", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.disk.createExternalLibrarySession(rec, requestWithRouteParam(http.MethodPost, "/external", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}

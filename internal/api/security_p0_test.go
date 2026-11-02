@@ -129,7 +129,7 @@ func TestGetSystemConfigMasksSecrets(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/config", nil)
 	rec := httptest.NewRecorder()
-	c.getSystemConfig(rec, req)
+	c.admin.getSystemConfig(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -164,7 +164,7 @@ func TestUpdateSystemConfigPreservesMaskedSecret(t *testing.T) {
 	post.LLM.APIKey = config.SecretMask
 	body, _ := json.Marshal(post)
 	rec := httptest.NewRecorder()
-	c.updateSystemConfig(rec, versionedConfigRequest(c, body, "/api/system/config"))
+	c.admin.updateSystemConfig(rec, versionedConfigRequest(c, body, "/api/system/config"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update with masked key expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -177,7 +177,7 @@ func TestUpdateSystemConfigPreservesMaskedSecret(t *testing.T) {
 	post2.LLM.APIKey = "brand-new-key"
 	body2, _ := json.Marshal(post2)
 	rec2 := httptest.NewRecorder()
-	c.updateSystemConfig(rec2, versionedConfigRequest(c, body2, "/api/system/config"))
+	c.admin.updateSystemConfig(rec2, versionedConfigRequest(c, body2, "/api/system/config"))
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("update with new key expected 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}

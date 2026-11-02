@@ -92,7 +92,6 @@ type taskEngine struct {
 
 	// dispatch supports isolated adapter fixtures; production capabilities are read from registry.
 	dispatch       map[taskDispatchKey]taskDispatch
-	runtime        *runtime.Runtime
 	configSnapshot func() config.Config
 	registry       *runtime.Registry
 
@@ -250,9 +249,6 @@ func (e *taskEngine) relauncherFor(taskType string, variant TaskVariant) (taskRe
 func (e *taskEngine) buildResumePolicy() task.ResumePolicy {
 	if e.registry != nil && e.configSnapshot != nil {
 		return e.registry.Policy(e.configSnapshot())
-	}
-	if e.registry != nil && e.runtime != nil {
-		return e.registry.Policy(e.runtime.Config())
 	}
 
 	keys := make([]task.ResumeKey, 0, len(e.dispatch))

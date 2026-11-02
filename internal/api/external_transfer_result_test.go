@@ -42,7 +42,7 @@ func TestExternalTransferHTTPAcceptedRunPreservesPartialCommitAndCoverage(t *tes
 	}
 	params := map[string]string{"libraryId": strconv.FormatInt(lib.ID, 10), "sessionId": session.SessionID}
 	rec := httptest.NewRecorder()
-	c.transferToExternalLibrary(rec, requestWithRouteParams(http.MethodPost, "/transfer", body, params))
+	c.families.disk.transferToExternalLibrary(rec, requestWithRouteParams(http.MethodPost, "/transfer", body, params))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("launch=%d %s", rec.Code, rec.Body.String())
 	}
@@ -51,7 +51,7 @@ func TestExternalTransferHTTPAcceptedRunPreservesPartialCommitAndCoverage(t *tes
 		t.Fatalf("actual run=%+v", run)
 	}
 	rec = httptest.NewRecorder()
-	c.getExternalLibrarySession(rec, requestWithRouteParams(http.MethodGet, "/session", nil, params))
+	c.families.disk.getExternalLibrarySession(rec, requestWithRouteParams(http.MethodGet, "/session", nil, params))
 	var coverage struct {
 		MatchedBooks int `json:"matched_books"`
 	}

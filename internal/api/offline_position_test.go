@@ -42,7 +42,7 @@ func TestOfflineTransportsShareOccurrenceAndActivityMatrix(t *testing.T) {
 					if transport == "bulk" {
 						item["book_id"] = book.ID
 						body, _ := json.Marshal(map[string]any{"items": []any{item}})
-						controller.bulkSyncBookProgress(rec, withUserContext(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), user))
+						controller.reader.bulkSyncBookProgress(rec, withUserContext(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), user))
 						var response struct {
 							Updated int `json:"updated"`
 						}
@@ -55,7 +55,7 @@ func TestOfflineTransportsShareOccurrenceAndActivityMatrix(t *testing.T) {
 					} else {
 						body, _ := json.Marshal(item)
 						req := requestWithRouteParam(http.MethodPost, "/", body, "bookId", strconv.FormatInt(book.ID, 10))
-						controller.updateBookProgress(rec, withUserContext(req, user))
+						controller.reader.updateBookProgress(rec, withUserContext(req, user))
 						if (statusOf(rec) == "Progress updated") != report.applied {
 							t.Fatalf("report=%+v body=%s", report, rec.Body.String())
 						}

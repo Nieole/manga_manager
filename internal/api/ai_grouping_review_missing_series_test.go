@@ -24,7 +24,7 @@ type applyAIGroupingReviewResponse struct {
 }
 
 // seedAIGroupingReviewWithGroups 按给定分组建一条待应用的审核，两个系列都算候选。
-func seedAIGroupingReviewWithGroups(t *testing.T, controller *Controller, store database.Store, lib database.Library, seriesA, seriesB database.Series, groups ...metadata.AIGroupCollection) (database.AiGroupingReview, []database.AiGroupingReviewCollection) {
+func seedAIGroupingReviewWithGroups(t *testing.T, controller *apiFixture, store database.Store, lib database.Library, seriesA, seriesB database.Series, groups ...metadata.AIGroupCollection) (database.AiGroupingReview, []database.AiGroupingReviewCollection) {
 	t.Helper()
 	review, created, err := controller.createAIGroupingReview(context.Background(), lib.ID, "ollama", []metadata.CandidateSeries{
 		{ID: seriesA.ID, Title: seriesA.Name},
@@ -63,17 +63,17 @@ func collectionMemberIDs(t *testing.T, store database.Store, collectionID int64)
 	return ids
 }
 
-func applyCollectionRequest(controller *Controller, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) *httptest.ResponseRecorder {
+func applyCollectionRequest(controller *apiFixture, review database.AiGroupingReview, collection database.AiGroupingReviewCollection) *httptest.ResponseRecorder {
 	req := requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/collections/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10))
 	req = withRouteParam(req, "collectionId", strconv.FormatInt(collection.ID, 10))
 	rec := httptest.NewRecorder()
-	controller.applyAIGroupingReviewCollection(rec, req)
+	controller.organizationHTTP.applyAIGroupingReviewCollection(rec, req)
 	return rec
 }
 
-func applyReviewRequest(controller *Controller, review database.AiGroupingReview) *httptest.ResponseRecorder {
+func applyReviewRequest(controller *apiFixture, review database.AiGroupingReview) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	controller.applyAIGroupingReview(rec, requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10)))
+	controller.organizationHTTP.applyAIGroupingReview(rec, requestWithRouteParam(http.MethodPost, "/api/ai-grouping/reviews/1/apply", nil, "reviewId", strconv.FormatInt(review.ID, 10)))
 	return rec
 }
 
@@ -200,7 +200,7 @@ func TestAIGroupingReviewViewHidesDeletedSeries(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews?status=pending", nil))
+	controller.organizationHTTP.listAIGroupingReviews(rec, httptest.NewRequest(http.MethodGet, "/api/ai-grouping/reviews?status=pending", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d body=%s", rec.Code, rec.Body.String())
 	}

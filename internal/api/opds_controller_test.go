@@ -41,7 +41,7 @@ func TestOPDSFeeds(t *testing.T) {
 	}
 	t.Run("root feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsRoot(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/", nil))
+		controller.reader.opdsRoot(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/", nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -76,7 +76,7 @@ func TestOPDSFeeds(t *testing.T) {
 
 	t.Run("open search descriptor", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsOpenSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/opensearch.xml", nil))
+		controller.reader.opdsOpenSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/opensearch.xml", nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -99,7 +99,7 @@ func TestOPDSFeeds(t *testing.T) {
 
 	t.Run("libraries feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsLibraries(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/libraries", nil))
+		controller.reader.opdsLibraries(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/libraries", nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -116,7 +116,7 @@ func TestOPDSFeeds(t *testing.T) {
 
 	t.Run("search feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/search?q=Display&limit=10", nil))
+		controller.reader.opdsSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/search?q=Display&limit=10", nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -140,7 +140,7 @@ func TestOPDSFeeds(t *testing.T) {
 
 	t.Run("recent added feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsRecentAdded(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/recent?limit=5", nil))
+		controller.reader.opdsRecentAdded(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/recent?limit=5", nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -160,7 +160,7 @@ func TestOPDSFeeds(t *testing.T) {
 
 	t.Run("library series feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+		controller.reader.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/1", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -184,7 +184,7 @@ func TestOPDSFeeds(t *testing.T) {
 
 	t.Run("series books feed", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+		controller.reader.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -234,7 +234,7 @@ func TestOPDSFeeds(t *testing.T) {
 		}
 
 		rec := httptest.NewRecorder()
-		controller.opdsContinueReading(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/continue?limit=5", nil))
+		controller.reader.opdsContinueReading(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/continue?limit=5", nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -270,7 +270,7 @@ func TestOPDSFeeds(t *testing.T) {
 		}
 
 		listRec := httptest.NewRecorder()
-		controller.opdsReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/reading-lists", nil))
+		controller.reader.opdsReadingLists(listRec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/reading-lists", nil))
 		if listRec.Code != http.StatusOK {
 			t.Fatalf("expected reading lists 200, got %d", listRec.Code)
 		}
@@ -283,7 +283,7 @@ func TestOPDSFeeds(t *testing.T) {
 		}
 
 		seriesRec := httptest.NewRecorder()
-		controller.opdsReadingListSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/reading-lists/1", nil, "listId", strconv.FormatInt(list.ID, 10)))
+		controller.reader.opdsReadingListSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/reading-lists/1", nil, "listId", strconv.FormatInt(list.ID, 10)))
 		if seriesRec.Code != http.StatusOK {
 			t.Fatalf("expected reading list series 200, got %d body=%s", seriesRec.Code, seriesRec.Body.String())
 		}
@@ -356,7 +356,7 @@ func TestOPDSPageStreamingRoute(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodGet, "/opds/v1.2/books/1/pages/0?format=jpeg&w=320", nil, "bookId", strconv.FormatInt(book.ID, 10))
 	req = withRouteParam(req, "pageNumber", "0")
-	controller.opdsStreamPageImage(rec, req)
+	controller.reader.opdsStreamPageImage(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected OPDS stream page 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -367,7 +367,7 @@ func TestOPDSPageStreamingRoute(t *testing.T) {
 	rec = httptest.NewRecorder()
 	req = requestWithRouteParam(http.MethodGet, "/opds/v1.2/books/1/pages/-1", nil, "bookId", strconv.FormatInt(book.ID, 10))
 	req = withRouteParam(req, "pageNumber", "-1")
-	controller.opdsStreamPageImage(rec, req)
+	controller.reader.opdsStreamPageImage(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected negative OPDS page number 400, got %d", rec.Code)
 	}
@@ -523,7 +523,7 @@ func TestOPDSCollectionFeeds(t *testing.T) {
 	filterID, _ := filterResult.LastInsertId()
 
 	listRec := httptest.NewRecorder()
-	controller.opdsCollections(listRec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/collections", nil))
+	controller.reader.opdsCollections(listRec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/collections", nil))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected collections feed 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -542,7 +542,7 @@ func TestOPDSCollectionFeeds(t *testing.T) {
 	}
 
 	staticRec := httptest.NewRecorder()
-	controller.opdsStaticCollectionSeries(staticRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/collections/1", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
+	controller.reader.opdsStaticCollectionSeries(staticRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/collections/1", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
 	if staticRec.Code != http.StatusOK {
 		t.Fatalf("expected static collection series 200, got %d body=%s", staticRec.Code, staticRec.Body.String())
 	}
@@ -555,7 +555,7 @@ func TestOPDSCollectionFeeds(t *testing.T) {
 	}
 
 	smartRec := httptest.NewRecorder()
-	controller.opdsSmartCollectionSeries(smartRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1", nil, "filterId", strconv.FormatInt(filterID, 10)))
+	controller.reader.opdsSmartCollectionSeries(smartRec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/smart-collections/1", nil, "filterId", strconv.FormatInt(filterID, 10)))
 	if smartRec.Code != http.StatusOK {
 		t.Fatalf("expected smart collection series 200, got %d body=%s", smartRec.Code, smartRec.Body.String())
 	}
@@ -574,13 +574,13 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 
 	t.Run("library and series feeds validate route ids", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/bad", nil, "libraryId", "bad"))
+		controller.reader.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/bad", nil, "libraryId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid library id 400, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()
-		controller.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/bad", nil, "seriesId", "bad"))
+		controller.reader.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/bad", nil, "seriesId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid series id 400, got %d", rec.Code)
 		}
@@ -604,7 +604,7 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 		}
 
 		rec := httptest.NewRecorder()
-		controller.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/2", nil, "libraryId", strconv.FormatInt(emptyLib.ID, 10)))
+		controller.reader.opdsLibrarySeries(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/libraries/2", nil, "libraryId", strconv.FormatInt(emptyLib.ID, 10)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected empty library feed 200, got %d", rec.Code)
 		}
@@ -625,7 +625,7 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 		}
 
 		rec := httptest.NewRecorder()
-		controller.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
+		controller.reader.opdsSeriesBooks(rec, requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/1", nil, "seriesId", strconv.FormatInt(series.ID, 10)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected empty series books feed 200, got %d", rec.Code)
 		}
@@ -644,7 +644,7 @@ func TestOPDSValidationAndEmptyFeeds(t *testing.T) {
 
 	t.Run("search feed accepts empty query", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.opdsSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/search?q=", nil))
+		controller.reader.opdsSearch(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/search?q=", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected empty search 200, got %d", rec.Code)
 		}
@@ -679,7 +679,7 @@ func TestOPDSRootFeedLocalization(t *testing.T) {
 			req.Header.Set("Accept-Language", acceptLang)
 		}
 		rec := httptest.NewRecorder()
-		controller.opdsRoot(rec, req)
+		controller.reader.opdsRoot(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
@@ -716,9 +716,9 @@ func TestOPDSFeedLinksStayInsideProtocolScope(t *testing.T) {
 	_, series, book := seedBookFixture(t, store, rootDir, "Lib", "Series Alpha", "alpha 01.cbz", 12)
 
 	feeds := map[string]func(http.ResponseWriter, *http.Request){
-		"series books": controller.opdsSeriesBooks,
-		"recent added": controller.opdsRecentAdded,
-		"libraries":    controller.opdsLibraries,
+		"series books": controller.reader.opdsSeriesBooks,
+		"recent added": controller.reader.opdsRecentAdded,
+		"libraries":    controller.reader.opdsLibraries,
 	}
 	params := map[string]map[string]string{
 		"series books": {"seriesId": strconv.FormatInt(series.ID, 10)},
@@ -753,7 +753,7 @@ func TestOPDSSeriesBooksMissingSeriesReturns404(t *testing.T) {
 
 	req := requestWithRouteParam(http.MethodGet, "/opds/v1.2/series/999999", nil, "seriesId", "999999")
 	rec := httptest.NewRecorder()
-	controller.opdsSeriesBooks(rec, req)
+	controller.reader.opdsSeriesBooks(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing series should return 404, got %d body=%s", rec.Code, rec.Body.String())

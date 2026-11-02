@@ -6,9 +6,9 @@ import (
 )
 
 // assembleRelocationUseCases binds application effects to the existing domain and engine.
-func (c *Controller) assembleRelocationUseCases() {
+func (c *apiFixture) assembleRelocationUseCases() {
 	c.moves = relocating.New(c.relocation, c.taskEngine.runs, c.taskEngine.engine, c.taskEngine.runStore, c.store, relocating.Effects{
-		PurgeReadingPaths:  c.purgeReadingPathCaches,
+		PurgeReadingPaths:  c.media.purgeReadingPathCaches,
 		InvalidateStats:    c.invalidateDashboardStatsCache,
 		InvalidateExternal: c.external.InvalidateLibrary,
 		Watcher: func() (relocating.Watcher, error) {
@@ -20,6 +20,7 @@ func (c *Controller) assembleRelocationUseCases() {
 	})
 	c.relocation.ConfigPath = c.configPath
 	c.relocation.ApplyConfig = runtimecfg.Apply
+	c.families.relocation = &relocationHTTP{store: c.store, moves: c.moves, relocation: c.relocation}
 	if c.runtime != nil {
 		c.runtime.Moves = c.moves
 	}

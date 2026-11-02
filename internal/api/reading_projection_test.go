@@ -29,7 +29,7 @@ func TestNavigationProjectsTargetForCurrentReader(t *testing.T) {
 		name       string
 		handler    http.HandlerFunc
 		from, want int64
-	}{{"next", c.getNextBook, first.ID, second.ID}, {"prev", c.getPrevBook, second.ID, first.ID}} {
+	}{{"next", c.reader.getNextBook, first.ID, second.ID}, {"prev", c.reader.getPrevBook, second.ID, first.ID}} {
 		t.Run(test.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := withUserContext(requestWithRouteParam(http.MethodGet, "/", nil, "bookId", strconv.FormatInt(test.from, 10)), user)
@@ -121,15 +121,15 @@ func readingProjectionMatrix(t *testing.T, pageCount int64) {
 					t.Fatal(err)
 				}
 				var detail database.Book
-				if err = json.Unmarshal(run(c.getBookInfo, user, "bookId", book.ID, "/"), &detail); err != nil {
+				if err = json.Unmarshal(run(c.reader.getBookInfo, user, "bookId", book.ID, "/"), &detail); err != nil {
 					t.Fatal(err)
 				}
 				var books []database.Book
-				if err = json.Unmarshal(run(c.getBooksBySeries, user, "seriesId", series.ID, "/"), &books); err != nil {
+				if err = json.Unmarshal(run(c.reader.getBooksBySeries, user, "seriesId", series.ID, "/"), &books); err != nil {
 					t.Fatal(err)
 				}
 				var summary SeriesContinue
-				if err = json.Unmarshal(run(c.getSeriesContinueEndpoint, user, "seriesId", series.ID, "/"), &summary); err != nil {
+				if err = json.Unmarshal(run(c.reader.getSeriesContinueEndpoint, user, "seriesId", series.ID, "/"), &summary); err != nil {
 					t.Fatal(err)
 				}
 				if len(books) != 1 || books[0].LastReadPage != detail.LastReadPage || books[0].IsRead != detail.IsRead || detail.LastReadPage.Int64 != wantPage || detail.IsRead != (wantCompleted && pageCount == 0) || summary.ReadPages != wantPage || (summary.ReadBooks == 1) != wantCompleted {
@@ -139,13 +139,13 @@ func readingProjectionMatrix(t *testing.T, pageCount int64) {
 					t.Fatalf("all read must preserve fallback: %+v", summary)
 				}
 				var mihon []MihonBookResponse
-				if err = json.Unmarshal(run(c.mihonSeriesBooks, user, "seriesId", series.ID, "/"), &mihon); err != nil {
+				if err = json.Unmarshal(run(c.reader.mihonSeriesBooks, user, "seriesId", series.ID, "/"), &mihon); err != nil {
 					t.Fatal(err)
 				}
 				if len(mihon) != 1 || mihon[0].LastReadPage != wantPage {
 					t.Fatalf("mihon=%+v", mihon)
 				}
-				for _, endpoint := range []http.HandlerFunc{c.getRecentReadAll, c.mihonContinueReading} {
+				for _, endpoint := range []http.HandlerFunc{c.reader.getRecentReadAll, c.reader.mihonContinueReading} {
 					var items []json.RawMessage
 					if err = json.Unmarshal(run(endpoint, user, "", 0, "/?limit=10"), &items); err != nil {
 						t.Fatal(err)
@@ -155,14 +155,14 @@ func readingProjectionMatrix(t *testing.T, pageCount int64) {
 					}
 				}
 				var feed OPDSFeed
-				if err = xml.Unmarshal(run(c.opdsContinueReading, user, "", 0, "/?limit=10"), &feed); err != nil {
+				if err = xml.Unmarshal(run(c.reader.opdsContinueReading, user, "", 0, "/?limit=10"), &feed); err != nil {
 					t.Fatal(err)
 				}
 				if len(feed.Entries) != wantRecent {
 					t.Fatalf("OPDS recent=%+v", feed.Entries)
 				}
 				feed = OPDSFeed{}
-				if err = xml.Unmarshal(run(c.opdsSeriesBooks, user, "seriesId", series.ID, "/"), &feed); err != nil {
+				if err = xml.Unmarshal(run(c.reader.opdsSeriesBooks, user, "seriesId", series.ID, "/"), &feed); err != nil {
 					t.Fatal(err)
 				}
 				if len(feed.Entries) != 1 {
@@ -171,7 +171,7 @@ func readingProjectionMatrix(t *testing.T, pageCount int64) {
 				var search struct {
 					Items []database.SearchSeriesPagedRow `json:"items"`
 				}
-				if err = json.Unmarshal(run(c.searchSeriesPaged, user, "", 0, "/?libraryId="+strconv.FormatInt(lib.ID, 10)), &search); err != nil {
+				if err = json.Unmarshal(run(c.reader.searchSeriesPaged, user, "", 0, "/?libraryId="+strconv.FormatInt(lib.ID, 10)), &search); err != nil {
 					t.Fatal(err)
 				}
 				if len(search.Items) != 1 || int64(search.Items[0].ReadCount) != wantPage {

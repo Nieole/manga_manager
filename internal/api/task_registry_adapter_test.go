@@ -6,7 +6,7 @@ import (
 	"manga-manager/internal/task"
 )
 
-func (c *Controller) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
+func (c *apiFixture) buildTaskDispatch() map[taskDispatchKey]taskDispatch {
 	registry := runtime.NewRegistry(c.scans, c.maintenance, c.intelligence)
 	if c.runtime != nil {
 		registry = c.runtime.Registry

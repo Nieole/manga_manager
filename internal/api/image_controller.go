@@ -13,9 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"manga-manager/internal/bookcontent"
 	"manga-manager/internal/config"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type pageCacheStatsResponse struct {
@@ -32,7 +33,7 @@ type pageCacheStatsResponse struct {
 // 省下的带宽与长 max-age 相同。
 const pageImageCacheControl = "private, max-age=0, must-revalidate"
 
-func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
+func (c *contentHTTP) servePageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -48,7 +49,7 @@ func (c *Controller) servePageImage(w http.ResponseWriter, r *http.Request) {
 	c.servePageImageByNumber(w, r, bookID, pageNumber)
 }
 
-func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Request, bookID, pageNumber int64) {
+func (c *contentHTTP) servePageImageByNumber(w http.ResponseWriter, r *http.Request, bookID, pageNumber int64) {
 	started := time.Now()
 	release, ok := c.guardBookRead(w, r, bookID)
 	if !ok {
@@ -109,8 +110,8 @@ func (c *Controller) servePageImageByNumber(w http.ResponseWriter, r *http.Reque
 	_, _ = w.Write(result.Data)
 }
 
-func (c *Controller) processedImageCacheDir() string { return config.PageCacheDir(c.currentConfig()) }
-func (c *Controller) logPageImageServed(bookID, pageNumber int64, source, contentType string, size int, duration time.Duration, format, filter string, autoCrop bool) {
+func (c *contentHTTP) processedImageCacheDir() string { return config.PageCacheDir(c.currentConfig()) }
+func (c *contentHTTP) logPageImageServed(bookID, pageNumber int64, source, contentType string, size int, duration time.Duration, format, filter string, autoCrop bool) {
 	if duration < 250*time.Millisecond && source != "processed" {
 		return
 	}
@@ -149,7 +150,7 @@ func parsePositiveDimension(raw string) (int, error) {
 	return v, nil
 }
 
-func (c *Controller) getPageCacheStats(w http.ResponseWriter, r *http.Request) {
+func (c *contentHTTP) getPageCacheStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := c.collectPageCacheStats()
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to inspect page cache")
@@ -158,7 +159,7 @@ func (c *Controller) getPageCacheStats(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, stats)
 }
 
-func (c *Controller) clearPageCache(w http.ResponseWriter, r *http.Request) {
+func (c *contentHTTP) clearPageCache(w http.ResponseWriter, r *http.Request) {
 	dir := filepath.Clean(c.processedImageCacheDir())
 	if dir == "." || dir == string(filepath.Separator) || strings.TrimSpace(dir) == "" {
 		jsonError(w, http.StatusInternalServerError, "Invalid page cache directory")
@@ -185,7 +186,7 @@ func (c *Controller) clearPageCache(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (c *Controller) collectPageCacheStats() (pageCacheStatsResponse, error) {
+func (c *contentHTTP) collectPageCacheStats() (pageCacheStatsResponse, error) {
 	dir := filepath.Clean(c.processedImageCacheDir())
 	stats := pageCacheStatsResponse{Path: dir}
 	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -225,7 +226,7 @@ func (c *Controller) collectPageCacheStats() (pageCacheStatsResponse, error) {
 //
 // 淘汰用 mtime 而不是 atime：绝大多数生产文件系统挂载时带 noatime（或 relatime），
 // atime 根本不更新，拿它做 LRU 会得到一个随机顺序。mtime 至少是「写入时间」这个确定语义。
-func (c *Controller) enforcePageCacheBudget() {
+func (c *contentHTTP) enforcePageCacheBudget() {
 	cfg := c.currentConfig()
 	if !cfg.Cache.PageDiskCacheEnabled || cfg.Cache.PageDiskCacheMaxBytes <= 0 {
 		return
@@ -365,7 +366,7 @@ func removeDirectoryContents(dir string) error {
 	return nil
 }
 
-func (c *Controller) serveCoverImage(w http.ResponseWriter, r *http.Request) {
+func (c *contentHTTP) serveCoverImage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
@@ -422,14 +423,14 @@ func bookDownloadContentType(path string) string {
 
 // serveBookFile 将内容句柄映射为支持 Range 的原始归档附件。
 // 各路由分别执行会话或协议鉴权，路径由内容能力按书身份解析。
-func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
+func (c *contentHTTP) serveBookFile(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
 		return
 	}
 
-	handle, err := c.content.Open(r.Context(), bookID, c.taskEngine.engine)
+	handle, err := c.content.Open(r.Context(), bookID, c.engine)
 	if err != nil {
 		switch {
 		case errors.Is(err, bookcontent.ErrSourceMissing):
@@ -463,4 +464,68 @@ func (c *Controller) serveBookFile(w http.ResponseWriter, r *http.Request) {
 	// http.ServeContent 处理 Range、If-Modified-Since、Content-Length 并设置 Accept-Ranges，
 	// 且在 Content-Type 已预设时保留我们给出的归档 MIME（不做字节嗅探）。
 	http.ServeContent(w, r, displayName, handle.Info.ModTime(), handle)
+}
+
+func (c *contentHTTP) getPagesByBook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	bookID, err := parseID(r, "bookId")
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid Book ID")
+		return
+	}
+
+	release, ok := c.guardBookRead(w, r, bookID)
+	if !ok {
+		return
+	}
+	defer release()
+	manifest, err := c.content.List(ctx, bookID)
+	if err != nil {
+		if errors.Is(err, bookcontent.ErrBusy) {
+			jsonError(w, http.StatusServiceUnavailable, "Storage is busy")
+			return
+		}
+		if errors.Is(err, bookcontent.ErrSourceMissing) {
+			jsonError(w, http.StatusNotFound, "Book not found")
+			return
+		}
+		writeStorageFailure(w, c.diagnoseStorageFailure(ctx, storageTargetFromSource(manifest.Source), err), "list_pages")
+		return
+	}
+	pagesInfo := manifest.Pages
+	type PageResponse struct {
+		Number int64  `json:"number"`
+		URL    string `json:"url"`
+	}
+
+	var pages []PageResponse
+	for i := range pagesInfo {
+		pages = append(pages, PageResponse{
+			Number: int64(i + 1),
+			URL:    fmt.Sprintf("/api/books/page/%d/%d", bookID, i+1),
+		})
+	}
+
+	jsonResponse(w, http.StatusOK, pages)
+}
+
+func (c *contentHTTP) serveThumbnailImage(w http.ResponseWriter, r *http.Request) {
+	thumbDir := config.ThumbnailDir(c.currentConfig())
+	filename := chi.URLParam(r, "*")
+	fullPath := filepath.Join(thumbDir, filename)
+	w.Header().Set("Cache-Control", pageImageCacheControl)
+	// 图片资源不依赖 Origin，清除 CORS 中间件写入的 Vary: Origin，
+	// 否则浏览器以 (URL+Origin) 为缓存 key，同源 <img> 请求无法命中缓存。
+	w.Header().Del("Vary")
+
+	if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+		etag := weakETag(fmt.Sprintf("thumbnail-%s-%d-%d", filename, info.ModTime().UnixNano(), info.Size()))
+		w.Header().Set("ETag", etag)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+
+	http.ServeFile(w, r, fullPath)
 }

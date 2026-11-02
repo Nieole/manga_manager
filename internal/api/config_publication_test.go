@@ -13,7 +13,7 @@ import (
 func TestConfigurationSaveReportsDeferredEffectsSeparatelyFromPersistence(t *testing.T) {
 	c, _, _, _ := newTestController(t)
 	before := c.currentConfig()
-	if err := c.persistConfig(&before); err != nil {
+	if err := c.admin.persistConfig(&before); err != nil {
 		t.Fatal(err)
 	}
 	next := before
@@ -27,7 +27,7 @@ func TestConfigurationSaveReportsDeferredEffectsSeparatelyFromPersistence(t *tes
 	req := requestWithRouteParam(http.MethodPost, "/config", data, "", "")
 	req.Header.Set("If-Match", c.config.Version(before))
 	rec := httptest.NewRecorder()
-	c.updateSystemConfig(rec, req)
+	c.admin.updateSystemConfig(rec, req)
 	var response struct {
 		Publication struct {
 			Saved           bool     `json:"saved"`
@@ -57,7 +57,7 @@ func TestPendingDatabaseSettingDoesNotRedirectActualTrashTarget(t *testing.T) {
 	before := c.currentConfig()
 	next := c.currentConfig()
 	next.Database.Path = filepath.Join(t.TempDir(), "future.db")
-	if err := c.persistConfig(&next); err != nil {
+	if err := c.admin.persistConfig(&next); err != nil {
 		t.Fatal(err)
 	}
 	body, err := json.Marshal(map[string]any{"book_ids": []int64{book.ID}, "move_to_trash": true})
@@ -65,7 +65,7 @@ func TestPendingDatabaseSettingDoesNotRedirectActualTrashTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	c.removeBooks(rec, requestWithRouteParam(http.MethodPost, "/remove", body, "", ""))
+	c.families.removal.removeBooks(rec, requestWithRouteParam(http.MethodPost, "/remove", body, "", ""))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("remove=%d %s", rec.Code, rec.Body.String())
 	}

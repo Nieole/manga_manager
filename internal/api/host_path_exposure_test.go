@@ -162,7 +162,7 @@ func TestOPDSLibrariesFeedHidesHostPath(t *testing.T) {
 	lib, _, _ := seedBookFixture(t, store, rootDir, "Lib", "Series", "book.cbz", 10)
 
 	rec := httptest.NewRecorder()
-	c.opdsLibraries(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/libraries", nil))
+	c.reader.opdsLibraries(rec, httptest.NewRequest(http.MethodGet, "/opds/v1.2/libraries", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("opdsLibraries want 200 got %d", rec.Code)
 	}

@@ -23,7 +23,7 @@ import (
 )
 
 // setBackoff 改这三个阈值，与经设置页保存走同一条路（换掉配置快照）。
-func setBackoff(t testing.TB, c *Controller, factor, maxHours, stopAfter int) {
+func setBackoff(t testing.TB, c *apiFixture, factor, maxHours, stopAfter int) {
 	t.Helper()
 	cfg := c.currentConfig()
 	cfg.Tasks.BackoffFactor = factor
@@ -35,12 +35,12 @@ func setBackoff(t testing.TB, c *Controller, factor, maxHours, stopAfter int) {
 // autoLaunchRequest 打一次禁用 / 启用端点，返回状态码。路由经 chi 走一遍而不是直接调 handler：
 // 这两个端点与重试端点占着同一段路径，只在末段动词上分岔。
 // 三条各取各的参数由 TestTaskEndpointsTakeTheirOwnPathParam 在**真路由**上守着。
-func autoLaunchRequest(t *testing.T, controller *Controller, taskID int64, action string) int {
+func autoLaunchRequest(t *testing.T, controller *apiFixture, taskID int64, action string) int {
 	t.Helper()
 	router := chi.NewRouter()
-	router.Post("/api/system/tasks/{taskID}/retry", controller.retryTask)
-	router.Post("/api/system/tasks/{taskID}/disable", controller.disableTask)
-	router.Post("/api/system/tasks/{taskID}/enable", controller.enableTask)
+	router.Post("/api/system/tasks/{taskID}/retry", controller.families.runs.retryTask)
+	router.Post("/api/system/tasks/{taskID}/disable", controller.families.runs.disableTask)
+	router.Post("/api/system/tasks/{taskID}/enable", controller.families.runs.enableTask)
 
 	rec := httptest.NewRecorder()
 	path := "/api/system/tasks/" + strconv.FormatInt(taskID, 10) + "/" + action
@@ -49,10 +49,10 @@ func autoLaunchRequest(t *testing.T, controller *Controller, taskID int64, actio
 }
 
 // summaryOf 取任务清单上唯一那一行。
-func summaryOf(t *testing.T, controller *Controller) TaskSummary {
+func summaryOf(t *testing.T, controller *apiFixture) TaskSummary {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.listTaskSummaries(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/summary", nil))
+	controller.families.runs.listTaskSummaries(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/summary", nil))
 	var summaries []TaskSummary
 	if err := json.Unmarshal(rec.Body.Bytes(), &summaries); err != nil {
 		t.Fatalf("解任务清单失败: %v (raw=%s)", err, rec.Body.String())

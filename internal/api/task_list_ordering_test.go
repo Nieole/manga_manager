@@ -22,10 +22,10 @@ const taskCenterPageSize = 50
 
 // restartController 用同一份存储另起一个 Controller，模拟进程重启：走与生产同源的装配。
 // **运行时句柄**不跨实例，新实例只能从库里读回历史——运行本身早已落盘，不需要先刷一遍。
-func restartController(t *testing.T, prev *Controller, store database.Store, tempDir string) *Controller {
+func restartController(t *testing.T, prev *apiFixture, store database.Store, tempDir string) *apiFixture {
 	t.Helper()
 	cfg := prev.config
-	reloaded := newControllerCore(store, scanner.NewScanner(store, cfg), cfg,
+	reloaded := newAPIFixture(store, scanner.NewScanner(store, cfg), cfg,
 		filepath.Join(tempDir, "config.yaml"), controllerCacheSizes{
 			imageBytes: 8 << 10, page: 8, bookPageSource: 8,
 		})
@@ -36,11 +36,11 @@ func restartController(t *testing.T, prev *Controller, store database.Store, tem
 }
 
 // taskCenterFirstPage 按前端的真实请求取任务中心第一页。
-func taskCenterFirstPage(t *testing.T, c *Controller) []RunSnapshot {
+func taskCenterFirstPage(t *testing.T, c *apiFixture) []RunSnapshot {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/system/tasks?limit=%d", taskCenterPageSize), nil)
 	rec := httptest.NewRecorder()
-	c.listTasks(rec, req)
+	c.families.runs.listTasks(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("任务列表返回 %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -56,7 +56,7 @@ func taskCenterFirstPage(t *testing.T, c *Controller) []RunSnapshot {
 
 // seedFinishedHistory 灌入 n 条已完成的历史运行，键为 scan_series_<i>。
 // 作用域 id 从 1 起：系列级身份没有 0 号系列，四要素的自洽校验会当场拒了它。
-func seedFinishedHistory(t *testing.T, c *Controller, n int) {
+func seedFinishedHistory(t *testing.T, c *apiFixture, n int) {
 	t.Helper()
 	for i := range n {
 		seedTask(t, c.taskEngine, taskSeed{

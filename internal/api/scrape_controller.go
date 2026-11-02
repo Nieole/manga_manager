@@ -50,7 +50,7 @@ func scrapeResultSourceURL(providerName string, result *metadata.SeriesMetadata)
 }
 
 // getMetadataFetcher 根据名称返回对应的 Provider 实例
-func (c *Controller) getMetadataFetcher(name string) metadata.Fetcher {
+func (c *providerClients) getMetadataFetcher(name string) metadata.Fetcher {
 	if c.fetcherFactory != nil {
 		return c.fetcherFactory(name)
 	}
@@ -59,7 +59,7 @@ func (c *Controller) getMetadataFetcher(name string) metadata.Fetcher {
 
 // availableProviders 返回可用的 provider 列表供前端展示。
 // AniList / MangaDex 免密钥恒可用；MyAnimeList / Comic Vine 仅在配置了对应凭据时出现（否则源不可用，避免误选）。
-func (c *Controller) listProviders(w http.ResponseWriter, r *http.Request) {
+func (c *providerHTTP) listProviders(w http.ResponseWriter, r *http.Request) {
 	providers := []map[string]string{
 		{"id": "bangumi", "name": "Bangumi", "description": "从 Bangumi 番组计划获取漫画元数据"},
 		{"id": "anilist", "name": "AniList", "description": "从 AniList 获取漫画元数据（英文/罗马音/原名、评分、标签、作者）"},
@@ -76,7 +76,7 @@ func (c *Controller) listProviders(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, providers)
 }
 
-func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
+func (c *providerHTTP) searchMetadata(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
 		jsonError(w, http.StatusBadRequest, "Missing query parameter 'q'")
@@ -112,7 +112,7 @@ func (c *Controller) searchMetadata(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request) {
+func (c *providerHTTP) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -162,7 +162,7 @@ func (c *Controller) scrapeSearchMetadata(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (c *Controller) applyScrapedMetadata(w http.ResponseWriter, r *http.Request) {
+func (c *providerHTTP) applyScrapedMetadata(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -244,7 +244,7 @@ func isTruthyParam(raw string) bool {
 	return false
 }
 
-func (c *Controller) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request) {
+func (c *providerHTTP) scrapeSeriesMetadata(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -364,7 +364,7 @@ func (c *maintenanceHTTP) scrapeLibrary(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (c *Controller) getMetadataSearcher(name string) metadata.Searcher {
+func (c *providerClients) getMetadataSearcher(name string) metadata.Searcher {
 	if c.searcherFactory != nil {
 		return c.searcherFactory(name)
 	}

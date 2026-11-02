@@ -38,8 +38,8 @@ func TestPasswordCommitPreventsOldInFlightBasicCredentialsFromRepopulatingCache(
 		t.Fatal(err)
 	}
 	paused := &pausedCredentialRead{Store: store, loaded: make(chan struct{}), release: make(chan struct{})}
-	c.store = paused
-	protocol := c.requireBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	c.admin.store = paused
+	protocol := c.admin.requireBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	request := func(password string) int {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/opds", nil)
@@ -78,11 +78,11 @@ func TestPasswordChangeRollsBackWhenSessionRevocationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	c.changePassword(rec, withUserContext(httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"current_password":"password1","new_password":"password2"}`)), user))
+	c.admin.changePassword(rec, withUserContext(httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"current_password":"password1","new_password":"password2"}`)), user))
 	if rec.Code != 500 {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if _, ok := c.authenticateUser(context.Background(), "Exact", "password1"); !ok {
+	if _, ok := c.admin.authenticateUser(context.Background(), "Exact", "password1"); !ok {
 		t.Fatal("failed revocation changed password")
 	}
 	if _, _, err := store.GetSessionWithUser(context.Background(), "old", time.Now()); err != nil {
@@ -99,12 +99,12 @@ func TestPasswordChangeSessionFailureReportsCommittedAndRejectsOldCredentials(t 
 	if err := store.CreateSession(context.Background(), database.Session{ID: "old", UserID: user.ID, CSRFToken: "csrf", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.resolveBasicAuthUser(context.Background(), user.Username, "password1"); !ok {
+	if _, ok := c.admin.resolveBasicAuthUser(context.Background(), user.Username, "password1"); !ok {
 		t.Fatal("initial basic")
 	}
-	c.store = failedSetupSession{store}
+	c.admin.store = failedSetupSession{store}
 	rec := httptest.NewRecorder()
-	c.changePassword(rec, withUserContext(httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"current_password":"password1","new_password":"password2"}`)), user))
+	c.admin.changePassword(rec, withUserContext(httptest.NewRequest(http.MethodPost, "/", jsonBody(`{"current_password":"password1","new_password":"password2"}`)), user))
 	var body struct {
 		Committed     bool `json:"password_committed"`
 		LoginRequired bool `json:"login_required"`
@@ -113,13 +113,13 @@ func TestPasswordChangeSessionFailureReportsCommittedAndRejectsOldCredentials(t 
 	if rec.Code != 500 || !body.Committed || !body.LoginRequired {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if _, ok := c.resolveBasicAuthUser(context.Background(), user.Username, "password1"); ok {
+	if _, ok := c.admin.resolveBasicAuthUser(context.Background(), user.Username, "password1"); ok {
 		t.Fatal("old Basic cache remains eligible")
 	}
 	if _, _, err := store.GetSessionWithUser(context.Background(), "old", time.Now()); err == nil {
 		t.Fatal("old session remains eligible")
 	}
-	if _, ok := c.authenticateUser(context.Background(), user.Username, "password2"); !ok {
+	if _, ok := c.admin.authenticateUser(context.Background(), user.Username, "password2"); !ok {
 		t.Fatal("new password rejected")
 	}
 }
@@ -143,7 +143,7 @@ func TestPasswordResetAuthorizationAndProtocolEligibility(t *testing.T) {
 	if err := store.SetKOReaderAccountUser(ctx, device.ID, target.ID); err != nil {
 		t.Fatal(err)
 	}
-	protocol := c.requireBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	protocol := c.admin.requireBasicAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
 	basic := func(password string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/opds", nil)

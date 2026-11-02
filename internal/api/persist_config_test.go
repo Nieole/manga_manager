@@ -18,7 +18,7 @@ func TestPersistConfigRebuildsDerivedResources(t *testing.T) {
 	cfg := controller.config.Snapshot()
 	cfg.Scanner.ArchivePoolSize = 9
 	cfg.Scanner.MaxAiConcurrency = 6
-	if err := controller.persistConfig(&cfg); err != nil {
+	if err := controller.admin.persistConfig(&cfg); err != nil {
 		t.Fatalf("persistConfig: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestPersistConfigWritesOwnerOnlyPerm(t *testing.T) {
 
 	cfg := controller.config.Snapshot()
 	cfg.LLM.APIKey = "sk-should-not-be-world-readable"
-	if err := controller.persistConfig(&cfg); err != nil {
+	if err := controller.admin.persistConfig(&cfg); err != nil {
 		t.Fatalf("persistConfig: %v", err)
 	}
 

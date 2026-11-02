@@ -18,7 +18,7 @@ import (
 )
 
 // seedFranchiseCollection 造两个有关系的系列并重建，返回作品群合集 id 与两个系列 id。
-func seedFranchiseCollection(t *testing.T, controller *Controller, store database.Store) (int64, []int64) {
+func seedFranchiseCollection(t *testing.T, controller *apiFixture, store database.Store) (int64, []int64) {
 	t.Helper()
 	_, ids := seedFranchiseSeries(t, store, 2)
 	addRelation(t, store, ids[0], ids[1])
@@ -33,7 +33,7 @@ func seedFranchiseCollection(t *testing.T, controller *Controller, store databas
 }
 
 // seedManualCollection 造一个普通手工合集，返回其 id。
-func seedManualCollection(t *testing.T, controller *Controller, name string) int64 {
+func seedManualCollection(t *testing.T, controller *apiFixture, name string) int64 {
 	t.Helper()
 	id, err := controller.store.CreateSimpleCollection(context.Background(), database.CreateSimpleCollectionParams{
 		Name: name,
@@ -51,7 +51,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		_, outsider, _ := seedBookFixture(t, store, rootDir, "Lib Outside", "Series Outside", "o.cbz", 3)
 
 		rec := httptest.NewRecorder()
-		controller.addSeriesToCollection(rec, requestWithRouteParam(
+		controller.organizationHTTP.addSeriesToCollection(rec, requestWithRouteParam(
 			http.MethodPost, "/api/collections/1/series",
 			[]byte(`{"series_ids":[`+strconv.FormatInt(outsider.ID, 10)+`]}`),
 			"collectionId", strconv.FormatInt(collectionID, 10)))
@@ -73,7 +73,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		collectionID, _ := seedFranchiseCollection(t, controller, store)
 
 		rec := httptest.NewRecorder()
-		controller.deleteCollection(rec, requestWithRouteParam(
+		controller.organizationHTTP.deleteCollection(rec, requestWithRouteParam(
 			http.MethodDelete, "/api/collections/1", nil,
 			"collectionId", strconv.FormatInt(collectionID, 10)))
 
@@ -90,7 +90,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		collectionID, ids := seedFranchiseCollection(t, controller, store)
 
 		rec := httptest.NewRecorder()
-		controller.removeSeriesFromCollection(rec, requestWithRouteParams(
+		controller.organizationHTTP.removeSeriesFromCollection(rec, requestWithRouteParams(
 			http.MethodDelete, "/api/collections/1/series/1", nil, map[string]string{
 				"collectionId": strconv.FormatInt(collectionID, 10),
 				"seriesId":     strconv.FormatInt(ids[0], 10),
@@ -106,7 +106,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		collectionID, _ := seedFranchiseCollection(t, controller, store)
 
 		rec := httptest.NewRecorder()
-		controller.updateCollection(rec, requestWithRouteParam(
+		controller.organizationHTTP.updateCollection(rec, requestWithRouteParam(
 			http.MethodPut, "/api/collections/1", []byte(`{"name":"我起的名字"}`),
 			"collectionId", strconv.FormatInt(collectionID, 10)))
 
@@ -122,7 +122,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		collectionID := seedManualCollection(t, controller, "我的收藏")
 
 		addRec := httptest.NewRecorder()
-		controller.addSeriesToCollection(addRec, requestWithRouteParam(
+		controller.organizationHTTP.addSeriesToCollection(addRec, requestWithRouteParam(
 			http.MethodPost, "/api/collections/1/series",
 			[]byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`]}`),
 			"collectionId", strconv.FormatInt(collectionID, 10)))
@@ -131,7 +131,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		}
 
 		updateRec := httptest.NewRecorder()
-		controller.updateCollection(updateRec, requestWithRouteParam(
+		controller.organizationHTTP.updateCollection(updateRec, requestWithRouteParam(
 			http.MethodPut, "/api/collections/1", []byte(`{"name":"改过的收藏"}`),
 			"collectionId", strconv.FormatInt(collectionID, 10)))
 		if updateRec.Code != http.StatusOK {
@@ -139,7 +139,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		}
 
 		removeRec := httptest.NewRecorder()
-		controller.removeSeriesFromCollection(removeRec, requestWithRouteParams(
+		controller.organizationHTTP.removeSeriesFromCollection(removeRec, requestWithRouteParams(
 			http.MethodDelete, "/api/collections/1/series/1", nil, map[string]string{
 				"collectionId": strconv.FormatInt(collectionID, 10),
 				"seriesId":     strconv.FormatInt(series.ID, 10),
@@ -149,7 +149,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		}
 
 		deleteRec := httptest.NewRecorder()
-		controller.deleteCollection(deleteRec, requestWithRouteParam(
+		controller.organizationHTTP.deleteCollection(deleteRec, requestWithRouteParam(
 			http.MethodDelete, "/api/collections/1", nil,
 			"collectionId", strconv.FormatInt(collectionID, 10)))
 		if deleteRec.Code != http.StatusOK {
@@ -171,7 +171,7 @@ func TestFranchiseCollectionRejectsManualEdits(t *testing.T) {
 		}
 
 		addRec := httptest.NewRecorder()
-		controller.addSeriesToCollection(addRec, requestWithRouteParam(
+		controller.organizationHTTP.addSeriesToCollection(addRec, requestWithRouteParam(
 			http.MethodPost, "/api/collections/1/series",
 			[]byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`]}`),
 			"collectionId", strconv.FormatInt(created.ID, 10)))
@@ -188,7 +188,7 @@ func TestListCollectionsHidesFranchise(t *testing.T) {
 	manualID := seedManualCollection(t, controller, "我的收藏")
 
 	rec := httptest.NewRecorder()
-	controller.listCollections(rec, httptest.NewRequest(http.MethodGet, "/api/collections/", nil))
+	controller.organizationHTTP.listCollections(rec, httptest.NewRequest(http.MethodGet, "/api/collections/", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("列表应 200，实得 %d", rec.Code)
 	}
@@ -216,7 +216,7 @@ func TestFranchiseIDStableAcrossRejectedDeleteAndRebuild(t *testing.T) {
 	collectionID, _ := seedFranchiseCollection(t, controller, store)
 
 	rec := httptest.NewRecorder()
-	controller.deleteCollection(rec, requestWithRouteParam(
+	controller.organizationHTTP.deleteCollection(rec, requestWithRouteParam(
 		http.MethodDelete, "/api/collections/1", nil,
 		"collectionId", strconv.FormatInt(collectionID, 10)))
 	if rec.Code != http.StatusForbidden {

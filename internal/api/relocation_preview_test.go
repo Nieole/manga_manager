@@ -40,7 +40,7 @@ func TestRelocationPreviewPreservesRecordsAndCanBeReadAfterReopen(t *testing.T) 
 	body, _ := json.Marshal(map[string]string{"target_root": target})
 	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10))
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, req)
+	c.families.relocation.createRelocationPlan(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("start preview: %d %s", rec.Code, rec.Body.String())
 	}
@@ -64,19 +64,19 @@ func TestRelocationPreviewPreservesRecordsAndCanBeReadAfterReopen(t *testing.T) 
 	reopened := restartController(t, c, store, root)
 	latestReq := requestWithRouteParam(http.MethodGet, "/api/libraries/1/relocation-plans/latest", nil, "libraryId", strconv.FormatInt(lib.ID, 10))
 	latestRec := httptest.NewRecorder()
-	reopened.latestRelocationPlan(latestRec, latestReq)
+	reopened.families.relocation.latestRelocationPlan(latestRec, latestReq)
 	var latest RelocationPlan
 	if err := json.Unmarshal(latestRec.Body.Bytes(), &latest); err != nil || latest.ID != started.ID || latest.Status != "checked" {
 		t.Fatalf("reopened preview: %d %s (%v)", latestRec.Code, latestRec.Body.String(), err)
 	}
 }
 
-func startRelocationPreview(t *testing.T, c *Controller, libraryID int64, target string) RelocationPlan {
+func startRelocationPreview(t *testing.T, c *apiFixture, libraryID int64, target string) RelocationPlan {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"target_root": target})
 	req := requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(libraryID, 10))
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, req)
+	c.families.relocation.createRelocationPlan(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("start preview: %d %s", rec.Code, rec.Body.String())
 	}
@@ -87,11 +87,11 @@ func startRelocationPreview(t *testing.T, c *Controller, libraryID int64, target
 	return awaitRelocationPlan(t, c, plan.ID)
 }
 
-func previewDetails(t *testing.T, c *Controller, id int64, query string) RelocationDetails {
+func previewDetails(t *testing.T, c *apiFixture, id int64, query string) RelocationDetails {
 	t.Helper()
 	req := requestWithRouteParam(http.MethodGet, "/api/relocation-plans/1/details?"+query, nil, "planId", strconv.FormatInt(id, 10))
 	rec := httptest.NewRecorder()
-	c.relocationDetails(rec, req)
+	c.families.relocation.relocationDetails(rec, req)
 	var page RelocationDetails
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("preview details: %d %s (%v)", rec.Code, rec.Body.String(), err)
@@ -304,13 +304,13 @@ func TestRelocationPreviewQueuedCancellationSurvivesRunHistoryPruning(t *testing
 	}
 	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var plan RelocationPlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("queued preview: %d %s (%v)", rec.Code, rec.Body.String(), err)
 	}
 	cancel := httptest.NewRecorder()
-	c.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
+	c.families.runs.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
 	if cancel.Code != http.StatusAccepted {
 		t.Fatalf("cancel queued preview: %d %s", cancel.Code, cancel.Body.String())
 	}
@@ -331,14 +331,14 @@ func TestRelocationPreviewCancellationAndPruningBeforePlanBinding(t *testing.T) 
 	// Cancel and prune there, before SetRun can bind the returned run identifier.
 	c.taskEngine.runBackground = func(body func()) {
 		liveRec := httptest.NewRecorder()
-		c.getTaskCenterLive(liveRec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
+		c.families.runs.getTaskCenterLive(liveRec, httptest.NewRequest(http.MethodGet, "/api/system/tasks/live", nil))
 		var live RunLive
 		if err := json.Unmarshal(liveRec.Body.Bytes(), &live); err != nil || len(live.Runs) != 1 {
 			t.Fatalf("live before binding: %s (%v)", liveRec.Body.String(), err)
 		}
 		runID := live.Runs[0].RunID
 		cancelRec := httptest.NewRecorder()
-		c.cancelRun(cancelRec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(runID, 10)))
+		c.families.runs.cancelRun(cancelRec, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(runID, 10)))
 		if cancelRec.Code != http.StatusAccepted {
 			t.Fatalf("cancel before binding: %d %s", cancelRec.Code, cancelRec.Body.String())
 		}
@@ -347,7 +347,7 @@ func TestRelocationPreviewCancellationAndPruningBeforePlanBinding(t *testing.T) 
 	}
 	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var plan RelocationPlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("binding after terminal pruning: %d %s (%v)", rec.Code, rec.Body.String(), err)
@@ -358,10 +358,10 @@ func TestRelocationPreviewCancellationAndPruningBeforePlanBinding(t *testing.T) 
 	}
 }
 
-func clearCancelledPreviewRuns(t *testing.T, c *Controller) {
+func clearCancelledPreviewRuns(t *testing.T, c *apiFixture) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	c.clearTasks(rec, httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=cancelled", nil))
+	c.families.runs.clearTasks(rec, httptest.NewRequest(http.MethodDelete, "/api/system/tasks?status=cancelled", nil))
 	var result struct {
 		Removed int `json:"removed"`
 	}
@@ -407,11 +407,11 @@ func TestRelocationPreviewReportsCancellingAndQueuedWorkWithoutCountingItself(t 
 	lib, _, _ := seedBookFixture(t, store, root, "source", "series", "book.cbz", 1)
 	var bodies []func()
 	c.taskEngine.runBackground = func(fn func()) { bodies = append(bodies, fn) }
-	first, err := c.startLibraryScanRun(lib, false, task.TriggerManual)
+	first, err := c.families.library.startLibraryScanRun(lib, false, task.TriggerManual)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := c.startLibraryScanRun(lib, false, task.TriggerWatch)
+	second, err := c.families.library.startLibraryScanRun(lib, false, task.TriggerWatch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestRelocationPreviewReportsCancellingAndQueuedWorkWithoutCountingItself(t 
 	}
 	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var plan RelocationPlan
 	if err = json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
@@ -452,7 +452,7 @@ func TestRelocationPreviewRestartMarksUnfinishedPlansInterruptedWithoutRunHistor
 	c.taskEngine.runBackground = func(func()) {}
 	body, _ := json.Marshal(map[string]string{"target_root": t.TempDir()})
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var started RelocationPlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("start unfinished: %d %s", rec.Code, rec.Body.String())
@@ -504,7 +504,7 @@ func TestRelocationPreviewUsesNativeCaseAndSeparatorSemantics(t *testing.T) {
 	}
 	body, _ := json.Marshal(map[string]string{"target_root": target + string(filepath.Separator)})
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var started RelocationPlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &started); err != nil {
 		t.Fatal(err)
@@ -582,7 +582,7 @@ func TestRelocationPreviewCancellationWaitsForFileCheckAndPreservesOriginalState
 	c.relocation.Files = files
 	body, _ := json.Marshal(map[string]string{"target_root": target})
 	rec := httptest.NewRecorder()
-	c.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/relocation-plans", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var plan RelocationPlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
@@ -593,7 +593,7 @@ func TestRelocationPreviewCancellationWaitsForFileCheckAndPreservesOriginalState
 		t.Fatal("file check did not start")
 	}
 	cancel := httptest.NewRecorder()
-	c.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
+	c.families.runs.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/api/system/runs/1/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
 	if cancel.Code != http.StatusAccepted {
 		close(files.resume)
 		t.Fatalf("cancel: %d %s", cancel.Code, cancel.Body.String())
@@ -629,7 +629,7 @@ func TestRelocationPreviewAllowsUnchangedNestedLibrariesAndSelfMapping(t *testin
 	}
 }
 
-func awaitRelocationPlan(t *testing.T, c *Controller, id int64) RelocationPlan {
+func awaitRelocationPlan(t *testing.T, c *apiFixture, id int64) RelocationPlan {
 	t.Helper()
 	deadline := time.After(10 * time.Second)
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -637,7 +637,7 @@ func awaitRelocationPlan(t *testing.T, c *Controller, id int64) RelocationPlan {
 	for {
 		req := requestWithRouteParam(http.MethodGet, "/api/relocation-plans/1", nil, "planId", strconv.FormatInt(id, 10))
 		rec := httptest.NewRecorder()
-		c.getRelocationPlan(rec, req)
+		c.families.relocation.getRelocationPlan(rec, req)
 		var plan RelocationPlan
 		if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil {
 			t.Fatalf("get preview: %d %s (%v)", rec.Code, rec.Body.String(), err)

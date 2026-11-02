@@ -20,19 +20,21 @@ import (
 //
 // 「重启」是拿同一份存储另起一个 Controller——**运行时句柄**不跨实例，新实例只能从库里读回那条
 // 还写着活动态的运行，正是重启恢复要处置的东西。
-func restartWithSeededRun(t *testing.T, seed taskSeed) *Controller {
+func restartWithSeededRun(t *testing.T, seed taskSeed) *apiFixture {
 	t.Helper()
 	controller, store, _, tempDir := newTestController(t)
 	seedTask(t, controller.taskEngine, seed)
 
 	reloaded := restartController(t, controller, store, tempDir)
-	reloaded.taskEngine.markInterrupted(context.Background())
+	if err := reloaded.runtime.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	return reloaded
 }
 
 // seedScannableLibrary 建一个真的能被扫的资料库：续跑要经**重启函数**把它读回来，
 // 读不到库就没有任何东西会被发起，而那时用例的绿是假的。
-func seedScannableLibrary(t *testing.T, c *Controller) database.Library {
+func seedScannableLibrary(t *testing.T, c *apiFixture) database.Library {
 	t.Helper()
 	lib, err := c.store.CreateLibrary(context.Background(), database.CreateLibraryParams{
 		Name:         "Main",
@@ -59,7 +61,9 @@ func TestRestartResumesScanAndKeepsTheInterruptedRun(t *testing.T) {
 	})
 
 	reloaded := restartController(t, controller, store, tempDir)
-	reloaded.taskEngine.markInterrupted(context.Background())
+	if err := reloaded.runtime.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	runs := runsForKey(t, reloaded, key)
 	if len(runs) != 2 {
@@ -111,7 +115,9 @@ func TestResumeSwitchOffLeavesEverythingInterrupted(t *testing.T) {
 
 	reloaded := restartController(t, controller, store, tempDir)
 	disableResume(reloaded)
-	reloaded.taskEngine.markInterrupted(context.Background())
+	if err := reloaded.runtime.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	runs := runsForKey(t, reloaded, key)
 	if len(runs) != 1 {

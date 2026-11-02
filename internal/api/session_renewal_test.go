@@ -25,7 +25,7 @@ const slidingRenewalPassword = "password1"
 
 // newSlidingSessionFixture 建一个管理员并走真实登录，返回登录时下发的会话 Cookie。
 // 用真实的 login 而非直接造 Cookie：登录那一份就是续期必须对齐的基准。
-func newSlidingSessionFixture(t *testing.T, cookieSecure string) (*Controller, database.Store, *http.Cookie) {
+func newSlidingSessionFixture(t *testing.T, cookieSecure string) (*apiFixture, database.Store, *http.Cookie) {
 	t.Helper()
 	c, store, _, _ := newTestController(t)
 
@@ -46,7 +46,7 @@ func newSlidingSessionFixture(t *testing.T, cookieSecure string) (*Controller, d
 
 	body, _ := json.Marshal(map[string]string{"username": "alice", "password": slidingRenewalPassword})
 	rec := httptest.NewRecorder()
-	c.login(rec, httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body)))
+	c.admin.login(rec, httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
@@ -90,9 +90,9 @@ func sessionExpiresAt(t *testing.T, store database.Store, token string) time.Tim
 }
 
 // serveThroughGate 把请求送过 authGate（包住 next），返回响应。
-func serveThroughGate(c *Controller, next http.Handler, req *http.Request) *http.Response {
+func serveThroughGate(c *apiFixture, next http.Handler, req *http.Request) *http.Response {
 	rec := httptest.NewRecorder()
-	c.authGate(next).ServeHTTP(rec, req)
+	c.admin.authGate(next).ServeHTTP(rec, req)
 	return rec.Result()
 }
 
@@ -186,7 +186,7 @@ func TestSessionSlidingRenewalReissuesCookie(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/thumbnails/cover.webp", nil, "*", "cover.webp")
 		req.AddCookie(&http.Cookie{Name: login.Name, Value: login.Value})
 
-		resp := serveThroughGate(c, http.HandlerFunc(c.serveThumbnailImage), req)
+		resp := serveThroughGate(c, http.HandlerFunc(c.media.serveThumbnailImage), req)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
 		}
@@ -204,7 +204,7 @@ func TestSessionSlidingRenewalReissuesCookie(t *testing.T) {
 		ageSession(t, store, login.Value, 10*24*time.Hour)
 		c.sse.closeClients() // 让 serveHTTP 写完响应头即返回，不必真挂一条长连接
 
-		resp := serveThroughGate(c, http.HandlerFunc(c.serveEvents), authedRequest(http.MethodGet, "/api/events", login))
+		resp := serveThroughGate(c, http.HandlerFunc(c.sse.serveEvents), authedRequest(http.MethodGet, "/api/events", login))
 		if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 			t.Fatalf("Content-Type = %q, want text/event-stream", got)
 		}
@@ -247,7 +247,7 @@ func TestSessionSlidingRenewalSkipsCookie(t *testing.T) {
 		c, store, login := newSlidingSessionFixture(t, "")
 		ageSession(t, store, login.Value, 10*24*time.Hour)
 		failing := &touchFailingStore{Store: store}
-		c.store = failing
+		c.admin.store = failing
 
 		resp := serveThroughGate(c, okHandler(), authedRequest(http.MethodGet, "/api/auth/me", login))
 		if resp.StatusCode != http.StatusOK {

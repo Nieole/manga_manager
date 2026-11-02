@@ -7,17 +7,17 @@ import (
 )
 
 // dispatchCoverBatch hands scan batches to application-owned cover runs.
-func (c *Controller) dispatchCoverBatch(ctx context.Context, batch *scanner.CoverBatch) {
+func (c *apiFixture) dispatchCoverBatch(ctx context.Context, batch *scanner.CoverBatch) {
 	c.scans.DispatchCoverBatch(ctx, batch)
 }
 
 // launchCoverRun preserves the existing restart adapter and trigger.
-func (c *Controller) launchCoverRun(libraryID int64, trigger task.Trigger, backfill bool) error {
+func (c *apiFixture) launchCoverRun(libraryID int64, trigger task.Trigger, backfill bool) error {
 	_, err := c.startCoverRun(libraryID, trigger, backfill)
 	return err
 }
 
-func (c *Controller) startCoverRun(libraryID int64, trigger task.Trigger, backfill bool) (task.Launched, error) {
+func (c *apiFixture) startCoverRun(libraryID int64, trigger task.Trigger, backfill bool) (task.Launched, error) {
 	var launched task.Launched
 	var err error
 	if backfill {

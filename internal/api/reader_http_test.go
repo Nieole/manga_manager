@@ -19,7 +19,7 @@ func TestReaderHTTPPositionAndRatingConsumers(t *testing.T) {
 	_, series, book := seedBookFixture(t, store, root, "Library", "Series", "01.cbz", 10)
 	user := mkTestUser(t, store, "reader-http", database.RoleRegular)
 	r := chi.NewRouter()
-	c.newReaderHTTP().SetupRoutes(r)
+	c.reader.SetupRoutes(r)
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
 		w := httptest.NewRecorder()

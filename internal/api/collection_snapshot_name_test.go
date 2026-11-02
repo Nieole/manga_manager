@@ -32,7 +32,7 @@ func (s *preemptingSnapshotStore) WithSmartSnapshot(ctx context.Context, fn func
 }
 
 // seedSmartSnapshotFixture 建一个命中两个系列的智能书架，返回它的 id 与命中的系列 id。
-func seedSmartSnapshotFixture(t *testing.T, filterName string) (*Controller, database.Store, int64, []int64) {
+func seedSmartSnapshotFixture(t *testing.T, filterName string) (*apiFixture, database.Store, int64, []int64) {
 	t.Helper()
 
 	controller, store, _, rootDir := newTestController(t)
@@ -66,11 +66,11 @@ func seedSmartSnapshotFixture(t *testing.T, filterName string) (*Controller, dat
 	return controller, store, filterID, []int64{seriesA.ID, seriesB.ID}
 }
 
-func postSmartSnapshot(t *testing.T, controller *Controller, filterID int64, body string) *httptest.ResponseRecorder {
+func postSmartSnapshot(t *testing.T, controller *apiFixture, filterID int64, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := requestWithRouteParam(http.MethodPost, "/api/collection-views/smart/1/snapshot", []byte(body), "filterId", strconv.FormatInt(filterID, 10))
 	rec := httptest.NewRecorder()
-	controller.snapshotSmartCollection(rec, req)
+	controller.organizationHTTP.snapshotSmartCollection(rec, req)
 	return rec
 }
 

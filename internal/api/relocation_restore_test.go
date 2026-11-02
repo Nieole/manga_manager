@@ -17,10 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"gopkg.in/yaml.v3"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
+
+	"github.com/go-chi/chi/v5"
+	"gopkg.in/yaml.v3"
 )
 
 func TestRestorationRecheckIsReadOnlyAndReleaseRequiresCurrentRiskConsent(t *testing.T) {
@@ -135,10 +136,10 @@ func TestRestorationRejectsConfigPolicyEditedOnDiskAfterCheck(t *testing.T) {
 	}
 }
 
-func startRestorationCheck(t *testing.T, c *Controller, libraryID int64) RelocationPlan {
+func startRestorationCheck(t *testing.T, c *apiFixture, libraryID int64) RelocationPlan {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	c.createRestorationCheck(rec, requestWithRouteParam(http.MethodPost, "/restore/checks", []byte(`{}`), "libraryId", strconv.FormatInt(libraryID, 10)))
+	c.families.relocation.createRestorationCheck(rec, requestWithRouteParam(http.MethodPost, "/restore/checks", []byte(`{}`), "libraryId", strconv.FormatInt(libraryID, 10)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("check: %d %s", rec.Code, rec.Body.String())
 	}
@@ -149,11 +150,11 @@ func startRestorationCheck(t *testing.T, c *Controller, libraryID int64) Relocat
 	return awaitRelocationPlan(t, c, plan.ID)
 }
 
-func submitRestoration(t *testing.T, c *Controller, libraryID, planID int64, mode string, accept bool) RelocationOperation {
+func submitRestoration(t *testing.T, c *apiFixture, libraryID, planID int64, mode string, accept bool) RelocationOperation {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"plan_id": planID, "confirm_release": true, "accept_loss_risk": accept, "scan_mode": mode, "scan_interval": 23, "scan_formats": "cbz"})
 	rec := httptest.NewRecorder()
-	c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/restore/release", body, "libraryId", strconv.FormatInt(libraryID, 10)))
+	c.families.relocation.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/restore/release", body, "libraryId", strconv.FormatInt(libraryID, 10)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("release: %d %s", rec.Code, rec.Body.String())
 	}
@@ -226,7 +227,7 @@ func TestRestorationWatcherFailureKeepsProtectionThroughFreshStartup(t *testing.
 		t.Fatalf("startup lost protection: %+v %v", p, err)
 	}
 	rec := httptest.NewRecorder()
-	fresh.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
+	fresh.media.servePageImage(rec, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "pageNumber": "1"}))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("pending recovery allowed access: %d", rec.Code)
 	}
@@ -255,7 +256,7 @@ func TestRestorationWatcherFailureKeepsProtectionThroughFreshStartup(t *testing.
 	}
 }
 
-func freshRestorationController(t *testing.T, previous *Controller, store database.Store, root string) (*Controller, database.Store) {
+func freshRestorationController(t *testing.T, previous *apiFixture, store database.Store, root string) (*apiFixture, database.Store) {
 	t.Helper()
 	previous.Close()
 	if _, err := store.DB().Exec(`DELETE FROM runs`); err != nil {
@@ -274,7 +275,7 @@ func freshRestorationController(t *testing.T, previous *Controller, store databa
 		t.Fatal(err)
 	}
 	manager := config.NewManager(disk)
-	fresh := newControllerCore(freshStore, scanner.NewScanner(freshStore, manager), manager, previous.configPath, defaultControllerCacheSizes())
+	fresh := newAPIFixture(freshStore, scanner.NewScanner(freshStore, manager), manager, previous.configPath, defaultControllerCacheSizes())
 	t.Cleanup(fresh.Close)
 	return fresh, freshStore
 }
@@ -329,7 +330,7 @@ func TestRestorationConsentExpiresWithRelevantFacts(t *testing.T) {
 			}
 			payload, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
 			rec := httptest.NewRecorder()
-			c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+			c.families.relocation.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
 			if change == "generation" {
 				if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "relocation_stale_plan") {
 					t.Fatalf("old generation: %d %s", rec.Code, rec.Body.String())
@@ -375,13 +376,13 @@ func TestRestorationCleanCheckStillNeedsConfirmationAndDuplicateCannotOverwriteL
 	}
 	body, _ := json.Marshal(map[string]any{"plan_id": check.ID, "scan_mode": "interval", "scan_interval": 23, "scan_formats": "cbz"})
 	rec := httptest.NewRecorder()
-	c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("implicit clean release: %d %s", rec.Code, rec.Body.String())
 	}
 	// A restoration check can never be consumed by the migration endpoint.
 	rec = httptest.NewRecorder()
-	c.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/commit", []byte(`{}`), "planId", strconv.FormatInt(check.ID, 10)))
+	c.families.relocation.commitRelocationPlan(rec, requestWithRouteParam(http.MethodPost, "/commit", []byte(`{}`), "planId", strconv.FormatInt(check.ID, 10)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("restoration check migrated: %d %s", rec.Code, rec.Body.String())
 	}
@@ -391,7 +392,7 @@ func TestRestorationCleanCheckStillNeedsConfirmationAndDuplicateCannotOverwriteL
 	}
 	body, _ = json.Marshal(map[string]any{"name": "later edit", "path": target, "scan_mode": "interval", "scan_interval": 61, "scan_formats": "cbz"})
 	rec = httptest.NewRecorder()
-	c.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/edit", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.library.updateLibrary(rec, requestWithRouteParam(http.MethodPut, "/edit", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("later edit: %d %s", rec.Code, rec.Body.String())
 	}
@@ -483,14 +484,14 @@ func TestRestorationCancelledCheckRemainsProtectedAfterHistoryPruning(t *testing
 	files := &delayedPreviewFiles{entered: make(chan struct{}), resume: make(chan struct{})}
 	c.relocation.Files = files
 	rec := httptest.NewRecorder()
-	c.createRestorationCheck(rec, requestWithRouteParam(http.MethodPost, "/checks", []byte(`{}`), "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.createRestorationCheck(rec, requestWithRouteParam(http.MethodPost, "/checks", []byte(`{}`), "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var plan RelocationPlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("start: %d %s %v", rec.Code, rec.Body.String(), err)
 	}
 	<-files.entered
 	cancel := httptest.NewRecorder()
-	c.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
+	c.families.runs.cancelRun(cancel, requestWithRouteParam(http.MethodPost, "/cancel", nil, "runID", strconv.FormatInt(plan.RunID, 10)))
 	close(files.resume)
 	if cancel.Code != http.StatusAccepted {
 		t.Fatalf("cancel: %d %s", cancel.Code, cancel.Body.String())
@@ -509,7 +510,7 @@ func TestRestorationCancelledCheckRemainsProtectedAfterHistoryPruning(t *testing
 	}
 	body, _ := json.Marshal(map[string]any{"plan_id": plan.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
 	rec = httptest.NewRecorder()
-	fresh.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	fresh.families.relocation.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("cancelled check released: %d %s", rec.Code, rec.Body.String())
 	}
@@ -610,7 +611,7 @@ func TestRestorationExclusiveAccessRejectsRelatedReadsAndKeepsUnrelatedLibraryRe
 	}
 	body, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
 	blocked := httptest.NewRecorder()
-	c.releaseRelocationProtection(blocked, requestWithRouteParam(http.MethodPost, "/release", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.releaseRelocationProtection(blocked, requestWithRouteParam(http.MethodPost, "/release", body, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	release()
 	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "relocation_conflict") {
 		t.Fatalf("active read crossed release: %d %s", blocked.Code, blocked.Body.String())
@@ -625,14 +626,14 @@ func TestRestorationExclusiveAccessRejectsRelatedReadsAndKeepsUnrelatedLibraryRe
 	}
 	payload, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
 	rec := httptest.NewRecorder()
-	c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	c.families.relocation.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var pending RelocationOperation
 	if err = json.Unmarshal(rec.Body.Bytes(), &pending); err != nil || rec.Code != http.StatusAccepted {
 		t.Fatalf("release: %d %s %v", rec.Code, rec.Body.String(), err)
 	}
 	<-entered
 	page := httptest.NewRecorder()
-	c.servePageImage(page, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(otherBook.ID, 10), "pageNumber": "1"}))
+	c.media.servePageImage(page, requestWithRouteParams(http.MethodGet, "/page", nil, map[string]string{"bookId": strconv.FormatInt(otherBook.ID, 10), "pageNumber": "1"}))
 	close(resume)
 	if page.Code != http.StatusOK {
 		t.Fatalf("unrelated library %d blocked: %d", other.ID, page.Code)
@@ -670,7 +671,7 @@ func TestRestorationCurrentDetailsAreBoundedAndSurvivePrunedHistory(t *testing.T
 	}
 	fresh, _ := freshRestorationController(t, c, store, root)
 	rec := httptest.NewRecorder()
-	fresh.getRelocationRestoration(rec, requestWithRouteParam(http.MethodGet, "/restore", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	fresh.families.relocation.getRelocationRestoration(rec, requestWithRouteParam(http.MethodGet, "/restore", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var state RelocationRestoration
 	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil || state.Check == nil || state.Check.ID != check.ID || state.Check.Status != "checked" || state.Check.AnomalyCount != 105 || state.Accepted == nil || state.Accepted.ID != migration.ID || state.Accepted.AnomalyCount != 1 {
 		t.Fatalf("history/current lost after reopen: %d %s %v", rec.Code, rec.Body.String(), err)
@@ -709,7 +710,7 @@ func TestRestorationRejectsQueuedOrActiveRelatedWorkBeforeAdmission(t *testing.T
 			hold(lib.ID, "related_hold")
 			payload, _ := json.Marshal(map[string]any{"plan_id": check.ID, "confirm_release": true, "accept_loss_risk": true, "scan_mode": "none", "scan_interval": 23, "scan_formats": "cbz"})
 			rec := httptest.NewRecorder()
-			c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+			c.families.relocation.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
 			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "relocation_conflict") {
 				t.Fatalf("related work admitted release: %d %s", rec.Code, rec.Body.String())
 			}
@@ -743,7 +744,7 @@ func TestRestorationConcurrentConfirmationsShareOneDurableDecision(t *testing.T)
 		go func() {
 			<-start
 			rec := httptest.NewRecorder()
-			c.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
+			c.families.relocation.releaseRelocationProtection(rec, requestWithRouteParam(http.MethodPost, "/release", payload, "libraryId", strconv.FormatInt(lib.ID, 10)))
 			responses <- rec
 		}()
 	}

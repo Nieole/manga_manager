@@ -116,15 +116,17 @@ func TestSessionCookieSecure(t *testing.T) {
 				req.TLS = &tls.ConnectionState{}
 			}
 
-			if got := controller.sessionCookieSecure(req); got != tc.want {
+			if got := controller.admin.sessionCookieSecure(req); got != tc.want {
 				t.Fatalf("sessionCookieSecure = %v, want %v", got, tc.want)
 			}
 
 			// 写入与清除必须给出同一个 Secure：属性不一致时浏览器可能不认为是同一个 Cookie，
 			// 于是「登出」留下一个仍然有效的会话 Cookie。
 			for label, emit := range map[string]func(w http.ResponseWriter){
-				"set":   func(w http.ResponseWriter) { controller.setSessionCookie(w, req, "tok", time.Now().Add(time.Hour)) },
-				"clear": func(w http.ResponseWriter) { controller.clearSessionCookie(w, req) },
+				"set": func(w http.ResponseWriter) {
+					controller.admin.setSessionCookie(w, req, "tok", time.Now().Add(time.Hour))
+				},
+				"clear": func(w http.ResponseWriter) { controller.admin.clearSessionCookie(w, req) },
 			} {
 				rec := httptest.NewRecorder()
 				emit(rec)

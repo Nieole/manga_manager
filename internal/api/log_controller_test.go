@@ -32,7 +32,7 @@ func TestGetSystemLogsHonorsFilterAndLimit(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/logs?level=ERROR&limit=2", nil)
 	rec := httptest.NewRecorder()
-	controller.getSystemLogs(rec, req)
+	controller.admin.getSystemLogs(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -72,7 +72,7 @@ func TestGetSystemLogsTaskKeyFilter(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/logs?level=ERROR&task_key=scan_library_1", nil)
 	rec := httptest.NewRecorder()
-	controller.getSystemLogs(rec, req)
+	controller.admin.getSystemLogs(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -111,7 +111,7 @@ func TestGetSystemLogsSurvivesOversizedLine(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/system/logs?level=ERROR&limit=100", nil)
 	rec := httptest.NewRecorder()
-	controller.getSystemLogs(rec, req)
+	controller.admin.getSystemLogs(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("一行超长日志把端点打成了 %d：%s", rec.Code, rec.Body.String())

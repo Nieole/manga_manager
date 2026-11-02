@@ -13,7 +13,7 @@ type AIRecommendationResponse struct {
 	CoverPath string `json:"cover_path"`
 }
 
-func (c *Controller) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *maintenanceHTTP) aiGroupingLibrary(w http.ResponseWriter, r *http.Request) {
 	libID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -37,6 +37,3 @@ func (c *maintenanceHTTP) rebuildInitials(w http.ResponseWriter, r *http.Request
 
 // purgeRecommendationCache 清空 AI 推荐缓存（库结构变化后调用）。
 // 与 invalidateDashboardStatsCache / purgeReadingPathCaches 并列，让删库那三行读起来是一件事。
-func (c *Controller) purgeRecommendationCache() {
-	c.recommendations.Purge()
-}

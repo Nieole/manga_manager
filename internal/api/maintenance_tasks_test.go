@@ -99,7 +99,7 @@ func (s *maintenanceStore) UpdateBookIdentity(_ context.Context, arg database.Up
 // 同步执行版）、存储与配置。扫描器按需另装，只有缩略图清理会用到。
 // newMaintenanceRig 拼出维护任务体需要的那几样。tune 可改写配置——全量哈希回填是否跟着配置里的
 // 匹配模式走，只有把它改掉才看得出来。
-func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*Controller, func() []RunSnapshot, *fakeClock) {
+func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.Config)) (*apiFixture, func() []RunSnapshot, *fakeClock) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 
@@ -111,7 +111,7 @@ func newMaintenanceRig(t *testing.T, store database.Store, tune ...func(*config.
 	config.NormalizeConfig(cfg)
 
 	manager := config.NewManager(cfg)
-	c := &Controller{store: store, config: manager}
+	c := &apiFixture{Host: &Host{}, store: store, config: manager}
 	// 两处哈希回填走**磁盘作业**入口，引擎交给任务体的**运行句柄**用的是同一个：
 	// 全量哈希回填的每一本书都经它读。调度器**必须**新建而不能用包级实例：后者按卷计数，
 	// 用例之间会经它互相污染。
@@ -169,7 +169,7 @@ func TestRebuildIndexNamesTheFailedIndex(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c, snapshots, _ := newMaintenanceRig(t, tc.store)
 
-			if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
+			if err := c.families.maintenance.launchRebuildIndexTask(task.TriggerManual); err != nil {
 				t.Fatalf("启动索引重建失败: %v", err)
 			}
 
@@ -193,7 +193,7 @@ func TestRebuildIndexNamesTheFailedIndex(t *testing.T) {
 func TestRebuildIndexCancellationOutranksTheStepCode(t *testing.T) {
 	c, snapshots, _ := newMaintenanceRig(t, &maintenanceStore{seriesIndexErr: context.Canceled})
 
-	if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
+	if err := c.families.maintenance.launchRebuildIndexTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动索引重建失败: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestRebuildIndexCancellationOutranksTheStepCode(t *testing.T) {
 func TestRebuildIndexCompletes(t *testing.T) {
 	c, snapshots, _ := newMaintenanceRig(t, &maintenanceStore{})
 
-	if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
+	if err := c.families.maintenance.launchRebuildIndexTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动索引重建失败: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestRebuildIndexCompletes(t *testing.T) {
 	if run.Status != "completed" || run.MessageCode != "task.msg.rebuild_index.complete" {
 		t.Fatalf("终态为 %q / %q, want completed + ...rebuild_index.complete", run.Status, run.MessageCode)
 	}
-	if err := c.launchRebuildIndexTask(task.TriggerManual); err != nil {
+	if err := c.families.maintenance.launchRebuildIndexTask(task.TriggerManual); err != nil {
 		t.Fatalf("落定终态之后同一任务键起不来了: %v", err)
 	}
 }
@@ -240,7 +240,7 @@ func TestCleanupThumbnailsReportsPhaseThenCounts(t *testing.T) {
 		}
 	}
 
-	if err := c.launchCleanupThumbnailsTask(task.TriggerManual); err != nil {
+	if err := c.families.maintenance.launchCleanupThumbnailsTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动缩略图清理失败: %v", err)
 	}
 
@@ -305,7 +305,7 @@ func TestRebuildFileIdentitiesCompletesWithCounts(t *testing.T) {
 	store := &maintenanceStore{candidates: seedIdentityCandidates(t, 2)}
 	c, snapshots, _ := newMaintenanceRig(t, store)
 
-	if err := c.launchRebuildFileIdentitiesTask(task.TriggerManual); err != nil {
+	if err := c.families.maintenance.launchRebuildFileIdentitiesTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动文件身份重建失败: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestRebuildFileIdentitiesCompletesWithCounts(t *testing.T) {
 func TestRebuildFileIdentitiesCancellationLandsCancelled(t *testing.T) {
 	c, snapshots, _ := newMaintenanceRig(t, &maintenanceStore{listErr: context.Canceled})
 
-	if err := c.launchRebuildFileIdentitiesTask(task.TriggerManual); err != nil {
+	if err := c.families.maintenance.launchRebuildFileIdentitiesTask(task.TriggerManual); err != nil {
 		t.Fatalf("启动文件身份重建失败: %v", err)
 	}
 
@@ -377,11 +377,11 @@ func TestHashBackfillStartsFromInsideATaskBody(t *testing.T) {
 	cfg := c.currentConfig()
 	cfg.KOReader.Enabled = true
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
-	c.config = config.NewManager(&cfg)
+	c.config.Replace(&cfg)
 
 	var chainErr error
 	if err := c.taskEngine.Run(libraryTask("scan_library", 1, variantSole), task.TriggerManual, RunSpec{Key: "scan_library_1"}, func(context.Context, *runhandle.Handle) (RunResult, error) {
-		chainErr = c.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained)
+		chainErr = c.families.maintenance.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained)
 		return RunResult{}, nil
 	}); err != nil {
 		t.Fatalf("启动资料库扫描失败: %v", err)
@@ -410,9 +410,9 @@ func TestHashBackfillStaysSilentWhenNothingIsMissing(t *testing.T) {
 	cfg := c.currentConfig()
 	cfg.KOReader.Enabled = true
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
-	c.config = config.NewManager(&cfg)
+	c.config.Replace(&cfg)
 
-	if err := c.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained); err != nil {
+	if err := c.families.maintenance.launchLowPriorityBookHashBackfillTask("scan_library", task.TriggerChained); err != nil {
 		t.Fatalf("没有书缺哈希不是错误，却返回了 %v", err)
 	}
 	if got := publishedCountFor(t, snapshots(), lowPriorityBookHashTaskKey); got != 0 {

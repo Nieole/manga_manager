@@ -20,25 +20,26 @@ import (
 //
 // 注册表在生产由 newControllerCore 填，而这套装配只建任务引擎，因此要在这里补上——
 // 任务的 Retryable 在落地那一刻由注册表派生，它必须先于播种就位。
-func newHashRebuildRetryRig(t *testing.T) (*Controller, func() []RunSnapshot) {
+func newHashRebuildRetryRig(t *testing.T) (*apiFixture, func() []RunSnapshot) {
 	t.Helper()
 	store := &maintenanceStore{candidates: seedIdentityCandidates(t, 1)}
 	c, snapshots, _ := newMaintenanceRig(t, store)
 	cfg := c.currentConfig()
 	cfg.KOReader.Enabled = true
 	cfg.KOReader.MatchMode = config.KOReaderMatchModeBinaryHash
-	c.config = config.NewManager(&cfg)
+	c.config.Replace(&cfg)
 	c.taskEngine.dispatch = c.buildTaskDispatch()
+	c.families.runs = &runsHTTP{taskEngine: c.taskEngine, currentConfig: c.currentConfig}
 	return c, snapshots
 }
 
 // retryTaskByKey 向重试端点发一次请求，寻址用这个**任务键**最近那次运行所属的**任务 id**——
-// 端点按任务 id 寻址（见 Controller.retryTask），而用例手里往往只有键。
-func retryTaskByKey(t *testing.T, c *Controller, key string) *httptest.ResponseRecorder {
+// 端点按任务 id 寻址（见 Controller.families.runs.retryTask），而用例手里往往只有键。
+func retryTaskByKey(t *testing.T, c *apiFixture, key string) *httptest.ResponseRecorder {
 	t.Helper()
 	taskID := strconv.FormatInt(taskIDForKey(t, c.taskEngine, key), 10)
 	rec := httptest.NewRecorder()
-	c.retryTask(rec, requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+taskID+"/retry", nil, "taskID", taskID))
+	c.families.runs.retryTask(rec, requestWithRouteParam(http.MethodPost, "/api/system/tasks/"+taskID+"/retry", nil, "taskID", taskID))
 	return rec
 }
 

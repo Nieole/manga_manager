@@ -135,10 +135,6 @@ func bindHTTPFamilies(d LibraryDependencies, content *bookcontent.Service, snaps
 
 // httpFamilies is only the legacy construction adapter. Host binds once from
 // composition-root inputs and never consults these compatibility feature fields.
-func (c *Controller) httpFamilies() httpFamilies {
-	return bindHTTPFamilies(LibraryDependencies{Removal: c.store, Initials: c.store, Queries: c.store, ComicInfo: c.store, Management: c.libraryManagement, Scans: c.scans, Maintenance: c.maintenance, Intelligence: c.intelligence, Moves: c.moves, Relocation: c.relocation, Disk: c.diskJobs, External: c.external, Runs: RunDependencies{Engine: c.taskEngine.engine}}, c.content, c.currentConfig, c.taskEngine, c.getMetadataFetcher, c.configuration.DatabasePath, c.invalidateDashboardStatsCache)
-}
-
 func (c *diskHTTP) guardLibraryRead(w http.ResponseWriter, libraryID int64) (func(), bool) {
 	return guardLibraryRead(w, libraryID, c.engine)
 }
@@ -153,4 +149,28 @@ func guardLibraryRead(w http.ResponseWriter, libraryID int64, engine *task.Engin
 }
 func (c *diskHTTP) guardBookRead(w http.ResponseWriter, r *http.Request, bookID int64) (func(), bool) {
 	return guardContentRead(w, r, bookID, c.content, c.engine)
+}
+
+func (c *libraryHTTP) getLibraries(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	libs, err := c.store.ListLibraries(ctx)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "Failed to fetch libraries")
+		return
+	}
+
+	type libraryStatus struct {
+		database.Library
+		RelocationProtected bool `json:"relocation_protected"`
+	}
+	result := make([]libraryStatus, 0, len(libs))
+	for _, lib := range libs {
+		protection, protectionErr := c.store.LibraryRelocationProtection(ctx, lib.ID)
+		if protectionErr != nil {
+			jsonError(w, http.StatusInternalServerError, "Unable to read relocation protection")
+			return
+		}
+		result = append(result, libraryStatus{Library: lib, RelocationProtected: protection != nil})
+	}
+	jsonResponse(w, http.StatusOK, result)
 }

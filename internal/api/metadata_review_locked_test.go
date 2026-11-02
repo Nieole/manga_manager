@@ -65,7 +65,7 @@ func TestApplyReportsLockedSkippedWithoutServerError(t *testing.T) {
 	lockSeriesFields(t, store, series.ID, "title,summary,publisher,status,rating,tags,authors")
 
 	rec := httptest.NewRecorder()
-	controller.applyMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
+	controller.organizationHTTP.applyMetadataReview(rec, requestWithRouteParam(http.MethodPost, "/x", nil,
 		"reviewId", strconv.FormatInt(queued.Proposal.ID, 10)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("HTTP %d，期望 200（良性结果不该报服务端错误）：%s", rec.Code, rec.Body.String())
@@ -96,7 +96,7 @@ func TestReviewViewCarriesLockBadgeToResponse(t *testing.T) {
 	// 入队之后才加锁：行上的 Locked 快照仍是 false。
 	lockSeriesFields(t, store, series.ID, "publisher")
 
-	payload, err := controller.loadSeriesMetadataReview(ctx, series.ID)
+	payload, err := controller.organizationHTTP.loadSeriesMetadataReview(ctx, series.ID)
 	if err != nil {
 		t.Fatalf("loadSeriesMetadataReview: %v", err)
 	}
@@ -120,10 +120,10 @@ func TestReviewViewCarriesLockBadgeToResponse(t *testing.T) {
 }
 
 // inboxPage 取一页收件箱，并按真实响应体解码——徽章数与锁标记必须出自同一份 JSON。
-func inboxPage(t *testing.T, controller *Controller) metadataReviewInboxResponse {
+func inboxPage(t *testing.T, controller *apiFixture) metadataReviewInboxResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	controller.listMetadataReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/inbox", nil))
+	controller.organizationHTTP.listMetadataReviewInbox(rec, httptest.NewRequest(http.MethodGet, "/inbox", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("收件箱 HTTP %d：%s", rec.Code, rec.Body.String())
 	}
@@ -146,7 +146,7 @@ func lockedBadges(fields []metadataReviewFieldView) int64 {
 }
 
 // seedInboxProposal 建一个系列、入队一条七字段提案，随后按 lock 加锁（空串即不加锁）。
-func seedInboxProposal(t *testing.T, controller *Controller, store database.Store, lock string) database.MetadataReview {
+func seedInboxProposal(t *testing.T, controller *apiFixture, store database.Store, lock string) database.MetadataReview {
 	t.Helper()
 	_, series, _ := seedBookFixture(t, store, t.TempDir(), "Lib", "Series Alpha", "a.cbz", 10)
 	queued, err := controller.proposals.Queue(context.Background(), series, fullScrapeResult(), "bangumi", "Alpha", proposal.QueueOptions{})
@@ -208,7 +208,7 @@ func TestInboxLockedFieldCountMatchesLockBadges(t *testing.T) {
 
 		body, _ := json.Marshal(metadataReviewBulkRequest{ReviewIDs: []int64{review.ID}, Mode: "all"})
 		rec := httptest.NewRecorder()
-		controller.bulkApplyMetadataReviews(rec, httptest.NewRequest(http.MethodPost, "/bulk-apply", bytes.NewReader(body)))
+		controller.organizationHTTP.bulkApplyMetadataReviews(rec, httptest.NewRequest(http.MethodPost, "/bulk-apply", bytes.NewReader(body)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("批量应用 HTTP %d：%s", rec.Code, rec.Body.String())
 		}

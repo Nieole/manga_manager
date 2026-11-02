@@ -32,7 +32,7 @@ func scanSeed(libraryID int64) taskSeed {
 }
 
 // setSlots 把这台 Controller 的并发上限改成 slots，与经设置页保存走同一条路（换掉配置快照）。
-func setSlots(t testing.TB, c *Controller, slots int) {
+func setSlots(t testing.TB, c *apiFixture, slots int) {
 	t.Helper()
 	cfg := c.currentConfig()
 	cfg.Tasks.RunSlots = slots
@@ -129,7 +129,7 @@ func TestSavingASmallerThenLargerLimitDrainsTheQueue(t *testing.T) {
 
 	cfg := controller.currentConfig()
 	cfg.Tasks.RunSlots = 3
-	if err := controller.persistConfig(&cfg); err != nil {
+	if err := controller.admin.persistConfig(&cfg); err != nil {
 		t.Fatalf("保存配置失败: %v", err)
 	}
 
@@ -215,7 +215,7 @@ func TestQueuedRunCanBeCancelledThroughTheEndpoint(t *testing.T) {
 
 	runID := strconv.FormatInt(queuedID, 10)
 	rec := httptest.NewRecorder()
-	controller.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/"+runID+"/cancel", nil, "runID", runID))
+	controller.families.runs.cancelRun(rec, requestWithRouteParam(http.MethodPost, "/api/system/runs/"+runID+"/cancel", nil, "runID", runID))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("取消排队中的运行返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -249,7 +249,7 @@ func TestPauseAllGateReachesTheLiveFrame(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.pauseAllTasks(rec, httptest.NewRequest(http.MethodPost, "/api/system/tasks/pause-all", nil))
+	controller.families.runs.pauseAllTasks(rec, httptest.NewRequest(http.MethodPost, "/api/system/tasks/pause-all", nil))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("全部暂停返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -263,7 +263,7 @@ func TestPauseAllGateReachesTheLiveFrame(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	controller.resumeAllTasks(rec, httptest.NewRequest(http.MethodPost, "/api/system/tasks/resume-all", nil))
+	controller.families.runs.resumeAllTasks(rec, httptest.NewRequest(http.MethodPost, "/api/system/tasks/resume-all", nil))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("全部恢复返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -278,7 +278,7 @@ func TestPauseAllHoldsNewRunsInTheQueue(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	rec := httptest.NewRecorder()
-	controller.pauseAllTasks(rec, httptest.NewRequest(http.MethodPost, "/api/system/tasks/pause-all", nil))
+	controller.families.runs.pauseAllTasks(rec, httptest.NewRequest(http.MethodPost, "/api/system/tasks/pause-all", nil))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("全部暂停返回 %d", rec.Code)
 	}

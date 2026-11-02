@@ -25,7 +25,7 @@ func TestCollectionLifecycleHandlers(t *testing.T) {
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/collections", bytes.NewBufferString(`{"name":"Favorites","description":"picked"}`))
 	createRec := httptest.NewRecorder()
-	controller.createCollection(createRec, createReq)
+	controller.organizationHTTP.createCollection(createRec, createReq)
 
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createRec.Code)
@@ -39,14 +39,14 @@ func TestCollectionLifecycleHandlers(t *testing.T) {
 
 	addReq := requestWithRouteParam(http.MethodPost, "/api/collections/1/series", []byte(`{"series_ids":[1]}`), "collectionId", strconv.FormatInt(collectionID, 10))
 	addRec := httptest.NewRecorder()
-	controller.addSeriesToCollection(addRec, addReq)
+	controller.organizationHTTP.addSeriesToCollection(addRec, addReq)
 
 	if addRec.Code != http.StatusOK {
 		t.Fatalf("expected add series 200, got %d", addRec.Code)
 	}
 
 	listRec := httptest.NewRecorder()
-	controller.listCollections(listRec, httptest.NewRequest(http.MethodGet, "/api/collections", nil))
+	controller.organizationHTTP.listCollections(listRec, httptest.NewRequest(http.MethodGet, "/api/collections", nil))
 
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected list collections 200, got %d", listRec.Code)
@@ -64,7 +64,7 @@ func TestCollectionLifecycleHandlers(t *testing.T) {
 	}
 
 	seriesRec := httptest.NewRecorder()
-	controller.getCollectionSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/api/collections/1/series", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
+	controller.organizationHTTP.getCollectionSeries(seriesRec, requestWithRouteParam(http.MethodGet, "/api/collections/1/series", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
 
 	if seriesRec.Code != http.StatusOK {
 		t.Fatalf("expected get collection series 200, got %d", seriesRec.Code)
@@ -80,7 +80,7 @@ func TestCollectionLifecycleHandlers(t *testing.T) {
 
 	updateReq := requestWithRouteParam(http.MethodPut, "/api/collections/1", []byte(`{"name":"Updated","description":"refined"}`), "collectionId", strconv.FormatInt(collectionID, 10))
 	updateRec := httptest.NewRecorder()
-	controller.updateCollection(updateRec, updateReq)
+	controller.organizationHTTP.updateCollection(updateRec, updateReq)
 
 	if updateRec.Code != http.StatusOK {
 		t.Fatalf("expected update collection 200, got %d", updateRec.Code)
@@ -97,7 +97,7 @@ func TestCollectionLifecycleHandlers(t *testing.T) {
 	}
 
 	removeRec := httptest.NewRecorder()
-	controller.removeSeriesFromCollection(removeRec, requestWithRouteParam(http.MethodDelete, "/api/collections/1/series/1", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
+	controller.organizationHTTP.removeSeriesFromCollection(removeRec, requestWithRouteParam(http.MethodDelete, "/api/collections/1/series/1", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
 	if removeRec.Code != http.StatusBadRequest {
 		t.Fatalf("expected missing series route param to fail with 400, got %d", removeRec.Code)
 	}
@@ -120,7 +120,7 @@ func TestCollectionRemoveSeriesAndDeleteHandlers(t *testing.T) {
 	removeReq := requestWithRouteParam(http.MethodDelete, "/api/collections/1/series/1", nil, "collectionId", strconv.FormatInt(collectionID, 10))
 	removeReq = withRouteParam(removeReq, "seriesId", strconv.FormatInt(series.ID, 10))
 	removeRec := httptest.NewRecorder()
-	controller.removeSeriesFromCollection(removeRec, removeReq)
+	controller.organizationHTTP.removeSeriesFromCollection(removeRec, removeReq)
 
 	if removeRec.Code != http.StatusOK {
 		t.Fatalf("expected remove series 200, got %d", removeRec.Code)
@@ -136,7 +136,7 @@ func TestCollectionRemoveSeriesAndDeleteHandlers(t *testing.T) {
 	}
 
 	deleteRec := httptest.NewRecorder()
-	controller.deleteCollection(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/collections/1", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
+	controller.organizationHTTP.deleteCollection(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/collections/1", nil, "collectionId", strconv.FormatInt(collectionID, 10)))
 
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("expected delete collection 200, got %d", deleteRec.Code)
@@ -159,14 +159,14 @@ func TestSeriesRelationHandlers(t *testing.T) {
 	body := []byte(`{"target_series_id":` + strconv.FormatInt(seriesB.ID, 10) + `,"relation_type":"spinoff"}`)
 	createReq := requestWithRouteParam(http.MethodPost, "/api/series/1/relations", body, "seriesId", strconv.FormatInt(seriesA.ID, 10))
 	createRec := httptest.NewRecorder()
-	controller.createSeriesRelation(createRec, createReq)
+	controller.organizationHTTP.createSeriesRelation(createRec, createReq)
 
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected create relation 201, got %d", createRec.Code)
 	}
 
 	listRec := httptest.NewRecorder()
-	controller.getSeriesRelations(listRec, requestWithRouteParam(http.MethodGet, "/api/series/1/relations", nil, "seriesId", strconv.FormatInt(seriesA.ID, 10)))
+	controller.organizationHTTP.getSeriesRelations(listRec, requestWithRouteParam(http.MethodGet, "/api/series/1/relations", nil, "seriesId", strconv.FormatInt(seriesA.ID, 10)))
 
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected list relations 200, got %d", listRec.Code)
@@ -186,7 +186,7 @@ func TestSeriesRelationHandlers(t *testing.T) {
 	reverseBody := []byte(`{"target_series_id":` + strconv.FormatInt(seriesA.ID, 10) + `,"relation_type":"sequel"}`)
 	reverseReq := requestWithRouteParam(http.MethodPost, "/api/series/2/relations", reverseBody, "seriesId", strconv.FormatInt(seriesB.ID, 10))
 	reverseRec := httptest.NewRecorder()
-	controller.createSeriesRelation(reverseRec, reverseReq)
+	controller.organizationHTTP.createSeriesRelation(reverseRec, reverseReq)
 	if reverseRec.Code != http.StatusOK {
 		t.Fatalf("expected reverse duplicate relation 200, got %d body=%s", reverseRec.Code, reverseRec.Body.String())
 	}
@@ -201,7 +201,7 @@ func TestSeriesRelationHandlers(t *testing.T) {
 	}
 
 	deleteRec := httptest.NewRecorder()
-	controller.deleteSeriesRelation(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/series/relations/1", nil, "relationId", strconv.FormatInt(relations[0].ID, 10)))
+	controller.organizationHTTP.deleteSeriesRelation(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/series/relations/1", nil, "relationId", strconv.FormatInt(relations[0].ID, 10)))
 
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("expected delete relation 200, got %d", deleteRec.Code)
@@ -223,7 +223,7 @@ func TestCollectionValidationHandlers(t *testing.T) {
 
 	t.Run("create collection validates request", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.createCollection(rec, httptest.NewRequest(http.MethodPost, "/api/collections", bytes.NewBufferString(`{}`)))
+		controller.organizationHTTP.createCollection(rec, httptest.NewRequest(http.MethodPost, "/api/collections", bytes.NewBufferString(`{}`)))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected create collection 400, got %d", rec.Code)
 		}
@@ -231,7 +231,7 @@ func TestCollectionValidationHandlers(t *testing.T) {
 
 	t.Run("update collection validates route and body", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.updateCollection(rec, requestWithRouteParam(http.MethodPut, "/api/collections/bad", []byte(`{"name":"x"}`), "collectionId", "bad"))
+		controller.organizationHTTP.updateCollection(rec, requestWithRouteParam(http.MethodPut, "/api/collections/bad", []byte(`{"name":"x"}`), "collectionId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid collection id 400, got %d", rec.Code)
 		}
@@ -244,7 +244,7 @@ func TestCollectionValidationHandlers(t *testing.T) {
 		collectionID, _ := res.LastInsertId()
 
 		rec = httptest.NewRecorder()
-		controller.updateCollection(rec, requestWithRouteParam(http.MethodPut, "/api/collections/1", []byte(`{`), "collectionId", strconv.FormatInt(collectionID, 10)))
+		controller.organizationHTTP.updateCollection(rec, requestWithRouteParam(http.MethodPut, "/api/collections/1", []byte(`{`), "collectionId", strconv.FormatInt(collectionID, 10)))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid update body 400, got %d", rec.Code)
 		}
@@ -259,19 +259,19 @@ func TestCollectionValidationHandlers(t *testing.T) {
 		collectionID, _ := res.LastInsertId()
 
 		rec := httptest.NewRecorder()
-		controller.getCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/collections/bad/series", nil, "collectionId", "bad"))
+		controller.organizationHTTP.getCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/collections/bad/series", nil, "collectionId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid get collection series 400, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()
-		controller.addSeriesToCollection(rec, requestWithRouteParam(http.MethodPost, "/api/collections/1/series", []byte(`{}`), "collectionId", strconv.FormatInt(collectionID, 10)))
+		controller.organizationHTTP.addSeriesToCollection(rec, requestWithRouteParam(http.MethodPost, "/api/collections/1/series", []byte(`{}`), "collectionId", strconv.FormatInt(collectionID, 10)))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected missing series_ids 400, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()
-		controller.addSeriesToCollection(rec, requestWithRouteParam(http.MethodPost, "/api/collections/1/series", []byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`,`+strconv.FormatInt(series.ID, 10)+`]}`), "collectionId", strconv.FormatInt(collectionID, 10)))
+		controller.organizationHTTP.addSeriesToCollection(rec, requestWithRouteParam(http.MethodPost, "/api/collections/1/series", []byte(`{"series_ids":[`+strconv.FormatInt(series.ID, 10)+`,`+strconv.FormatInt(series.ID, 10)+`]}`), "collectionId", strconv.FormatInt(collectionID, 10)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected add series 200, got %d", rec.Code)
 		}
@@ -288,7 +288,7 @@ func TestCollectionValidationHandlers(t *testing.T) {
 		}
 
 		rec = httptest.NewRecorder()
-		controller.removeSeriesFromCollection(rec, requestWithRouteParam(http.MethodDelete, "/api/collections/bad/series/1", nil, "collectionId", "bad"))
+		controller.organizationHTTP.removeSeriesFromCollection(rec, requestWithRouteParam(http.MethodDelete, "/api/collections/bad/series/1", nil, "collectionId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid collection id 400, got %d", rec.Code)
 		}
@@ -296,7 +296,7 @@ func TestCollectionValidationHandlers(t *testing.T) {
 		req := requestWithRouteParam(http.MethodDelete, "/api/collections/1/series/bad", nil, "collectionId", strconv.FormatInt(collectionID, 10))
 		req = withRouteParam(req, "seriesId", "bad")
 		rec = httptest.NewRecorder()
-		controller.removeSeriesFromCollection(rec, req)
+		controller.organizationHTTP.removeSeriesFromCollection(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid series id 400, got %d", rec.Code)
 		}
@@ -304,31 +304,31 @@ func TestCollectionValidationHandlers(t *testing.T) {
 
 	t.Run("relation handlers validate route and payload", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.getSeriesRelations(rec, requestWithRouteParam(http.MethodGet, "/api/series/bad/relations", nil, "seriesId", "bad"))
+		controller.organizationHTTP.getSeriesRelations(rec, requestWithRouteParam(http.MethodGet, "/api/series/bad/relations", nil, "seriesId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid series id 400, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()
-		controller.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/bad/relations", []byte(`{"target_series_id":1}`), "seriesId", "bad"))
+		controller.organizationHTTP.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/bad/relations", []byte(`{"target_series_id":1}`), "seriesId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid source series id 400, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()
-		controller.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/1/relations", []byte(`{}`), "seriesId", strconv.FormatInt(series.ID, 10)))
+		controller.organizationHTTP.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/1/relations", []byte(`{}`), "seriesId", strconv.FormatInt(series.ID, 10)))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected missing target_series_id 400, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()
-		controller.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/1/relations", []byte(`{"target_series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "seriesId", strconv.FormatInt(series.ID, 10)))
+		controller.organizationHTTP.createSeriesRelation(rec, requestWithRouteParam(http.MethodPost, "/api/series/1/relations", []byte(`{"target_series_id":`+strconv.FormatInt(series.ID, 10)+`}`), "seriesId", strconv.FormatInt(series.ID, 10)))
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("expected self relation 422, got %d", rec.Code)
 		}
 
 		rec = httptest.NewRecorder()
-		controller.deleteSeriesRelation(rec, requestWithRouteParam(http.MethodDelete, "/api/series/relations/bad", nil, "relationId", "bad"))
+		controller.organizationHTTP.deleteSeriesRelation(rec, requestWithRouteParam(http.MethodDelete, "/api/series/relations/bad", nil, "relationId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid relation id 400, got %d", rec.Code)
 		}
@@ -357,22 +357,22 @@ func TestDeleteEndpointsReport404ForMissingResources(t *testing.T) {
 	}{
 		{
 			"delete collection",
-			controller.deleteCollection,
+			controller.organizationHTTP.deleteCollection,
 			requestWithRouteParam(http.MethodDelete, "/x", nil, "collectionId", "999999"),
 		},
 		{
 			"delete reading list",
-			controller.deleteReadingList,
+			controller.organizationHTTP.deleteReadingList,
 			requestWithRouteParam(http.MethodDelete, "/x", nil, "listId", "999999"),
 		},
 		{
 			"delete series relation",
-			controller.deleteSeriesRelation,
+			controller.organizationHTTP.deleteSeriesRelation,
 			requestWithRouteParam(http.MethodDelete, "/x", nil, "relationId", "999999"),
 		},
 		{
 			"remove series from collection",
-			controller.removeSeriesFromCollection,
+			controller.organizationHTTP.removeSeriesFromCollection,
 			requestWithRouteParams(http.MethodDelete, "/x", nil, map[string]string{
 				"collectionId": "999999",
 				"seriesId":     "888888",
@@ -406,7 +406,7 @@ func TestUpdateCollectionRejectsEmptyNameAndDuplicates(t *testing.T) {
 
 	// 只想改描述时前端很自然会发一个不含 name 的 PUT——不校验就会把名字清空。
 	rec := httptest.NewRecorder()
-	controller.updateCollection(rec, requestWithRouteParam(
+	controller.organizationHTTP.updateCollection(rec, requestWithRouteParam(
 		http.MethodPut, "/x", []byte(`{"description":"only a description"}`),
 		"collectionId", strconv.FormatInt(second.ID, 10)))
 	if rec.Code != http.StatusBadRequest {
@@ -415,7 +415,7 @@ func TestUpdateCollectionRejectsEmptyNameAndDuplicates(t *testing.T) {
 
 	// 改名撞车是用户输入冲突，应回 409 让前端能提示「换个名字」，而不是笼统的 500。
 	rec = httptest.NewRecorder()
-	controller.updateCollection(rec, requestWithRouteParam(
+	controller.organizationHTTP.updateCollection(rec, requestWithRouteParam(
 		http.MethodPut, "/x", []byte(`{"name":"Alpha"}`),
 		"collectionId", strconv.FormatInt(second.ID, 10)))
 	if rec.Code != http.StatusConflict {

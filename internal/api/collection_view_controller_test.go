@@ -50,7 +50,7 @@ func TestCollectionViewsIncludeStaticAndSmartCollections(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
+	controller.organizationHTTP.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected list collection views 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -121,7 +121,7 @@ func TestSmartCollectionSeriesUsesAdvancedRules(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/1/series", nil, "filterId", strconv.FormatInt(filterID, 10))
-	controller.getSmartCollectionSeries(rec, req)
+	controller.organizationHTTP.getSmartCollectionSeries(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected smart collection series 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -166,7 +166,7 @@ func TestSmartCollectionSeriesUsesSavedFilter(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/1/series", nil, "filterId", strconv.FormatInt(filterID, 10))
-	controller.getSmartCollectionSeries(rec, req)
+	controller.organizationHTTP.getSmartCollectionSeries(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected smart collection series 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -212,7 +212,7 @@ func TestSnapshotSmartCollectionCreatesStaticCollection(t *testing.T) {
 	body := []byte(`{"name":"Frozen Action","description":"snapshot"}`)
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodPost, "/api/collection-views/smart/1/snapshot", body, "filterId", strconv.FormatInt(filterID, 10))
-	controller.snapshotSmartCollection(rec, req)
+	controller.organizationHTTP.snapshotSmartCollection(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected snapshot 201, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -274,7 +274,7 @@ func TestSmartCollectionSnapshotPreviewReportsSafetySignals(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/1/snapshot-preview?name=Frozen%20Action&preview_limit=2&limit=2", nil, "filterId", strconv.FormatInt(filterID, 10))
-	controller.previewSmartCollectionSnapshot(rec, req)
+	controller.organizationHTTP.previewSmartCollectionSnapshot(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected snapshot preview 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -298,25 +298,25 @@ func TestSmartCollectionSeriesValidation(t *testing.T) {
 	controller, _, _, _ := newTestController(t)
 
 	rec := httptest.NewRecorder()
-	controller.getSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/bad/series", nil, "filterId", "bad"))
+	controller.organizationHTTP.getSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/bad/series", nil, "filterId", "bad"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid smart collection id 400, got %d", rec.Code)
 	}
 
 	rec = httptest.NewRecorder()
-	controller.getSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/999/series", nil, "filterId", "999"))
+	controller.organizationHTTP.getSmartCollectionSeries(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/999/series", nil, "filterId", "999"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected missing smart collection 404, got %d", rec.Code)
 	}
 
 	rec = httptest.NewRecorder()
-	controller.previewSmartCollectionSnapshot(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/bad/snapshot-preview", nil, "filterId", "bad"))
+	controller.organizationHTTP.previewSmartCollectionSnapshot(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/bad/snapshot-preview", nil, "filterId", "bad"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid smart collection preview id 400, got %d", rec.Code)
 	}
 
 	rec = httptest.NewRecorder()
-	controller.previewSmartCollectionSnapshot(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/999/snapshot-preview", nil, "filterId", "999"))
+	controller.organizationHTTP.previewSmartCollectionSnapshot(rec, requestWithRouteParam(http.MethodGet, "/api/collection-views/smart/999/snapshot-preview", nil, "filterId", "999"))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected missing smart collection preview 404, got %d", rec.Code)
 	}

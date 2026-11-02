@@ -56,7 +56,7 @@ const maxSeriesPageLimit = 200
 
 // getRecentReadSeries 返回该资源库下含有书籍最新阅读记录的系列
 
-func (c *Controller) openSeriesDirectory(w http.ResponseWriter, r *http.Request) {
+func (c *catalogMaintenanceHTTP) openSeriesDirectory(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -162,7 +162,7 @@ func buildSeriesVolumeSummaries(books []reading.BookView, includeBooks bool) []S
 // getSeriesCustomFields 返回某系列的自定义字段列表。
 
 // replaceSeriesCustomFields 整体替换某系列的自定义字段。
-func (c *Controller) replaceSeriesCustomFields(w http.ResponseWriter, r *http.Request) {
+func (c *catalogMaintenanceHTTP) replaceSeriesCustomFields(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -183,7 +183,7 @@ func (c *Controller) replaceSeriesCustomFields(w http.ResponseWriter, r *http.Re
 }
 
 // renameTag 重命名标签；与已有标签重名会因 UNIQUE 约束失败，前端据此提示改用合并。
-func (c *Controller) renameTag(w http.ResponseWriter, r *http.Request) {
+func (c *catalogMaintenanceHTTP) renameTag(w http.ResponseWriter, r *http.Request) {
 	tagID, err := parseID(r, "tagId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid tag ID")
@@ -209,7 +209,7 @@ func (c *Controller) renameTag(w http.ResponseWriter, r *http.Request) {
 }
 
 // mergeTag 把 {tagId} 标签并入 target 标签（迁移全部系列关联后删除源标签）。
-func (c *Controller) mergeTag(w http.ResponseWriter, r *http.Request) {
+func (c *catalogMaintenanceHTTP) mergeTag(w http.ResponseWriter, r *http.Request) {
 	tagID, err := parseID(r, "tagId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid tag ID")
@@ -230,7 +230,7 @@ func (c *Controller) mergeTag(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (c *Controller) deleteTag(w http.ResponseWriter, r *http.Request) {
+func (c *catalogMaintenanceHTTP) deleteTag(w http.ResponseWriter, r *http.Request) {
 	tagID, err := parseID(r, "tagId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid tag ID")
@@ -258,4 +258,31 @@ func parseFacetSearchLimit(r *http.Request) int {
 		return 100
 	}
 	return limit
+}
+
+func (c *catalogMaintenanceHTTP) bulkUpdateSeries(w http.ResponseWriter, r *http.Request) {
+	var req BulkUpdateSeriesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if len(req.SeriesIDs) == 0 {
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "No series updated"})
+		return
+	}
+
+	ctx := r.Context()
+	for _, id := range req.SeriesIDs {
+		if req.IsFavorite != nil {
+			err := c.store.UpdateSeriesFavorite(ctx, database.UpdateSeriesFavoriteParams{
+				IsFavorite: *req.IsFavorite,
+				ID:         id,
+			})
+			if err != nil {
+				slog.Error("Failed to bulk update series favorite", "series_id", id, "error", err)
+			}
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"message": "Bulk update completed"})
 }

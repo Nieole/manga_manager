@@ -5,6 +5,8 @@
 package api
 
 import (
+	"manga-manager/internal/bookcontent"
+
 	"archive/zip"
 	"bytes"
 	"context"
@@ -60,7 +62,7 @@ func TestServeCoverImage(t *testing.T) {
 
 	t.Run("serves cached cover", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.serveCoverImage(rec, requestWithRouteParam(http.MethodGet, "/api/covers/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+		controller.media.serveCoverImage(rec, requestWithRouteParam(http.MethodGet, "/api/covers/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
@@ -80,7 +82,7 @@ func TestServeCoverImage(t *testing.T) {
 		}
 
 		rec := httptest.NewRecorder()
-		controller.serveCoverImage(rec, requestWithRouteParam(http.MethodGet, "/api/covers/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
+		controller.media.serveCoverImage(rec, requestWithRouteParam(http.MethodGet, "/api/covers/1", nil, "bookId", strconv.FormatInt(book.ID, 10)))
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", rec.Code)
@@ -107,7 +109,7 @@ func TestServeThumbnailImageETag(t *testing.T) {
 
 	req := requestWithRouteParam(http.MethodGet, "/api/thumbnails/"+thumbnailName, nil, "*", thumbnailName)
 	rec := httptest.NewRecorder()
-	controller.serveThumbnailImage(rec, req)
+	controller.media.serveThumbnailImage(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
@@ -126,7 +128,7 @@ func TestServeThumbnailImageETag(t *testing.T) {
 	req = requestWithRouteParam(http.MethodGet, "/api/thumbnails/"+thumbnailName, nil, "*", thumbnailName)
 	req.Header.Set("If-None-Match", etag)
 	rec = httptest.NewRecorder()
-	controller.serveThumbnailImage(rec, req)
+	controller.media.serveThumbnailImage(rec, req)
 	if rec.Code != http.StatusNotModified {
 		t.Fatalf("expected matching etag 304, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -164,7 +166,7 @@ func TestServePageImage(t *testing.T) {
 
 	t.Run("validates route params and missing book", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, requestWithRouteParam(http.MethodGet, "/api/books/page/invalid/1", nil, "bookId", "invalid"))
+		controller.media.servePageImage(rec, requestWithRouteParam(http.MethodGet, "/api/books/page/invalid/1", nil, "bookId", "invalid"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid book id 400, got %d", rec.Code)
 		}
@@ -172,7 +174,7 @@ func TestServePageImage(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/invalid", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "invalid")
 		rec = httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected invalid page number 400, got %d", rec.Code)
 		}
@@ -180,7 +182,7 @@ func TestServePageImage(t *testing.T) {
 		req = requestWithRouteParam(http.MethodGet, "/api/books/page/999/1", nil, "bookId", "999")
 		req = withRouteParam(req, "pageNumber", "1")
 		rec = httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected missing book 404, got %d", rec.Code)
 		}
@@ -190,7 +192,7 @@ func TestServePageImage(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		// 归档还没写出来、而资料库根目录在，属于「单文件缺失」。
 		// 分类与状态码的完整契约在 storage_diagnosis_test.go。
 		if rec.Code != http.StatusNotFound {
@@ -214,7 +216,7 @@ func TestServePageImage(t *testing.T) {
 		req = requestWithRouteParam(http.MethodGet, "/api/books/page/1/3", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "3")
 		rec = httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected page out of range 404, got %d", rec.Code)
 		}
@@ -229,7 +231,7 @@ func TestServePageImage(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected serve page 200, got %d", rec.Code)
@@ -272,7 +274,7 @@ func TestServePageImage(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?filter=bilinear", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected browser-only filter page request 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -309,7 +311,7 @@ func TestServePageImage(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected first etag page request 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -332,7 +334,7 @@ func TestServePageImage(t *testing.T) {
 		req = withRouteParam(req, "pageNumber", "1")
 		req.Header.Set("If-None-Match", etag)
 		rec = httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusNotModified {
 			t.Fatalf("expected matching etag 304, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -373,7 +375,7 @@ func TestServePageImage(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=jpeg", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected first processed page request 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -393,7 +395,7 @@ func TestServePageImage(t *testing.T) {
 		})
 
 		rec = httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected disk cached page 200 without archive, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -433,12 +435,12 @@ func TestServePageImage(t *testing.T) {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=png", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", "1")
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected processed page request 200, got %d body=%s", rec.Code, rec.Body.String())
 		}
 
-		stats, err := controller.collectPageCacheStats()
+		stats, err := controller.media.collectPageCacheStats()
 		if err != nil {
 			t.Fatalf("collect page cache stats failed: %v", err)
 		}
@@ -459,7 +461,7 @@ func TestServePageImage(t *testing.T) {
 		// 归档被改名走了：请求必须回源到磁盘并失败（若命中磁盘缓存就会是 200）。
 		// 失败形态是「单文件缺失」的 404——正是这一条把「盘掉了」与「这本没了」分开。
 		rec = httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected disabled disk cache to miss and require archive, got %d body=%s", rec.Code, rec.Body.String())
 		}
@@ -554,13 +556,16 @@ func TestServePageImageUsesBookPageSourceCache(t *testing.T) {
 	}
 
 	counting := &countingStore{Store: store}
-	controller.store = counting
+	controller.media.content = bookcontent.New(func(ctx context.Context, id int64) (bookcontent.Source, error) {
+		book, err := counting.GetBook(ctx, id)
+		return bookPageSourceFromBook(book), err
+	}, controller.currentConfig, controller.imageCache, 8, 8)
 
 	for page := int64(1); page <= 2; page++ {
 		req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1", nil, "bookId", strconv.FormatInt(book.ID, 10))
 		req = withRouteParam(req, "pageNumber", strconv.FormatInt(page, 10))
 		rec := httptest.NewRecorder()
-		controller.servePageImage(rec, req)
+		controller.media.servePageImage(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected page %d response 200, got %d body=%s", page, rec.Code, rec.Body.String())
 		}
@@ -576,7 +581,7 @@ func TestPageCacheStatsAndClear(t *testing.T) {
 	cfg.Cache.Dir = filepath.Join(rootDir, "processed-cache")
 	controller.config.Replace(&cfg)
 
-	cacheDir := controller.processedImageCacheDir()
+	cacheDir := controller.media.processedImageCacheDir()
 	if err := os.MkdirAll(filepath.Join(cacheDir, "aa"), 0o755); err != nil {
 		t.Fatalf("mkdir page cache failed: %v", err)
 	}
@@ -589,7 +594,7 @@ func TestPageCacheStatsAndClear(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	// 管理员专属端点，直接调处理器要自带角色标记，否则 jsonResponse 会按普通用户裁掉缓存目录路径。
-	controller.getPageCacheStats(&adminResponseWriter{ResponseWriter: rec}, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
+	controller.media.getPageCacheStats(&adminResponseWriter{ResponseWriter: rec}, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected stats 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -610,7 +615,7 @@ func TestPageCacheStatsAndClear(t *testing.T) {
 
 	controller.imageCache.Add("cached-page", []byte("cached"))
 	rec = httptest.NewRecorder()
-	controller.clearPageCache(rec, httptest.NewRequest(http.MethodDelete, "/api/system/page-cache", nil))
+	controller.media.clearPageCache(rec, httptest.NewRequest(http.MethodDelete, "/api/system/page-cache", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected clear 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -627,7 +632,7 @@ func TestPageCacheStatsAndClear(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	controller.getPageCacheStats(rec, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
+	controller.media.getPageCacheStats(rec, httptest.NewRequest(http.MethodGet, "/api/system/page-cache", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected stats after clear 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -698,7 +703,7 @@ func TestServePageImageSingleFlightConcurrentSamePage(t *testing.T) {
 			req := requestWithRouteParam(http.MethodGet, "/api/books/page/1/1?format=jpeg", nil, "bookId", strconv.FormatInt(book.ID, 10))
 			req = withRouteParam(req, "pageNumber", "1")
 			rec := httptest.NewRecorder()
-			controller.servePageImage(rec, req)
+			controller.media.servePageImage(rec, req)
 			results[idx] = outcome{code: rec.Code, body: append([]byte(nil), rec.Body.Bytes()...), ct: rec.Header().Get("Content-Type")}
 		}(i)
 	}

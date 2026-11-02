@@ -38,7 +38,7 @@ func TestCollectionViewsCarrySmartFilterConditions(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
+	controller.organizationHTTP.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -109,7 +109,7 @@ func TestCollectionViewsOmitSmartFilterConditionsWhenUnset(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	controller.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
+	controller.organizationHTTP.listCollectionViews(rec, httptest.NewRequest(http.MethodGet, "/api/collection-views", nil))
 	var raw []map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decode collection views failed: %v", err)

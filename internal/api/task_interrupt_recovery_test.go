@@ -49,14 +49,16 @@ func interruptRecoveredTask(t *testing.T, prepare func(handle *runhandle.Handle)
 // 真实请求把任务列表读回来。解析结果与原始载荷一起交出：某个字段在不在，只有载荷答得出。
 //
 // 断言库里此刻只剩那一条运行：多出来的那条会让调用方的下标断言落在别的运行上，而它们都只看 [0]。
-func restartAndListInterrupted(t *testing.T, prev *Controller, store database.Store, tempDir string) ([]RunSnapshot, string) {
+func restartAndListInterrupted(t *testing.T, prev *apiFixture, store database.Store, tempDir string) ([]RunSnapshot, string) {
 	t.Helper()
 	reloaded := restartController(t, prev, store, tempDir)
 	disableResume(reloaded)
-	reloaded.taskEngine.markInterrupted(context.Background())
+	if err := reloaded.runtime.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := httptest.NewRecorder()
-	reloaded.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil))
+	reloaded.families.runs.listTasks(rec, httptest.NewRequest(http.MethodGet, "/api/system/tasks", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("列任务返回 %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -76,7 +78,7 @@ func restartAndListInterrupted(t *testing.T, prev *Controller, store database.St
 //
 // 本文件的用例只管重启那一笔**转写**，而资料库扫描正在白名单里：开着的话它还会被自动重排队，
 // 列表里就不止那一条了。续跑本身有它自己的用例，见 task_resume_test.go。
-func disableResume(c *Controller) {
+func disableResume(c *apiFixture) {
 	cfg := c.currentConfig()
 	off := false
 	cfg.Tasks.ResumeAfterRestart = &off
@@ -157,7 +159,9 @@ func TestInterruptedRunIsNotListedTwice(t *testing.T) {
 
 	reloaded := restartController(t, controller, store, tempDir)
 	disableResume(reloaded)
-	reloaded.taskEngine.markInterrupted(context.Background())
+	if err := reloaded.runtime.RecoverRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	tasks, err := reloaded.taskEngine.listRunSnapshots(context.Background(), taskFilters{})
 	if err != nil {

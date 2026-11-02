@@ -19,7 +19,7 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 	createBody := []byte(`{"name":"Unread long series","activeTag":"Action","activeStatus":"ongoing","readState":"unread","minRating":7.5,"maxRating":9.5,"minProgress":0,"maxProgress":20,"addedWithinDays":30,"sortByField":"updated","sortDir":"desc","pageSize":50}`)
 	createReq := requestWithRouteParam(http.MethodPost, "/api/libraries/1/smart-filters", createBody, "libraryId", strconv.FormatInt(lib.ID, 10))
 	createRec := httptest.NewRecorder()
-	controller.upsertSmartFilter(createRec, createReq)
+	controller.organizationHTTP.upsertSmartFilter(createRec, createReq)
 
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("expected create smart filter 201, got %d body=%s", createRec.Code, createRec.Body.String())
@@ -41,7 +41,7 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 
 	updateBody := []byte(`{"name":"Unread long series","activeAuthor":"Author A","sortByField":"name","sortDir":"asc","pageSize":30}`)
 	updateRec := httptest.NewRecorder()
-	controller.upsertSmartFilter(updateRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/smart-filters", updateBody, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	controller.organizationHTTP.upsertSmartFilter(updateRec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/smart-filters", updateBody, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if updateRec.Code != http.StatusCreated {
 		t.Fatalf("expected update smart filter 201, got %d body=%s", updateRec.Code, updateRec.Body.String())
 	}
@@ -59,7 +59,7 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 
 	patchBody := []byte(`{"name":"Author rule","activeTag":"Action","readState":"reading","minProgress":10,"maxProgress":90,"sortByField":"books","sortDir":"desc","pageSize":100}`)
 	patchRec := httptest.NewRecorder()
-	controller.updateSmartFilter(patchRec, requestWithRouteParam(http.MethodPut, "/api/smart-filters/1", patchBody, "filterId", strconv.FormatInt(created.ID, 10)))
+	controller.organizationHTTP.updateSmartFilter(patchRec, requestWithRouteParam(http.MethodPut, "/api/smart-filters/1", patchBody, "filterId", strconv.FormatInt(created.ID, 10)))
 	if patchRec.Code != http.StatusOK {
 		t.Fatalf("expected update smart filter 200, got %d body=%s", patchRec.Code, patchRec.Body.String())
 	}
@@ -75,7 +75,7 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 	}
 
 	listRec := httptest.NewRecorder()
-	controller.listSmartFilters(listRec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/smart-filters", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	controller.organizationHTTP.listSmartFilters(listRec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/smart-filters", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("expected list smart filters 200, got %d body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -89,13 +89,13 @@ func TestSmartFilterLifecycleHandlers(t *testing.T) {
 	}
 
 	deleteRec := httptest.NewRecorder()
-	controller.deleteSmartFilter(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/smart-filters/1", nil, "filterId", strconv.FormatInt(created.ID, 10)))
+	controller.organizationHTTP.deleteSmartFilter(deleteRec, requestWithRouteParam(http.MethodDelete, "/api/smart-filters/1", nil, "filterId", strconv.FormatInt(created.ID, 10)))
 	if deleteRec.Code != http.StatusOK {
 		t.Fatalf("expected delete smart filter 200, got %d body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
 
 	listAfterDeleteRec := httptest.NewRecorder()
-	controller.listSmartFilters(listAfterDeleteRec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/smart-filters", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
+	controller.organizationHTTP.listSmartFilters(listAfterDeleteRec, requestWithRouteParam(http.MethodGet, "/api/libraries/1/smart-filters", nil, "libraryId", strconv.FormatInt(lib.ID, 10)))
 	var afterDelete []SmartFilter
 	if err := json.NewDecoder(listAfterDeleteRec.Body).Decode(&afterDelete); err != nil {
 		t.Fatalf("decode smart filters after delete failed: %v", err)
@@ -126,7 +126,7 @@ func TestSmartFilterValidationHandlers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			controller.upsertSmartFilter(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/smart-filters", []byte(tt.body), "libraryId", strconv.FormatInt(lib.ID, 10)))
+			controller.organizationHTTP.upsertSmartFilter(rec, requestWithRouteParam(http.MethodPost, "/api/libraries/1/smart-filters", []byte(tt.body), "libraryId", strconv.FormatInt(lib.ID, 10)))
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
 			}
@@ -135,7 +135,7 @@ func TestSmartFilterValidationHandlers(t *testing.T) {
 
 	t.Run("invalid library id", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.listSmartFilters(rec, requestWithRouteParam(http.MethodGet, "/api/libraries/bad/smart-filters", nil, "libraryId", "bad"))
+		controller.organizationHTTP.listSmartFilters(rec, requestWithRouteParam(http.MethodGet, "/api/libraries/bad/smart-filters", nil, "libraryId", "bad"))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", rec.Code)
 		}
@@ -143,7 +143,7 @@ func TestSmartFilterValidationHandlers(t *testing.T) {
 
 	t.Run("missing library", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.listSmartFilters(rec, requestWithRouteParam(http.MethodGet, "/api/libraries/999/smart-filters", nil, "libraryId", "999"))
+		controller.organizationHTTP.listSmartFilters(rec, requestWithRouteParam(http.MethodGet, "/api/libraries/999/smart-filters", nil, "libraryId", "999"))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", rec.Code)
 		}
@@ -151,7 +151,7 @@ func TestSmartFilterValidationHandlers(t *testing.T) {
 
 	t.Run("delete missing filter", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.deleteSmartFilter(rec, requestWithRouteParam(http.MethodDelete, "/api/smart-filters/999", nil, "filterId", "999"))
+		controller.organizationHTTP.deleteSmartFilter(rec, requestWithRouteParam(http.MethodDelete, "/api/smart-filters/999", nil, "filterId", "999"))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", rec.Code)
 		}
@@ -159,7 +159,7 @@ func TestSmartFilterValidationHandlers(t *testing.T) {
 
 	t.Run("update missing filter", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		controller.updateSmartFilter(rec, requestWithRouteParam(http.MethodPut, "/api/smart-filters/999", []byte(`{"name":"x"}`), "filterId", "999"))
+		controller.organizationHTTP.updateSmartFilter(rec, requestWithRouteParam(http.MethodPut, "/api/smart-filters/999", []byte(`{"name":"x"}`), "filterId", "999"))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", rec.Code)
 		}

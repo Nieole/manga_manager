@@ -17,8 +17,8 @@ func TestBookmarkAndTimeEndpointsRejectInvalidReader(t *testing.T) {
 		handler http.HandlerFunc
 		body    string
 	}{
-		{"list", c.listReadingBookmarks, ""}, {"save", c.upsertReadingBookmark, `{"page":4,"note":"private"}`},
-		{"delete", c.deleteReadingBookmark, ""}, {"time", c.addBookReadingTime, `{"seconds":30}`},
+		{"list", c.reader.listReadingBookmarks, ""}, {"save", c.reader.upsertReadingBookmark, `{"page":4,"note":"private"}`},
+		{"delete", c.reader.deleteReadingBookmark, ""}, {"time", c.reader.addBookReadingTime, `{"seconds":30}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := requestWithRouteParams(http.MethodPost, "/", []byte(tc.body), map[string]string{"bookId": strconv.FormatInt(book.ID, 10), "bookmarkId": "1"})

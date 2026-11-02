@@ -91,7 +91,7 @@ func (p *scrapeTestProvider) SearchMetadata(context.Context, string, int, int) (
 
 // newScrapeTaskRig 拼出两个刮削任务体需要的那几样：任务引擎（仍经它唯一的 seam 构造，后台能力
 // 换成同步执行版）、存储与刮削源工厂。
-func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, func() []RunSnapshot) {
+func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*apiFixture, func() []RunSnapshot) {
 	t.Helper()
 	clock := &fakeClock{now: time.Unix(1700000000, 0)}
 	provider.clock = clock
@@ -100,8 +100,9 @@ func newScrapeTaskRig(t *testing.T, provider *scrapeTestProvider) (*Controller, 
 
 	cfg := &config.Config{}
 	config.NormalizeConfig(cfg)
-	c := &Controller{taskEngine: e, store: newScrapeTaskStore(), config: config.NewManager(cfg)}
-	c.fetcherFactory = func(name string) metadata.Fetcher {
+	c := &apiFixture{Host: &Host{}, taskEngine: e, store: newScrapeTaskStore(), config: config.NewManager(cfg)}
+	c.providers = &providerHTTP{providerClients: &providerClients{currentConfig: c.currentConfig}}
+	c.providers.fetcherFactory = func(name string) metadata.Fetcher {
 		provider.requestedKeys = append(provider.requestedKeys, name)
 		return provider
 	}
@@ -121,14 +122,14 @@ var scrapeScopes = []struct {
 	scope        string
 	scopeID      *int64
 	scopeName    string
-	launch       func(*Controller) error
+	launch       func(*apiFixture) error
 	completeCode string
 	cancelCode   string
 }{
 	{
 		name: "全库", key: "scrape_all_series", variant: variantScrapeAllLibraries,
 		scope: taskScopeSystem, scopeName: "全库",
-		launch: func(c *Controller) error {
+		launch: func(c *apiFixture) error {
 			return c.launchBatchScrapeAllSeriesTask(context.Background(), "test", task.TriggerManual)
 		},
 		completeCode: "task.msg.scrape.complete_all", cancelCode: "task.msg.scrape.cancelled_all",
@@ -136,7 +137,7 @@ var scrapeScopes = []struct {
 	{
 		name: "单库", key: "scrape_library_7", variant: variantScrapeOneLibrary,
 		scope: taskScopeLibrary, scopeID: int64Ptr(7), scopeName: "Library A",
-		launch: func(c *Controller) error {
+		launch: func(c *apiFixture) error {
 			return c.launchLibraryScrapeTask(context.Background(), 7, "test", task.TriggerManual)
 		},
 		completeCode: "task.msg.scrape.complete_library", cancelCode: "task.msg.scrape.cancelled_library",

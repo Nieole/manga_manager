@@ -16,17 +16,17 @@ import (
 func TestHashBackfillSkipsUnreadableBookAndAdvancesCursor(t *testing.T) {
 	cases := []struct {
 		name string
-		run  func(context.Context, *Controller) (int, int, error)
+		run  func(context.Context, *apiFixture) (int, int, error)
 	}{
 		{
 			name: "快速哈希",
-			run: func(ctx context.Context, c *Controller) (int, int, error) {
+			run: func(ctx context.Context, c *apiFixture) (int, int, error) {
 				return c.runRebuildFileIdentities(ctx, 500, newRecordingTaskHandle(c.diskWork))
 			},
 		},
 		{
 			name: "全量哈希",
-			run: func(ctx context.Context, c *Controller) (int, int, error) {
+			run: func(ctx context.Context, c *apiFixture) (int, int, error) {
 				return c.runBackfillFullHashesLowPriority(ctx, 500, 0, newRecordingTaskHandle(c.diskWork))
 			},
 		},
