@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocaleProvider } from '../i18n/LocaleProvider';
 import { messages as zhCN } from '../i18n/locales/zh-CN';
 import OfflineShelf from './OfflineShelf';
-import { cacheBookForOffline } from './book-reader/offlineReader';
+import { cacheBookForOffline, queueOfflineProgress, getQueuedOfflineProgress, reconcileOfflineOwner } from '../features/offline/offlineReader';
 
 class FakeCache {
   entries = new Map<string, unknown>();
@@ -166,5 +166,40 @@ describe('离线书架的删除按钮', () => {
       await gate;
     });
     await waitFor(() => expect(screen.getAllByRole('button', { name: zhCN['offlineShelf.remove'] })).toHaveLength(1));
+  });
+});
+
+
+describe('offline shelf progress consumer', () => {
+  it('keeps the original reading fact after a lost acknowledgement and retries per book after reconnecting', async () => {
+    reconcileOfflineOwner(7);
+    queueOfflineProgress('42', 9, 'Flight reading', '2026-10-01T08:30:00.000Z');
+    const fact = getQueuedOfflineProgress('42');
+    const requests: Array<{ url: string; body: unknown }> = [];
+    let connected = false;
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      requests.push({ url, body: JSON.parse(String(init.body)) });
+      if (!connected) throw new TypeError('Lost acknowledgement');
+      return { ok: !url.includes('bulk-progress'), status: 503 } as Response;
+    });
+
+    renderShelf();
+    await screen.findByText('Flight reading');
+    await act(async () => { fireEvent.click(button(zhCN['offlineShelf.syncNow'])); });
+    expect(getQueuedOfflineProgress('42')).toEqual(fact);
+
+    await act(async () => { window.dispatchEvent(new Event('offline')); });
+    expect(button(zhCN['offlineShelf.syncNow']).disabled).toBe(true);
+    connected = true;
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    await act(async () => { fireEvent.click(button(zhCN['offlineShelf.syncNow'])); });
+    await waitFor(() => expect(screen.queryByText('Flight reading')).toBeNull());
+    expect(getQueuedOfflineProgress('42')).toBeNull();
+    expect(requests).toEqual([
+      { url: '/api/books/bulk-progress/sync', body: { items: [{ book_id: 42, page: 9, updated_at: '2026-10-01T08:30:00.000Z', fact_id: fact?.factId }] } },
+      { url: '/api/books/42/progress', body: { page: 9, updated_at: '2026-10-01T08:30:00.000Z', fact_id: fact?.factId } },
+      { url: '/api/books/bulk-progress/sync', body: { items: [{ book_id: 42, page: 9, updated_at: '2026-10-01T08:30:00.000Z', fact_id: fact?.factId }] } },
+      { url: '/api/books/42/progress', body: { page: 9, updated_at: '2026-10-01T08:30:00.000Z', fact_id: fact?.factId } },
+    ]);
   });
 });

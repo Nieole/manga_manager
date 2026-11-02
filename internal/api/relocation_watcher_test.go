@@ -52,8 +52,11 @@ func TestRelocationKeepsIndependentNestedLibraryWatching(t *testing.T) {
 				c.watcher.Stop()
 				scans := make(chan int64, 8)
 				c.watcher, err = scanner.NewFileWatcher(scanner.WatcherHooks{
-					ScanLibrary:        func(_ context.Context, id int64) error { scans <- id; return nil },
-					CleanupLibrary:     func(context.Context, int64) error { return nil },
+					ScanLibrary: func(_ context.Context, id int64) (scanner.ScanOutcome, error) {
+						scans <- id
+						return scanner.ScanOutcome{Status: scanner.ScanComplete}, nil
+					},
+					CleanupLibrary:     func(context.Context, int64, func() bool) error { return nil },
 					LibraryScanRunning: func(int64) bool { return false },
 				})
 				if err != nil {

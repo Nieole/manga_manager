@@ -3,7 +3,7 @@
 //
 // 边界：本包负责写日志、告知写到哪里、以及松开那个文件——Init 定输出目的地与格式，SetLevel 在运行期改
 // 级别并拒绝无法识别的值，LogFilePath 返回实际写入路径（未启用文件日志时为空串），Close 关掉文件句柄。
-// 级别值来自 config 的 Logging.Level，启动时传给 Init、其后经 runtimecfg.Apply 转发；日志的读取、解析
+// 级别值来自 config 的 Logging.Level，启动时传给 Init、其后经 runtimecfg.Resources.Apply 转发；日志的读取、解析
 // 与对外呈现属于 api 的 getSystemLogs。
 // 本包不导入兄弟包；WithTaskKey 与 WithRunID 收下的**任务键**与运行标识只是两个不透明的值，
 // 本包不解释它们的构成，谁在什么时候把它们放进 ctx 由任务引擎决定。

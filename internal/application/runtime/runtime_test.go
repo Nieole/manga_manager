@@ -8,6 +8,7 @@ import (
 	"manga-manager/internal/database"
 	"manga-manager/internal/parser"
 	"manga-manager/internal/runhandle"
+	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/task"
 	"manga-manager/internal/taskstore"
 	"path/filepath"
@@ -92,9 +93,14 @@ func TestShutdownWaitsForAlreadyAdmittedBackgroundHandoff(t *testing.T) {
 	<-handingOff
 	go func() { app.Close(); close(closed) }()
 	select {
+	case <-app.Engine.Stopping():
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown did not seal launch admission and cancel admitted work")
+	}
+	select {
 	case <-closed:
 		t.Fatal("shutdown returned before admitted body was handed over")
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 	close(release)
 	if err = <-launchDone; err != nil {
@@ -116,6 +122,46 @@ func TestShutdownWaitsForAlreadyAdmittedBackgroundHandoff(t *testing.T) {
 	}
 	if _, err = app.Runs.Start(context.Background(), task.RunSpec{Identity: task.Identity{Type: "late", Scope: task.ScopeSystem}, Key: "late", Trigger: task.TriggerManual}, func(context.Context, *runhandle.Handle) (task.Result, error) { return task.Result{}, nil }); !errors.Is(err, task.ErrEngineStopped) {
 		t.Fatalf("late task admitted: %v", err)
+	}
+}
+
+func TestStoppedRuntimeRejectsLateResourcePublication(t *testing.T) {
+	store, cfg := runtimeFixture(t)
+	app, err := runtime.New(store, cfg, runtime.Options{ConfigPath: filepath.Join(t.TempDir(), "config.yaml")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.Close()
+	before := cfg.Snapshot()
+	next := before
+	next.Scanner.ArchivePoolSize = 17
+	if _, err := app.Configuration.SaveExpected(&before, next); !errors.Is(err, runtimecfg.ErrClosed) {
+		t.Fatalf("late resource publication=%v", err)
+	}
+	if cfg.Snapshot().Scanner.ArchivePoolSize != before.Scanner.ArchivePoolSize || parser.PoolMaxSize() != 0 {
+		t.Fatal("stopped runtime reopened resources or published settings")
+	}
+}
+
+func TestResourceInitializationFailureDoesNotOpenInputs(t *testing.T) {
+	store, cfg := runtimeFixture(t)
+	invalid := cfg.Snapshot()
+	invalid.Logging.Level = "invalid-level"
+	cfg.Replace(&invalid)
+	watchOpened := false
+	app, err := runtime.New(store, cfg, runtime.Options{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), WatchConfig: func(string, *config.Manager) (runtime.ConfigWatch, error) {
+		watchOpened = true
+		return nil, errors.New("must not open")
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if err := app.Start(context.Background()); err == nil {
+		t.Fatal("resource failure exposed a started runtime")
+	}
+	if watchOpened {
+		t.Fatal("configuration input opened before resources were ready")
 	}
 }
 

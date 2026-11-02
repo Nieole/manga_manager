@@ -84,11 +84,18 @@ func TestScanWithABrokenArchiveListsTheFileAndWhy(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if err := controller.taskEngine.awaitRunOutcome(ctx, launched.Run.ID); err != nil {
-		t.Fatalf("等扫描收尾失败: %v", err)
+	if err := controller.taskEngine.awaitRunOutcome(ctx, launched.Run.ID); err == nil {
+		t.Fatal("incomplete ingestion was reported as successful")
 	}
 
-	run := currentTask(t, controller.taskEngine, "scan_library_"+strconv.FormatInt(lib.ID, 10))
+	snapshot, err := controller.taskEngine.engine.SnapshotOf(ctx, launched.Run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := controller.taskEngine.runSnapshotFrom(snapshot, controller.taskEngine.cachedIdentity(snapshot.Run.TaskID))
+	if run.Status != string(task.StatusFailed) {
+		t.Fatalf("incomplete scan status=%s", run.Status)
+	}
 	if run.Metrics["failed_archives"] < 1 {
 		t.Fatalf("扫描没有数出失败归档：%v", run.Metrics)
 	}

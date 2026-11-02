@@ -62,6 +62,7 @@ type Options struct {
 
 // Runtime holds assembled capabilities. Their modules retain rules, transactions and execution bodies.
 type Runtime struct {
+	Resources         *runtimecfg.Resources
 	Configuration     *configuration.Service
 	Engine            *task.Engine
 	Runs              *application.Runs
@@ -116,7 +117,8 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	}
 	options.Effects = e
 	r := &Runtime{store: store, cfg: cfg, options: options, group: newBackground()}
-	r.Configuration = configuration.New(cfg, options.ConfigPath, runtimecfg.Apply)
+	r.Resources = runtimecfg.NewResources()
+	r.Configuration = configuration.New(cfg, options.ConfigPath, r.Resources.Apply)
 	r.Tasks = taskstore.New(store.DB())
 	r.DiskWork = diskwork.NewRunner(cfg.Snapshot, storageio.Default)
 	tc := options.Tasks
@@ -147,7 +149,7 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 	r.Proposals = proposal.NewService(proposalStore{store})
 	r.Relocation = relocation.NewService(store, cfg)
 	r.Relocation.ConfigPath = options.ConfigPath
-	r.Relocation.ApplyConfig = runtimecfg.Apply
+	r.Relocation.ApplyConfig = r.Resources.Apply
 	r.KOReader = koreader.NewService(store, cfg, koreader.WithReadingPositions(reading.New(store, e.InvalidateReading)))
 	r.Relations = organize.NewRelations(store, func(work func()) {
 		r.Go(func() { work(); e.Publish("refresh") })
@@ -168,7 +170,7 @@ func New(store database.Store, cfg *config.Manager, options Options) (*Runtime, 
 		}
 	}
 	r.Intelligence = intelligence.New(r.Runs, store, r.Proposals, organize.NewAIGrouping(store, nil), sources, e.Publish)
-	r.Watcher, r.WatcherError = scanner.NewFileWatcher(scanner.WatcherHooks{ScanLibrary: func(ctx context.Context, id int64) error { return r.Scans.WatchLibrary(ctx, id) }, CleanupLibrary: func(ctx context.Context, id int64) error { return r.Scans.WatchCleanup(ctx, id) }, LibraryScanRunning: r.Scanner.LibraryScanActive})
+	r.Watcher, r.WatcherError = scanner.NewFileWatcher(scanner.WatcherHooks{ScanLibrary: r.Scans.WatchIngestion, CleanupLibrary: r.Scans.WatchCleanupWhen, LibraryScanRunning: r.Scanner.LibraryScanActive})
 	var libraryWatcher libraries.Watcher
 	if r.Watcher != nil {
 		libraryWatcher = r.Watcher
@@ -284,13 +286,13 @@ func (r *Runtime) Close() {
 			r.options.Effects.StopEvents()
 		}
 		r.group.signal()
+		r.Engine.Shutdown()
 		if r.Watcher != nil {
 			r.Watcher.Stop()
 		}
-		r.Engine.Shutdown()
 		r.group.sealAndWait()
 		r.Scanner.Close()
-		runtimecfg.Close()
+		r.Resources.Close()
 	})
 }
 

@@ -73,8 +73,11 @@ func (c *Service) startCheck(ctx context.Context, plan relocation.RelocationPlan
 	if err = c.domain.SetRun(context.WithoutCancel(ctx), plan.ID, launched.Run.ID); err != nil {
 		return plan, err
 	}
-	plan.RunID = launched.Run.ID
-	return plan, nil
+	// The task body retains plan while admission returns; publish the binding
+	// on a separate value rather than mutating its captured input.
+	bound := plan
+	bound.RunID = launched.Run.ID
+	return bound, nil
 }
 
 // Confirm starts one durable relocation operation after explicit anomaly confirmation.
@@ -138,11 +141,11 @@ func (c *Service) startCommit(ctx context.Context, op relocation.RelocationOpera
 		spec.Labels["purpose"] = "restoration"
 	}
 	launched, err := c.runs.Start(ctx, spec, func(runCtx context.Context, handle *runhandle.Handle) (task.Result, error) {
-		workErr := c.domain.Commit(runCtx, op.ID, handle)
+		outcome, workErr := c.domain.Execute(runCtx, op.ID, handle)
 		if restore {
 			workErr = restorationTaskError(runCtx, workErr)
 		}
-		return task.Result{}, workErr
+		return task.Result{Params: map[string]string{"operation_id": strconv.FormatInt(outcome.Operation.ID, 10), "operation_status": outcome.Operation.Status, "paths_committed": strconv.FormatBool(outcome.PathsCommitted), "operation_completed": strconv.FormatBool(outcome.Completed)}}, workErr
 	})
 	if err != nil || launched.Coalesced {
 		_ = c.domain.FailUnstarted(context.WithoutCancel(ctx), op.ID, "relocation_conflict")

@@ -347,6 +347,7 @@ func (e *Engine) beginLocked(run Run, spec RunSpec, body Body) func() {
 	}
 	handle := e.newHandle(run.ID)
 	runID := run.ID
+	e.bodyExits[runID] = make(chan struct{})
 	e.pendingLaunches.Add(1)
 
 	return func() {
@@ -403,6 +404,7 @@ func (e *Engine) newHandle(runID int64) *runhandle.Handle {
 // 用户至少能看到原因并重试。
 func (e *Engine) runGoroutine(runID int64, fn func()) {
 	e.runBackground(func() {
+		defer e.releaseBodyExit(runID)
 		defer func() {
 			if rec := recover(); rec != nil {
 				slog.Error("Background run panicked", "run_id", runID, "panic", rec, "stack", string(debug.Stack()))

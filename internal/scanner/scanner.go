@@ -48,7 +48,7 @@ type Scanner struct {
 	// selfDrained 数的是没有发起方接手、由扫描器自己跑完的那些批，见 waitForCoverQueue。
 	selfDrained sync.WaitGroup
 	mu          sync.Mutex
-	// scanningLibraries 是**正在扫描中**的资料库计数（库 id -> 在飞的整库扫描数）。
+	// scanningLibraries 是**正在摄入中**的资料库计数，包含整库与系列扫描。
 	//
 	// 它不是准入闸门——「同一件事不会同时跑两遍」由任务那一处的准入回答（ADR 0005）。
 	// 它只回答文件监听器那个问题：这个库此刻有没有扫描在跑。改名重连写在扫描**末尾**，
@@ -169,7 +169,7 @@ func (s *Scanner) libraryScanFormats(ctx context.Context, libraryID int64) confi
 	return config.NewScanFormatSet(lib.ScanFormats)
 }
 
-// enterLibraryScan / leaveLibraryScan 记一次整库扫描的进出。它们**不拒绝**任何调用：
+// enterLibraryScan / leaveLibraryScan 记一次库内摄入的进出。它们**不拒绝**任何调用：
 // 记账用，不是闸门。
 func (s *Scanner) enterLibraryScan(libraryID int64) {
 	s.mu.Lock()
@@ -187,7 +187,7 @@ func (s *Scanner) leaveLibraryScan(libraryID int64) {
 	s.mu.Unlock()
 }
 
-// LibraryScanActive 报告该库此刻是否有整库扫描在跑，**不区分发起方**。
+// LibraryScanActive 报告该库此刻是否有整库或系列摄入在跑，**不区分发起方**。
 //
 // 文件监听器用它决定敢不敢清理：任何一次扫描的改名重连都写在末尾，扫描没结束就等于重连没落地。
 // 它看得见的是**真的进到扫描里**的那些，含不经任务发起的（重建缩略图与重建索引的逐库强扫）。
@@ -209,6 +209,7 @@ type scanMetrics struct {
 	openedArchives     atomic.Int64
 	hashedFiles        atomic.Int64
 	queuedCovers       atomic.Int64
+	uncertainEntries   atomic.Int64
 	failedArchives     atomic.Int64
 	// rehomedBooks 统计本次扫描把多少条已入库记录按改名重连到了新路径。
 	// 这是会改动用户数据的行为，必须可观测——否则「书怎么没变多」只能靠翻日志猜。
@@ -533,6 +534,12 @@ func (s *Scanner) ScanLibrary(ctx context.Context, libraryID int64, rootPath str
 // observer 刻意是位置参数而不是 LibraryScanOptions 的一个字段：它是协作方不是开关，
 // 而且结构体字段可以漏填——漏填与「故意不报进度」长得一模一样，都不会有编译错误。
 func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions, observer ScanObserver) error {
+	_, err := s.IngestLibrary(ctx, libraryID, rootPath, scanOpts, observer)
+	return err
+}
+
+// IngestLibrary returns actual ingestion facts after all archive writes have drained.
+func (s *Scanner) IngestLibrary(ctx context.Context, libraryID int64, rootPath string, scanOpts LibraryScanOptions, observer ScanObserver) (ScanOutcome, error) {
 	force := scanOpts.Force
 	s.enterLibraryScan(libraryID)
 	defer s.leaveLibraryScan(libraryID)
@@ -562,7 +569,7 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	existingBooks, err := s.store.ListBooksByLibrary(ctx, libraryID)
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to load existing books cache", "library_id", libraryID, "error", err)
-		return err
+		return scanOutcome(metrics, err), err
 	}
 	for _, b := range existingBooks {
 		bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
@@ -572,19 +579,27 @@ func (s *Scanner) ScanLibraryWithOptions(ctx context.Context, libraryID int64, r
 	walkErr := s.ingest(ctx, ingestionPlan{libraryID: libraryID, libraryRoot: rootPath, scanPath: rootPath, options: opts, formats: formats, existing: bookCache, renames: renames, queueSize: 1000}, metrics, progress, covers)
 	s.logScanCompleted(ctx, "library", libraryID, rootPath, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
-	return walkErr
+	return scanOutcome(metrics, walkErr), walkErr
 }
 
 // ScanSeries 扫描单一系列目录，将新的卷添加到数据库中
 func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, observer ScanObserver) error {
+	_, err := s.IngestSeries(ctx, seriesID, force, observer)
+	return err
+}
+
+// IngestSeries returns actual ingestion facts for one series.
+func (s *Scanner) IngestSeries(ctx context.Context, seriesID int64, force bool, observer ScanObserver) (ScanOutcome, error) {
 	series, err := s.store.GetSeries(ctx, seriesID)
 	if err != nil {
-		return fmt.Errorf("failed to get series: %w", err)
+		return ScanOutcome{Status: ScanFailed}, fmt.Errorf("failed to get series: %w", err)
 	}
+	s.enterLibraryScan(series.LibraryID)
+	defer s.leaveLibraryScan(series.LibraryID)
 
 	library, err := s.store.GetLibrary(ctx, series.LibraryID)
 	if err != nil {
-		return fmt.Errorf("failed to get library: %w", err)
+		return ScanOutcome{Status: ScanFailed}, fmt.Errorf("failed to get library: %w", err)
 	}
 
 	opts := s.scanOptions(force)
@@ -607,12 +622,14 @@ func (s *Scanner) ScanSeries(ctx context.Context, seriesID int64, force bool, ob
 			bookCache[b.Path] = bookScanSnapshot{modTime: b.FileModifiedAt, size: b.Size, pageCount: b.PageCount, coverPath: b.CoverPath}
 		}
 		renames = newRenameIndex(rehomeCandidatesFromBooks(existingBooks))
+	} else {
+		metrics.uncertainEntries.Add(1)
 	}
 
 	walkErr := s.ingest(ctx, ingestionPlan{libraryID: series.LibraryID, libraryRoot: library.Path, scanPath: series.Path, options: opts, formats: formats, existing: bookCache, renames: renames, queueSize: 100}, metrics, progress, covers)
 	s.logScanCompleted(ctx, "series", seriesID, library.Path, opts, metrics, time.Since(started), walkErr, observer)
 	progress.publish("completed", "", true)
-	return walkErr
+	return scanOutcome(metrics, walkErr), walkErr
 }
 
 // CleanupLibrary removes proved-missing records only after conservative library checks.

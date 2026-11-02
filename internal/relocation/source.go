@@ -22,7 +22,7 @@ func (s *Service) SourceRoots(ctx context.Context, libraryID int64) (RelocationS
 	common := ""
 	incompatible := false
 	for _, kind := range []string{"series", "book"} {
-		err = s.walkRecords(ctx, libraryID, kind, func(item storedRecord) error {
+		err = s.records().walk(ctx, libraryID, kind, func(item storedRecord) error {
 			if _, e := MapPath(lib.Path, lib.Path, item.Path); e != nil {
 				result.RecordsOutsideCurrentRoot = true
 			}

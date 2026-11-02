@@ -165,6 +165,8 @@ type Engine struct {
 
 	mu                  sync.Mutex
 	stopping            bool
+	stoppingCh          chan struct{}
+	stoppingOnce        sync.Once
 	pendingLaunches     sync.WaitGroup
 	libraryVersion      uint64
 	libraryExclusive    map[int64]bool
@@ -198,6 +200,8 @@ type Engine struct {
 	liveDeferrals int
 	// settled 按运行 id 存着「等这条运行收尾」的通知通道，收尾时一并关掉。见 Await。
 	settled map[int64][]chan struct{}
+	// bodyExits outlives terminal publication until the admitted callback has exited.
+	bodyExits map[int64]chan struct{}
 }
 
 // New 建一个引擎。Store 与 RunBackground 缺一不可——两者都是装配期的编程错误，
@@ -210,6 +214,7 @@ func New(cfg Config) *Engine {
 		panic("task: Config.RunBackground 不得为 nil")
 	}
 	e := &Engine{
+		stoppingCh:          make(chan struct{}),
 		store:               cfg.Store,
 		libraryExclusive:    make(map[int64]bool),
 		libraryReservations: make(map[int64]*LibraryReservation),
@@ -233,6 +238,7 @@ func New(cfg Config) *Engine {
 		itemFailures:        make(map[int64]itemFailureTally),
 		samples:             make(map[int64]sampleGate),
 		settled:             make(map[int64][]chan struct{}),
+		bodyExits:           make(map[int64]chan struct{}),
 	}
 	e.seq = e.restoredSequence()
 	return e

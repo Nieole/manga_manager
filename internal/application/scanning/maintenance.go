@@ -20,7 +20,11 @@ func (c *Service) ReindexLibraries(ctx context.Context, handle *runhandle.Handle
 		}
 		wg.Go(func() {
 			defer c.effects.PurgeReadingPaths()
-			if err := c.scanner.ScanLibrary(ctx, lib.ID, lib.Path, true, nil); err != nil {
+			outcome, err := c.scanner.IngestLibrary(ctx, lib.ID, lib.Path, scanner.LibraryScanOptions{Force: true}, nil)
+			if err == nil {
+				err = outcome.Err()
+			}
+			if err != nil {
 				slog.ErrorContext(ctx, "Global scan of library failed", "library_id", lib.ID, "path", lib.Path, "error", err)
 			}
 		})
@@ -36,7 +40,11 @@ func (c *Service) RebuildThumbnails(ctx context.Context, h *runhandle.Handle, li
 		if err := h.Checkpoint(ctx); err != nil {
 			return err
 		}
-		if err := scan.ScanLibraryWithOptions(ctx, lib.ID, lib.Path, scanner.LibraryScanOptions{Force: true, IgnoreFormatFilter: true}, observer(lib, len(libs))); err != nil {
+		outcome, err := scan.IngestLibrary(ctx, lib.ID, lib.Path, scanner.LibraryScanOptions{Force: true, IgnoreFormatFilter: true}, observer(lib, len(libs)))
+		if err == nil {
+			err = outcome.Err()
+		}
+		if err != nil {
 			return err
 		}
 		c.effects.PurgeReadingPaths()

@@ -85,6 +85,7 @@ func (d *archiveDiscovery) discover(ctx context.Context, jobs chan<- archiveCand
 			return ctxErr
 		}
 		if err != nil {
+			metrics.uncertainEntries.Add(1)
 			slog.WarnContext(ctx, "Error accessing path", "path", path, "error", err)
 			return nil
 		}
@@ -105,6 +106,7 @@ func (d *archiveDiscovery) discover(ctx context.Context, jobs chan<- archiveCand
 			progress.publish("discovering", path, false)
 			info, err := d.Info()
 			if err != nil {
+				metrics.uncertainEntries.Add(1)
 				return nil
 			}
 

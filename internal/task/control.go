@@ -496,5 +496,10 @@ func (e *Engine) Shutdown() {
 	e.stopping = true
 	e.mu.Unlock()
 	e.StopAll()
+	e.stoppingOnce.Do(func() { close(e.stoppingCh) })
 	e.pendingLaunches.Wait()
 }
+
+// Stopping closes once admission is sealed and active cancellation has been issued.
+// It does not imply that admitted handoffs or their bodies have exited.
+func (e *Engine) Stopping() <-chan struct{} { return e.stoppingCh }

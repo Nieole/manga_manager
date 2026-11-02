@@ -12,7 +12,7 @@ import {
   cacheBookForOffline,
   deleteOfflineBook,
   listOfflineBooks,
-} from './offlineReader';
+} from '../../features/offline/offlineReader';
 
 const BOOKS_KEY = 'manga-manager:offline-books';
 
