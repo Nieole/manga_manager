@@ -1,7 +1,7 @@
 import type { RefObject, Dispatch, MouseEvent, SetStateAction } from 'react';
 import type { Page, ReadMode, ReadDirection, ScaleMode, ImageFilter, ReaderImageFormat, ReadingBookmark, ReaderTheme } from './types';
 import type { WebtoonReaderHandle } from './WebtoonReader';
-import type { OfflineBookStatus } from './offlineReader';
+import type { OfflineBookStatus } from '../../features/offline/offlineReader';
 import type { UseReaderSiblingsResult } from './useReaderSiblings';
 import type { UseReaderProgressIndicatorResult } from './useReaderProgressIndicator';
 

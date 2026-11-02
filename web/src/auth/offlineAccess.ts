@@ -6,7 +6,7 @@
  */
 
 import { isAxiosError } from '../api/client';
-import { hasOfflineOwner, isOfflineBookDownloaded } from '../pages/book-reader/offlineReader';
+import { hasOfflineOwner, isOfflineBookDownloaded } from '../features/offline/offlineReader';
 
 // isBackendUnreachable 判断状态探测是不是「根本没走到后端」。
 //

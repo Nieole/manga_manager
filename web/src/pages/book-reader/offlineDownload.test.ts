@@ -14,7 +14,7 @@ import {
   deleteOfflineBook,
   listOfflineBooks,
   reconcileOfflineOwner,
-} from './offlineReader';
+} from '../../features/offline/offlineReader';
 
 const BOOKS_KEY = 'manga-manager:offline-books';
 

@@ -3,7 +3,7 @@ import { apiClient } from '../../api/client';
 import { AlertTriangle, HardDrive, RefreshCw, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { useI18n } from '../../i18n/LocaleProvider';
-import { useSettings } from './SettingsContext';
+import { useSettingsMaintenance } from '../../features/settings-actions/useSettingsMaintenance';
 import { SettingsPageIntro, sectionClassName } from './shared';
 
 interface PageCacheStats {
@@ -61,7 +61,7 @@ function formatRate(value: number) {
 
 export function SettingsMaintenancePage() {
   const { t } = useI18n();
-  const { handleAction, showToast } = useSettings();
+  const { handleAction, showToast } = useSettingsMaintenance();
   const [pageCacheStats, setPageCacheStats] = useState<PageCacheStats | null>(null);
   const [storageIO, setStorageIO] = useState<StorageIODiagnostics | null>(null);
   const [loadingPageCache, setLoadingPageCache] = useState(false);
