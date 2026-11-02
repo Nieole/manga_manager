@@ -60,8 +60,8 @@ func collectionUseCaseError(w http.ResponseWriter, err error, fallback string) {
 }
 
 // listCollections 返回可人工编辑的合集。作品群不在其中——见 ListCollectionsWithSeriesCount。
-func (c *Controller) listCollections(w http.ResponseWriter, r *http.Request) {
-	rows, err := organize.NewCollections(c.store).List(r.Context())
+func (c *organizationHTTP) listCollections(w http.ResponseWriter, r *http.Request) {
+	rows, err := c.collections.List(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list collections")
 		return
@@ -96,13 +96,13 @@ type CreateCollectionRequest struct {
 
 // createCollection 创建一个新合集。名称与重命名、快照固化、AI 分组应用同口径：先去首尾空白
 // 再判空并查重，否则 "   " 会建出一个在列表里看不出名字的合集，" 科幻" 与 "科幻" 会并存成两条。
-func (c *Controller) createCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) createCollection(w http.ResponseWriter, r *http.Request) {
 	var req CreateCollectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	id, err := organize.NewCollections(c.store).Create(r.Context(), req.Name, req.Description)
+	id, err := c.collections.Create(r.Context(), req.Name, req.Description)
 	if err != nil {
 		collectionUseCaseError(w, err, "Failed to create collection")
 		return
@@ -111,13 +111,13 @@ func (c *Controller) createCollection(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteCollection 删除合集
-func (c *Controller) deleteCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) deleteCollection(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "collectionId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
-	if err := organize.NewCollections(c.store).Delete(r.Context(), id); err != nil {
+	if err := c.collections.Delete(r.Context(), id); err != nil {
 		collectionUseCaseError(w, err, "Failed to delete collection")
 		return
 	}
@@ -130,7 +130,7 @@ type UpdateCollectionRequest struct {
 }
 
 // updateCollection 更新合集名称和描述
-func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) updateCollection(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "collectionId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
@@ -141,7 +141,7 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	if err := organize.NewCollections(c.store).Update(r.Context(), id, req.Name, req.Description); err != nil {
+	if err := c.collections.Update(r.Context(), id, req.Name, req.Description); err != nil {
 		collectionUseCaseError(w, err, "Failed to update collection")
 		return
 	}
@@ -149,14 +149,14 @@ func (c *Controller) updateCollection(w http.ResponseWriter, r *http.Request) {
 }
 
 // getCollectionSeries 获取合集中的系列列表
-func (c *Controller) getCollectionSeries(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) getCollectionSeries(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "collectionId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
 		return
 	}
 
-	rows, err := organize.NewCollections(c.store).Members(r.Context(), id)
+	rows, err := c.collections.Members(r.Context(), id)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to get collection series")
 		return
@@ -180,7 +180,7 @@ type AddSeriesToCollectionRequest struct {
 }
 
 // addSeriesToCollection 批量添加系列到合集
-func (c *Controller) addSeriesToCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) addSeriesToCollection(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "collectionId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
@@ -191,7 +191,7 @@ func (c *Controller) addSeriesToCollection(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "series_ids is required")
 		return
 	}
-	added, err := organize.NewCollections(c.store).AddMembers(r.Context(), id, req.SeriesIDs)
+	added, err := c.collections.AddMembers(r.Context(), id, req.SeriesIDs)
 	if err != nil {
 		collectionUseCaseError(w, err, "Failed to add series to collection")
 		return
@@ -200,7 +200,7 @@ func (c *Controller) addSeriesToCollection(w http.ResponseWriter, r *http.Reques
 }
 
 // removeSeriesFromCollection 从合集中移除系列
-func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) removeSeriesFromCollection(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "collectionId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
@@ -211,7 +211,7 @@ func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.R
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
 		return
 	}
-	if err := organize.NewCollections(c.store).RemoveMember(r.Context(), id, sid); err != nil {
+	if err := c.collections.RemoveMember(r.Context(), id, sid); err != nil {
 		collectionUseCaseError(w, err, "Failed to remove series")
 		return
 	}
@@ -225,7 +225,7 @@ func (c *Controller) removeSeriesFromCollection(w http.ResponseWriter, r *http.R
 type SeriesRelation = organize.SeriesRelation
 
 // getSeriesRelations 获取系列的所有关联
-func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) getSeriesRelations(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -241,7 +241,7 @@ func (c *Controller) getSeriesRelations(w http.ResponseWriter, r *http.Request) 
 }
 
 // getSeriesFranchise 获取系列所在宇宙的整个关联关系连通图
-func (c *Controller) getSeriesFranchise(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) getSeriesFranchise(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -293,7 +293,7 @@ func (c *Controller) getSeriesFranchise(w http.ResponseWriter, r *http.Request) 
 }
 
 // getLibraryFranchiseGraph 获取资源库全景关联关系连通图
-func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -352,7 +352,7 @@ func (c *Controller) getLibraryFranchiseGraph(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, result)
 }
 
-func (c *Controller) loadSeriesRelations(ctx context.Context, id int64) ([]SeriesRelation, error) {
+func (c *organizationHTTP) loadSeriesRelations(ctx context.Context, id int64) ([]SeriesRelation, error) {
 	return c.relations.List(ctx, id)
 }
 
@@ -374,7 +374,7 @@ func relationUseCaseError(w http.ResponseWriter, err error, fallback string) {
 		jsonError(w, http.StatusInternalServerError, fallback)
 	}
 }
-func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) createSeriesRelation(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -396,7 +396,7 @@ func (c *Controller) createSeriesRelation(w http.ResponseWriter, r *http.Request
 	}
 	jsonResponse(w, http.StatusCreated, map[string]string{"status": "created"})
 }
-func (c *Controller) deleteSeriesRelation(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) deleteSeriesRelation(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "relationId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid relation ID")
@@ -413,7 +413,7 @@ type UpdateRelationRequest struct {
 	RelationType string `json:"relation_type"`
 }
 
-func (c *Controller) updateSeriesRelation(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) updateSeriesRelation(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "relationId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid relation ID")

@@ -86,7 +86,7 @@ const taskMetricKeys = [
 ];
 
 // 「存储 IO」那一条显示的几格，按它们住在哪张表分成两半：descriptive 是发起时就声明下来的
-// 描述性值，住在**重启入参**里；numeric 是数，住在指标里。
+// 描述性值从上限或标签读取，旧运行回落入参；numeric 是数，住在指标里。
 const taskIOParamKeys = {
   descriptive: ['storage_profile', 'volume_key'],
   numeric: ['opened_archives', 'hashed_files', 'io_wait_ms', 'paused_ms', 'thumbnail_write_ms', 'duration_ms'],
@@ -156,7 +156,7 @@ function runMetric(run: RunSnapshot, key: string) {
  */
 function runIOParams(run: RunSnapshot): [string, string][] {
   const descriptive = taskIOParamKeys.descriptive
-    .map((key): [string, string] => [key, run.params?.[key] ?? ''])
+    .map((key): [string, string] => [key, (key === 'storage_profile' ? run.effective_limit?.storage_profile : run.effective_limit?.volume_key) || run.labels?.[key] || run.params?.[key] || ''])
     .filter(([, value]) => value !== '' && value !== '0');
   if (descriptive.length === 0) return [];
   const numeric = taskIOParamKeys.numeric
@@ -572,7 +572,7 @@ function runEventLabel(event: RunEvent, t: Translate) {
     case 'item':
       return `${event.item}${event.reason ? ` - ${event.reason}` : ''}`;
     case 'control':
-      return t(`logs.task.event.control.${event.action}`, undefined, event.action || '');
+      return `${t(`logs.task.event.control.${event.action}`, undefined, event.action || '')}${event.detail ? ` - ${event.detail}` : ''}`;
     default:
       return `${t(`logs.task.event.warn.${event.code}`, { count: event.count || 0 }, event.code || '')}${event.detail ? ` - ${event.detail}` : ''}`;
   }
@@ -1152,7 +1152,7 @@ function TaskRow({
         </p>
       )}
       {lastRun && <p className="px-4 pb-3 text-xs text-white/45">{getTaskMessage(lastRun, t)}</p>}
-      <p className="px-4 pb-4 text-xs text-white/35">{getTaskActionHint({ type: task.type, params: lastRun?.params }, t)}</p>
+      <p className="px-4 pb-4 text-xs text-white/35">{getTaskActionHint({ type: task.type, params: lastRun?.params, labels: lastRun?.labels }, t)}</p>
       {expanded && (
         <div className="border-t border-white/10 p-4">
           <p className="mb-3 inline-flex items-center gap-1.5 text-[11px] uppercase tracking-[0.16em] text-white/35">

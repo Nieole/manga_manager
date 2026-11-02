@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/application/diskjobs"
@@ -18,6 +19,7 @@ import (
 	"manga-manager/internal/diskwork"
 	"manga-manager/internal/external"
 	"manga-manager/internal/koreader"
+	"manga-manager/internal/metadata"
 	"manga-manager/internal/organize"
 	"manga-manager/internal/proposal"
 	"manga-manager/internal/recommendation"
@@ -38,17 +40,12 @@ type Lifecycle interface {
 
 // ReadingDependencies supplies content and reader query projections.
 type ReadingDependencies struct {
+	Capabilities    *ReaderCapabilities
 	Content         *bookcontent.Service
 	ImageCache      *bookcontent.MemoryCache
 	Statistics      *dashboard.Service
 	Recommendations *recommendation.Service
 	KOReader        *koreader.Service
-}
-
-// OrganizationDependencies supplies the established metadata and organization owners.
-type OrganizationDependencies struct {
-	Relations *organize.Relations
-	Proposals *proposal.Service
 }
 
 // RunDependencies joins the transport projection to the same admitted queue.
@@ -61,6 +58,10 @@ type RunDependencies struct {
 
 // LibraryDependencies supplies library and disk-use cases to their transport family.
 type LibraryDependencies struct {
+	Removal      BookRemovalStore
+	Initials     interface{ BackfillSeriesInitials(context.Context) error }
+	Queries      LibraryQueries
+	ComicInfo    ComicInfoQueries
 	Management   *libraries.Service
 	Scans        *scanning.Service
 	Maintenance  *maintenance.Service
@@ -146,6 +147,7 @@ func (t *Transport) TaskOptions(options task.Config) task.Config {
 // reader, organization, library and administration migration tickets.
 type Host struct {
 	compatibility  *Controller
+	families       httpFamilies
 	administration *administrationHTTP
 }
 
@@ -157,18 +159,25 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 	c.content, c.imageCache = d.Reading.Content, d.Reading.ImageCache
 	c.stats, c.recommendations = d.Reading.Statistics, d.Reading.Recommendations
 	c.koreader = d.Reading.KOReader
-	c.relations, c.proposals = d.Organization.Relations, d.Organization.Proposals
-	c.libraryManagement, c.scans = d.Libraries.Management, d.Libraries.Scans
-	c.maintenance, c.moves, c.diskJobs = d.Libraries.Maintenance, d.Libraries.Moves, d.Libraries.Disk
-	c.intelligence, c.external, c.relocation = d.Libraries.Intelligence, d.Libraries.External, d.Libraries.Relocation
-	c.scanner, c.watcher, c.watcherInitErr = d.Libraries.Scanner, d.Libraries.Watcher, d.Libraries.WatcherError
-	c.diskWork = d.Libraries.DiskWork
+	c.organizationHTTP = newOrganizationHTTP(d.Organization)
+	c.relations, _ = d.Organization.Relations.(*organize.Relations)
+	c.proposals, _ = d.Organization.Proposals.(*proposal.Service)
+	// Retained scrape/cover consumers use compatibility bindings until 47. No library
+	// application graph is mirrored back onto the compatibility controller.
+	c.intelligence = d.Libraries.Intelligence
+	c.scanner = d.Libraries.Scanner
 	e := c.taskEngine
 	e.engine, e.runs, e.runStore, e.registry = d.Libraries.Runs.Engine, d.Libraries.Runs.Runs, d.Libraries.Runs.Store, d.Libraries.Runs.Registry
 	e.runBackground = d.Lifecycle.Go
-	return &Host{compatibility: c, administration: newAdministration(d.Administration, c.auth, &c.untrustedProtoWarnOnce)}
+	if d.Reading.Capabilities != nil {
+		c.reader = c.bindReaderHTTP(d.Reading.Capabilities)
+	}
+	cfg := c.config
+	return &Host{compatibility: c, administration: newAdministration(d.Administration, c.auth, &c.untrustedProtoWarnOnce), families: bindHTTPFamilies(d.Libraries, d.Reading.Content, cfg.Snapshot, e, func(name string) metadata.Fetcher { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }, d.Administration.Configuration.DatabasePath, c.invalidateDashboardStatsCache)}
 }
 
-func (h *Host) SetupRoutes(r chi.Router)         { h.compatibility.setupRoutes(r, h.administration) }
+func (h *Host) SetupRoutes(r chi.Router) {
+	h.compatibility.setupRoutes(r, h.families, h.administration)
+}
 func (h *Host) SetupOPDSRoutes(r chi.Router)     { h.compatibility.SetupOPDSRoutes(r) }
 func (h *Host) SetupKOReaderRoutes(r chi.Router) { h.compatibility.SetupKOReaderRoutes(r) }

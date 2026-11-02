@@ -800,6 +800,7 @@ export const messages: MessageCatalog = {
     'series.toast.metadataReviewApplied': 'Metadata review applied',
     'series.toast.metadataReviewApplyFailed': 'Failed to apply metadata review',
     'series.toast.metadataReviewRejected': 'Metadata review rejected',
+    'series.toast.metadataReviewRejectedRefreshFailed': 'Metadata review rejected, but refresh failed. Reload this series; rejecting again is unnecessary.',
     'series.toast.metadataReviewRejectFailed': 'Failed to reject metadata review',
     'series.toast.searchFound': 'one={{count}} new result found|other={{count}} new results found',
     'series.toast.searchNoResult': 'No matching entries found. Try different keywords.',

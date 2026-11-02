@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/http"
+
 	"manga-manager/internal/application/libraries"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/task"
-	"net/http"
 )
 
 type deleteLibraryResponse struct {
@@ -19,7 +20,7 @@ type deleteLibraryResponse struct {
 	Status string `json:"status,omitempty"`
 }
 
-func (c *Controller) deleteLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
@@ -77,7 +78,7 @@ func writeLibrarySaveError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) createLibrary(w http.ResponseWriter, r *http.Request) {
 	var req CreateLibraryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
@@ -95,7 +96,7 @@ func (c *Controller) createLibrary(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusCreated, result)
 }
 
-func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -119,13 +120,13 @@ func (c *Controller) updateLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 // launchLibraryScanTask adapts legacy callers to the application scan use case.
-func (c *Controller) launchLibraryScanTask(lib database.Library, force bool, trigger task.Trigger) error {
+func (c *libraryHTTP) launchLibraryScanTask(lib database.Library, force bool, trigger task.Trigger) error {
 	_, err := c.startLibraryScanRun(lib, force, trigger)
 	return err
 }
 
 // startLibraryScanRun preserves the application launch result for the HTTP adapter.
-func (c *Controller) startLibraryScanRun(lib database.Library, force bool, trigger task.Trigger) (task.Launched, error) {
+func (c *libraryHTTP) startLibraryScanRun(lib database.Library, force bool, trigger task.Trigger) (task.Launched, error) {
 	launched, err := c.scans.ScanLibrary(lib, force, trigger)
 	return launched, taskLaunchError(err)
 }
@@ -152,7 +153,7 @@ func scanCoalescedNoticeCode(launched task.Launched, force bool, trigger task.Tr
 //
 // 合并的语义在这里一个字不改：不顶替排队那条的声明、不新建第二条运行、不把**强制**立成**变体**。
 // 变了的只有这次发起交回给用户的那句话。
-func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) scanLibrary(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	libID, err := parseID(r, "libraryId")
 	if err != nil {
@@ -185,11 +186,11 @@ func (c *Controller) scanLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 // launchSeriesScanTask adapts legacy series inputs to the application use case.
-func (c *Controller) launchSeriesScanTask(seriesID int64, force bool, trigger task.Trigger) error {
+func (c *libraryHTTP) launchSeriesScanTask(seriesID int64, force bool, trigger task.Trigger) error {
 	return taskLaunchError(c.scans.ScanSeries(seriesID, force, trigger))
 }
 
-func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) scanSeries(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -206,48 +207,28 @@ func (c *Controller) scanSeries(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
 }
 
-func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	libID, err := parseID(r, "libraryId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid library ID")
-		return
-	}
-
-	series, err := c.store.ListSeriesByLibrary(ctx, libID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
-		return
-	}
-
-	if series == nil {
-		series = []database.ListSeriesByLibraryRow{}
-	}
-	jsonResponse(w, http.StatusOK, series)
-}
-
 // launchCleanupLibraryTask adapts legacy inputs to protected application cleanup.
-func (c *Controller) launchCleanupLibraryTask(libraryID int64, trigger task.Trigger) error {
+func (c *libraryHTTP) launchCleanupLibraryTask(libraryID int64, trigger task.Trigger) error {
 	_, err := c.startCleanupLibraryRun(libraryID, trigger)
 	return err
 }
 
 // startCleanupLibraryRun exposes the shared cleanup launch result.
-func (c *Controller) startCleanupLibraryRun(libraryID int64, trigger task.Trigger) (task.Launched, error) {
+func (c *libraryHTTP) startCleanupLibraryRun(libraryID int64, trigger task.Trigger) (task.Launched, error) {
 	launched, err := c.scans.CleanupLibrary(libraryID, trigger)
 	return launched, taskLaunchError(err)
 }
 
 // runWatchedLibraryScan is the lifecycle-owned filesystem watcher scan adapter.
-func (c *Controller) runWatchedLibraryScan(ctx context.Context, libraryID int64) error {
+func (c *libraryHTTP) runWatchedLibraryScan(ctx context.Context, libraryID int64) error {
 	return c.scans.WatchLibrary(ctx, libraryID)
 }
 
-func (c *Controller) runWatchedLibraryCleanup(ctx context.Context, libraryID int64) error {
+func (c *libraryHTTP) runWatchedLibraryCleanup(ctx context.Context, libraryID int64) error {
 	return c.scans.WatchCleanup(ctx, libraryID)
 }
 
-func (c *Controller) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
+func (c *libraryHTTP) cleanupLibrary(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")

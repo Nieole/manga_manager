@@ -12,7 +12,6 @@ import (
 func (c *Controller) administration() *administrationHTTP {
 	return newAdministration(AdministrationDependencies{Store: c.store, Manager: c.config, Configuration: c.configuration, KOReader: c.koreader}, c.auth, &c.untrustedProtoWarnOnce)
 }
-func (c *Controller) currentUserID(r *http.Request) int64 { return c.administration().currentUserID(r) }
 func (c *Controller) authenticateUser(ctx context.Context, username, password string) (database.User, bool) {
 	return c.administration().authenticateUser(ctx, username, password)
 }

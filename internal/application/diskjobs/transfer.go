@@ -55,7 +55,7 @@ func (c *Service) TransferPrepared(ctx context.Context, libraryID int64, session
 		Total:          total,
 		CanCancel:      true,
 		CanPause:       true,
-		Args: map[string]string{
+		Labels: map[string]string{
 			"session_id":   sessionID,
 			"series_count": strconv.Itoa(plan.SeriesCount),
 		},

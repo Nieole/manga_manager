@@ -120,7 +120,7 @@ const (
 )
 
 // SetupOPDSRoutes 注册 OPDS 路由
-func (c *Controller) SetupOPDSRoutes(r chi.Router) {
+func (c *ReaderHTTP) SetupOPDSRoutes(r chi.Router) {
 	r.Route("/opds/v1.2", func(r chi.Router) {
 		r.Use(c.requireProtocolEnabled("opds"))
 		// 阅读协议按站点用户 HTTP Basic 鉴权（多用户）；进度显示随之按当前用户。
@@ -241,7 +241,7 @@ func opdsContinueProgress(locale, seriesName string, page, total int64) string {
 	return fmt.Sprintf("%s · 第 %d / %d 页", seriesName, page, total)
 }
 
-func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsRoot(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	now := time.Now().Format(time.RFC3339)
 	feed := OPDSFeed{
@@ -306,7 +306,7 @@ func (c *Controller) opdsRoot(w http.ResponseWriter, r *http.Request) {
 	xmlResponse(w, feed)
 }
 
-func (c *Controller) opdsOpenSearch(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsOpenSearch(w http.ResponseWriter, r *http.Request) {
 	description := OpenSearchDescription{
 		XMLNS:          "http://a9.com/-/spec/opensearch/1.1/",
 		ShortName:      "Manga Manager",
@@ -549,7 +549,7 @@ func opdsSeriesEntryFromReadingListRow(row database.ListReadingListSeriesPageRow
 	}
 }
 
-func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
 	limit := opdsPositiveQueryInt(r, "limit", 30, 100)
@@ -590,7 +590,7 @@ func (c *Controller) opdsRecentAdded(w http.ResponseWriter, r *http.Request) {
 	xmlResponse(w, feed)
 }
 
-func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsCollections(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	subject, err := c.currentReadingSubject(r)
 	if err != nil {
@@ -644,7 +644,7 @@ func (c *Controller) opdsCollections(w http.ResponseWriter, r *http.Request) {
 	xmlResponse(w, feed)
 }
 
-func (c *Controller) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	lists, err := c.readingLists().List(r.Context())
 	if err != nil {
@@ -679,7 +679,7 @@ func (c *Controller) opdsReadingLists(w http.ResponseWriter, r *http.Request) {
 	xmlResponse(w, feed)
 }
 
-func (c *Controller) opdsReadingListSeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsReadingListSeries(w http.ResponseWriter, r *http.Request) {
 	listID, err := strconv.ParseInt(chi.URLParam(r, "listId"), 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid reading list ID", http.StatusBadRequest)
@@ -719,7 +719,7 @@ func (c *Controller) opdsReadingListSeries(w http.ResponseWriter, r *http.Reques
 	xmlResponse(w, feed)
 }
 
-func (c *Controller) opdsStaticCollectionSeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsStaticCollectionSeries(w http.ResponseWriter, r *http.Request) {
 	collectionID, err := strconv.ParseInt(chi.URLParam(r, "collectionId"), 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid collection ID", http.StatusBadRequest)
@@ -752,7 +752,7 @@ func (c *Controller) opdsStaticCollectionSeries(w http.ResponseWriter, r *http.R
 	xmlResponse(w, feed)
 }
 
-func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
 	filterID, err := strconv.ParseInt(chi.URLParam(r, "filterId"), 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid smart collection ID", http.StatusBadRequest)
@@ -796,7 +796,7 @@ func (c *Controller) opdsSmartCollectionSeries(w http.ResponseWriter, r *http.Re
 }
 
 // opdsSearch 搜索系列，供 OPDS 客户端通过 OpenSearch 调用。
-func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsSearch(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	page := opdsPositiveQueryInt(r, "page", 1, 0)
@@ -837,7 +837,7 @@ func (c *Controller) opdsSearch(w http.ResponseWriter, r *http.Request) {
 // 每个条目的 content 是给人看的描述，填系列数而不是 lib.Path：OPDS 只有阅读这一种用法，
 // 任何站点账号都能打开这张列表，宿主机绝对路径对读者没有用处，却把服务器目录结构全交了出去。
 // 系列数对管理员同样是这张列表上最有用的信息，因此两种角色不分叉。
-func (c *Controller) opdsLibraries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsLibraries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	locale := requestLocale(r)
 	libs, err := c.store.ListLibraries(ctx)
@@ -879,7 +879,7 @@ func (c *Controller) opdsLibraries(w http.ResponseWriter, r *http.Request) {
 }
 
 // opdsLibrarySeries 某资源库下的系列列表
-func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	libID, err := strconv.ParseInt(chi.URLParam(r, "libraryId"), 10, 64)
 	if err != nil {
@@ -947,7 +947,7 @@ func (c *Controller) opdsLibrarySeries(w http.ResponseWriter, r *http.Request) {
 }
 
 // opdsSeriesBooks 某系列下的书籍列表
-func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := strconv.ParseInt(chi.URLParam(r, "seriesId"), 10, 64)
 	if err != nil {
 		http.Error(w, "Invalid series ID", http.StatusBadRequest)
@@ -959,7 +959,7 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	view, err := reading.NewQueries(c.store).SeriesBooks(r.Context(), subject, seriesID)
+	view, err := c.books.SeriesBooks(r.Context(), subject, seriesID)
 	if err != nil {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -1026,7 +1026,7 @@ func (c *Controller) opdsSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	xmlResponse(w, feed)
 }
 
-func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsStreamPageImage(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -1040,7 +1040,7 @@ func (c *Controller) opdsStreamPageImage(w http.ResponseWriter, r *http.Request)
 	c.servePageImageByNumber(w, r, bookID, opdsImagePageNumber(pageNumber))
 }
 
-func (c *Controller) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) opdsContinueReading(w http.ResponseWriter, r *http.Request) {
 	locale := requestLocale(r)
 	limit := int64(opdsPositiveQueryInt(r, "limit", 30, 100))
 	subject, err := c.currentReadingSubject(r)

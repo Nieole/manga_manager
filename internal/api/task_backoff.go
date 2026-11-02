@@ -43,7 +43,7 @@ func (c *Controller) taskBackoffPolicy() task.BackoffPolicy {
 // 而外部库那两类的键带着会话 id——同一身份的两次运行键并不相同，按键寻址会禁用不到它。
 //
 // **重试合并不进来**，尽管它如今也按任务 id 寻址；为什么合并不进来写在 runControlHandler 上。
-func (c *Controller) setTaskAutoLaunch(disabled bool, okMessage string) http.HandlerFunc {
+func (c *runsHTTP) setTaskAutoLaunch(disabled bool, okMessage string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		taskID, err := parseID(r, "taskID")
 		if err != nil {
@@ -58,10 +58,10 @@ func (c *Controller) setTaskAutoLaunch(disabled bool, okMessage string) http.Han
 	}
 }
 
-func (c *Controller) disableTask(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) disableTask(w http.ResponseWriter, r *http.Request) {
 	c.setTaskAutoLaunch(true, "Automatic launches disabled")(w, r)
 }
 
-func (c *Controller) enableTask(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) enableTask(w http.ResponseWriter, r *http.Request) {
 	c.setTaskAutoLaunch(false, "Automatic launches enabled")(w, r)
 }

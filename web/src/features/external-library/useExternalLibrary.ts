@@ -322,7 +322,7 @@ export function useExternalLibrary({
 
   const receiveRun = useCallback(async (run: RunSnapshot, alreadyRefreshed = false) => {
     if (run.scope_id != null && String(run.scope_id) !== libId) return;
-    if (!externalSession?.session_id || run.params?.session_id !== externalSession.session_id || !isTerminalRunStatus(run.status)) return;
+    if (!externalSession?.session_id || (run.labels?.session_id ?? run.params?.session_id) !== externalSession.session_id || !isTerminalRunStatus(run.status)) return;
     const scan = externalScanTaskKey !== null && run.type === 'scan_external_library';
     const transfer = externalTransferTaskKey !== null && run.type === 'transfer_external_library';
     if (!scan && !transfer) return;
@@ -346,7 +346,7 @@ export function useExternalLibrary({
     try {
       const { data } = await apiClient.get<RunSnapshot[]>(`/api/system/tasks?type=transfer_external_library&scope=library&scope_id=${libId}&limit=20`);
       if (!isCurrent()) return;
-      const run = Array.isArray(data) ? data.find(item => item.params?.session_id === externalSession.session_id) : undefined;
+      const run = Array.isArray(data) ? data.find(item => (item.labels?.session_id ?? item.params?.session_id) === externalSession.session_id) : undefined;
       if (run && isTerminalRunStatus(run.status)) await receiveRun(run, true);
       else if (session?.status === 'ready') setCoverageRevision(value => value + 1);
     } catch (err) { if (isCurrent()) console.warn('Failed to recover external transfer', err); }

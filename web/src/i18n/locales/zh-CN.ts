@@ -800,6 +800,7 @@ export const messages: MessageCatalog = {
     'series.toast.metadataReviewApplied': '元数据审核已应用',
     'series.toast.metadataReviewApplyFailed': '应用元数据审核失败',
     'series.toast.metadataReviewRejected': '元数据审核已拒绝',
+    'series.toast.metadataReviewRejectedRefreshFailed': '元数据审核已拒绝，但刷新失败；请重新加载当前系列，无需重复拒绝。',
     'series.toast.metadataReviewRejectFailed': '拒绝元数据审核失败',
     'series.toast.searchFound': '找到了 {{count}} 条新结果',
     'series.toast.searchNoResult': '未找到匹配的条目，请尝试修改关键词',

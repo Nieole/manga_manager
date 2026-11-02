@@ -16,9 +16,17 @@ import (
 	"manga-manager/internal/config"
 )
 
-// The independently mounted family must enforce the same authentication and
-// publication contract as the full production host, without mounting catalogue routes.
+// Standalone and combined routes must share the same publication and auth contracts.
 func TestAdministrationHostPublishesConfigAndProtectsSecrets(t *testing.T) {
+	for _, combined := range []bool{false, true} {
+		t.Run(fmt.Sprintf("combined=%t", combined), func(t *testing.T) {
+			testAdministrationConfigPublication(t, combined)
+		})
+	}
+}
+
+func testAdministrationConfigPublication(t *testing.T, combined bool) {
+	t.Helper()
 	store, cfg := fixture(t)
 	process, err := bootstrap.Open(context.Background(), store, cfg, bootstrap.Options{ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), WatchConfig: func(string, *config.Manager) (appruntime.ConfigWatch, error) { return &watch{}, nil }})
 	if err != nil {
@@ -26,7 +34,11 @@ func TestAdministrationHostPublishesConfigAndProtectsSecrets(t *testing.T) {
 	}
 	defer process.Close()
 	router := chi.NewRouter()
-	process.HTTP.SetupAdministrationRoutes(router)
+	if combined {
+		process.HTTP.SetupRoutes(router)
+	} else {
+		process.HTTP.SetupAdministrationRoutes(router)
+	}
 	var cookie *http.Cookie
 	var csrf string
 	request := func(method, path, body, version string) *httptest.ResponseRecorder {

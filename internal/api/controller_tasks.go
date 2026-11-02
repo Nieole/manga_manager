@@ -123,7 +123,7 @@ func taskFiltersFromQuery(r *http.Request) taskFilters {
 }
 
 // listTasks 取一页**运行**。任务中心展开某一行时带上 task_id，取回的就是那个任务的历次运行。
-func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) listTasks(w http.ResponseWriter, r *http.Request) {
 	items, err := c.taskEngine.listRunSnapshots(r.Context(), taskFiltersFromQuery(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list tasks")
@@ -133,7 +133,7 @@ func (c *Controller) listTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 // listTaskSummaries 取**任务清单**：一个任务一行，带它最近一次运行，不带历次运行。
-func (c *Controller) listTaskSummaries(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) listTaskSummaries(w http.ResponseWriter, r *http.Request) {
 	items, err := c.taskEngine.listTaskSummaries(r.Context(), taskFiltersFromQuery(r))
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list tasks")
@@ -143,7 +143,7 @@ func (c *Controller) listTaskSummaries(w http.ResponseWriter, r *http.Request) {
 }
 
 // getTaskCenterLive 取**实况区**那一帧：仍会变化的运行与它们的汇总。它不看筛选参数，理由见 RunLive。
-func (c *Controller) getTaskCenterLive(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) getTaskCenterLive(w http.ResponseWriter, r *http.Request) {
 	frame, err := c.taskEngine.live(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load live runs")
@@ -152,7 +152,7 @@ func (c *Controller) getTaskCenterLive(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, frame)
 }
 
-func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) clearTasks(w http.ResponseWriter, r *http.Request) {
 	// 关键词与条数由引擎自己丢掉（它们只用于列表展示，用来做删除条件会让「删了什么」不可预期）：
 	// 判据只留一处，别的调用方绕不过去。
 	removed, err := c.taskEngine.clear(r.Context(), taskFiltersFromQuery(r))
@@ -166,7 +166,7 @@ func (c *Controller) clearTasks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (c *Controller) retryTask(w http.ResponseWriter, r *http.Request) {
+func (c *runsHTTP) retryTask(w http.ResponseWriter, r *http.Request) {
 	taskID, err := parseID(r, "taskID")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid task ID")
@@ -254,14 +254,14 @@ func writeTaskControlError(w http.ResponseWriter, err error) {
 // 看着只差一个参数名，实则不然：重试要先取回**终态**快照、从注册表里认出**重启函数**、再发起，
 // 并带自己那条「没有可重试的运行」的 404，这三步在两个生成器里都无处安放。真要合并，还得给
 // 暂停 / 恢复 / 取消三个引擎方法各补一个它们用不上的 ctx 形参。能合并的仍只有原来那两组。
-func (c *Controller) runControlHandler(control func(*taskEngine, int64) error, okMessage string) http.HandlerFunc {
+func (c *runsHTTP) runControlHandler(control func(int64) error, okMessage string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runID, err := parseID(r, "runID")
 		if err != nil {
 			jsonError(w, http.StatusBadRequest, "Invalid run ID")
 			return
 		}
-		if err := control(c.taskEngine, runID); err != nil {
+		if err := control(runID); err != nil {
 			writeTaskControlError(w, err)
 			return
 		}
@@ -269,16 +269,16 @@ func (c *Controller) runControlHandler(control func(*taskEngine, int64) error, o
 	}
 }
 
-func (c *Controller) pauseRun(w http.ResponseWriter, r *http.Request) {
-	c.runControlHandler((*taskEngine).pauseRun, "Run pause requested")(w, r)
+func (c *runsHTTP) pauseRun(w http.ResponseWriter, r *http.Request) {
+	c.runControlHandler(c.taskEngine.pauseRun, "Run pause requested")(w, r)
 }
 
-func (c *Controller) resumeRun(w http.ResponseWriter, r *http.Request) {
-	c.runControlHandler((*taskEngine).resumeRun, "Run resumed")(w, r)
+func (c *runsHTTP) resumeRun(w http.ResponseWriter, r *http.Request) {
+	c.runControlHandler(c.taskEngine.resumeRun, "Run resumed")(w, r)
 }
 
-func (c *Controller) cancelRun(w http.ResponseWriter, r *http.Request) {
-	c.runControlHandler((*taskEngine).cancelRun, "Run cancellation requested")(w, r)
+func (c *runsHTTP) cancelRun(w http.ResponseWriter, r *http.Request) {
+	c.runControlHandler(c.taskEngine.cancelRun, "Run cancellation requested")(w, r)
 }
 
 // pauseAllTasks 与 resumeAllTasks 是任务中心顶部那对按钮：**全部暂停就是逐个按下暂停闸门**，
@@ -286,19 +286,19 @@ func (c *Controller) cancelRun(w http.ResponseWriter, r *http.Request) {
 //
 // 响应里回的是真正动到的条数：不可暂停的运行被跳过（界面上另有说明），
 // 而「一条都没动到」与「按下了三条」对用户不是同一件事。
-func (c *Controller) pauseAllTasks(w http.ResponseWriter, r *http.Request) {
-	c.bulkControlHandler((*taskEngine).pauseAll, "paused", "Failed to pause runs")(w, r)
+func (c *runsHTTP) pauseAllTasks(w http.ResponseWriter, r *http.Request) {
+	c.bulkControlHandler(c.taskEngine.pauseAll, "paused", "Failed to pause runs")(w, r)
 }
 
-func (c *Controller) resumeAllTasks(w http.ResponseWriter, r *http.Request) {
-	c.bulkControlHandler((*taskEngine).resumeAll, "resumed", "Failed to resume runs")(w, r)
+func (c *runsHTTP) resumeAllTasks(w http.ResponseWriter, r *http.Request) {
+	c.bulkControlHandler(c.taskEngine.resumeAll, "resumed", "Failed to resume runs")(w, r)
 }
 
 // bulkControlHandler 生成全部暂停 / 全部恢复两个端点：它们只在「调哪个引擎方法」、
 // 计数字段名与失败文案上不同。
-func (c *Controller) bulkControlHandler(control func(*taskEngine, context.Context) (int, error), countField, failure string) http.HandlerFunc {
+func (c *runsHTTP) bulkControlHandler(control func(context.Context) (int, error), countField, failure string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		affected, err := control(c.taskEngine, r.Context())
+		affected, err := control(r.Context())
 		if err != nil {
 			jsonError(w, http.StatusInternalServerError, failure)
 			return

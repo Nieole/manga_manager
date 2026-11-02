@@ -2,11 +2,12 @@ package api
 
 import (
 	"errors"
-	"manga-manager/internal/catalogsearch"
 	"net/http"
+
+	"manga-manager/internal/catalogsearch"
 )
 
-func (c *Controller) searchBooks(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) searchBooks(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	target := r.URL.Query().Get("target") // "all", "series", "book"
 	if target == "" {
@@ -23,7 +24,7 @@ func (c *Controller) searchBooks(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	result, err := catalogsearch.New(c.store).Query(r.Context(), subject, query, target, 20)
+	result, err := c.search.Query(r.Context(), subject, query, target, 20)
 	if errors.Is(err, catalogsearch.ErrTarget) {
 		jsonError(w, http.StatusBadRequest, "Invalid search target")
 		return

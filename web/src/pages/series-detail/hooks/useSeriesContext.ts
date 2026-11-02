@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
-import { useLibraryInvalidation, useLibraryRefresh } from '../../../session/ApplicationSessionProvider';
+import { useLibraryRefresh } from '../../../session/ApplicationSessionProvider';
 import type {
   Author,
   Book,
@@ -39,7 +39,7 @@ export interface SeriesContextState {
   metadataProvenance: MetadataProvenance[];
   failedTasks: SeriesFailedTask[];
   continueInfo: SeriesContinue | null;
-  reload: () => Promise<void>;
+  reload: (requireFresh?: boolean) => Promise<void>;
   setRelations: React.Dispatch<React.SetStateAction<SeriesRelation[]>>;
   setMetadataReviews: React.Dispatch<React.SetStateAction<MetadataReview[]>>;
   setMetadataProvenance: React.Dispatch<React.SetStateAction<MetadataProvenance[]>>;
@@ -55,7 +55,6 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
     return () => { if (activeScope.current === scope) activeScope.current = { seriesId: undefined }; };
   }, [scope]);
   const sharedRefresh = useLibraryRefresh({ seriesId });
-  const invalidateLibrary = useLibraryInvalidation();
   const [loading, setLoading] = useState(true);
   const [series, setSeries] = useState<Series | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -112,15 +111,10 @@ export function useSeriesContext({ seriesId, refreshTrigger }: UseSeriesContextP
     [seriesId, scope],
   );
 
-  // 写后静默刷新；requireFresh 将刷新失败交给已提交动作的调用者单独提示。
+  // A reload only refreshes this projection; committed actions own shared effects.
   const reload = useCallback(async (requireFresh = false) => {
-    if (activeScope.current !== scope) return;
-    try {
-      await load(true, requireFresh);
-    } finally {
-      if (activeScope.current === scope) invalidateLibrary({ libraryId: series?.library_id ? String(series.library_id) : undefined, areas: ['catalog', 'collections', 'organize', 'stats', 'reading-lists'] });
-    }
-  }, [load, invalidateLibrary, series?.library_id, scope]);
+    await load(true, requireFresh);
+  }, [load]);
 
   useEffect(() => {
     if (!seriesId) return;

@@ -18,7 +18,7 @@ type RelocationDetails = relocation.RelocationDetails
 type RelocationPolicy = relocation.RelocationPolicy
 type RelocationSourceRoots = relocation.RelocationSourceRoots
 
-func (c *Controller) relocationSourceRoots(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) relocationSourceRoots(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -34,7 +34,7 @@ func (c *Controller) relocationSourceRoots(w http.ResponseWriter, r *http.Reques
 
 type RelocationOperation = relocation.RelocationOperation
 
-func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) commitRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "planId")
 	if err != nil {
 		jsonError(w, 400, "Invalid plan ID")
@@ -55,7 +55,7 @@ func (c *Controller) commitRelocationPlan(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusAccepted, op)
 }
 
-func (c *Controller) getRelocationOperation(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) getRelocationOperation(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "operationId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid operation ID")
@@ -69,7 +69,7 @@ func (c *Controller) getRelocationOperation(w http.ResponseWriter, r *http.Reque
 	jsonResponse(w, http.StatusOK, op)
 }
 
-func (c *Controller) createRelocationPlan(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) createRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, 400, "Invalid library ID")
@@ -128,11 +128,11 @@ func writeRelocationError(w http.ResponseWriter, err error) {
 	jsonResponse(w, http.StatusInternalServerError, map[string]string{"code": "relocation_persistence_failed", "error": "Unable to read or persist relocation plan"})
 }
 
-func (c *Controller) reconcileRelocationPlan(ctx context.Context, plan RelocationPlan) (RelocationPlan, error) {
+func (c *relocationHTTP) reconcileRelocationPlan(ctx context.Context, plan RelocationPlan) (RelocationPlan, error) {
 	return c.moves.ReconcilePlan(ctx, plan)
 }
 
-func (c *Controller) getRelocationPlan(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) getRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "planId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid plan ID")
@@ -151,7 +151,7 @@ func (c *Controller) getRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, plan)
 }
 
-func (c *Controller) latestRelocationPlan(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) latestRelocationPlan(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "libraryId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid library ID")
@@ -170,7 +170,7 @@ func (c *Controller) latestRelocationPlan(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, plan)
 }
 
-func (c *Controller) relocationDetails(w http.ResponseWriter, r *http.Request) {
+func (c *relocationHTTP) relocationDetails(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "planId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid plan ID")
