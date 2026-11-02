@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useLibraryInvalidation } from '../../../session/ApplicationSessionProvider';
 import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 import type { SearchResult, Series } from '../types';
@@ -13,6 +14,7 @@ interface UseSeriesScrapeParams {
 }
 
 export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseSeriesScrapeParams) {
+  const invalidateLibrary = useLibraryInvalidation();
   const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
   const [isScraping, setIsScraping] = useState(false);
 
@@ -67,6 +69,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
         // 依据后端稳定的 outcome 结果码决定提示级别并本地化文案，不解析 message 里的文本内容。
         const outcome = res.data.outcome as string | undefined;
         if (res.data.scraped || outcome === 'queued') {
+          invalidateLibrary({ areas: ['reviews'] });
           showToast(t('series.toast.metadataReviewQueued', { count: res.data.field_count ?? 0 }), 'success');
           await reload();
         } else if (outcome === 'no_changes') {
@@ -89,7 +92,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
         setIsScraping(false);
       }
     },
-    [seriesId, series, reload, showToast, t],
+    [seriesId, series, reload, showToast, t, invalidateLibrary],
   );
 
   const handleApplyMetadata = useCallback(
@@ -100,6 +103,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
       try {
         const res = await apiClient.post(`/api/series/${seriesId}/scrape-apply?provider=${searchProvider}`, metadata);
         if (res.data.success) {
+          if (res.data.queued || res.data.outcome === 'queued') invalidateLibrary({ areas: ['reviews'] });
           const outcome = res.data.outcome as string | undefined;
           let msg: string;
           if (res.data.queued || outcome === 'queued') {
@@ -126,7 +130,7 @@ export function useSeriesScrape({ seriesId, series, reload, showToast, t }: UseS
         setSelectedSearchResult(null);
       }
     },
-    [seriesId, searchProvider, reload, showToast, t],
+    [seriesId, searchProvider, reload, showToast, t, invalidateLibrary],
   );
 
   const handleModalReSearch = useCallback(

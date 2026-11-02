@@ -4,6 +4,8 @@ package bootstrap
 
 import (
 	"context"
+	"time"
+
 	"manga-manager/internal/api"
 	"manga-manager/internal/application/runtime"
 	"manga-manager/internal/application/seriesediting"
@@ -16,7 +18,6 @@ import (
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/task"
-	"time"
 )
 
 // Options controls process inputs and scheduling at the production assembly seam.
@@ -51,8 +52,10 @@ func Open(ctx context.Context, store database.Store, cfg *config.Manager, option
 		resources.Close()
 		return nil, err
 	}
+	stats := dashboard.New()
+	reader := api.NewReaderCapabilities(store, app.Relations, app.Proposals, app.Engine, func() { stats.InvalidateVolatile("reading") })
 	host := transport.Bind(api.HostDependencies{
-		Reading: api.ReadingDependencies{Content: content, ImageCache: memory, Statistics: dashboard.New(), Recommendations: recommendation.New(24 * time.Hour), KOReader: app.KOReader},
+		Reading: api.ReadingDependencies{Capabilities: reader, Content: content, ImageCache: memory, Statistics: stats, Recommendations: recommendation.New(24 * time.Hour), KOReader: app.KOReader},
 		Organization: api.OrganizationDependencies{
 			Relations: app.Relations, Proposals: app.Proposals,
 			Collections: organize.NewCollections(store), Shelves: organize.NewSmartCollections(store), ReadingLists: organize.NewReadingLists(store),

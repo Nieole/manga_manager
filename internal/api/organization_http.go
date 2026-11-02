@@ -150,6 +150,11 @@ func (*organizationHTTP) currentReadingSubject(r *http.Request) (reading.Subject
 
 // setupRoutes mounts this family inside the host authentication gate.
 func (c *organizationHTTP) setupRoutes(r chi.Router) {
+	c.setupRootRoutes(r)
+	r.Route("/series", c.setupSeriesRoutes)
+}
+
+func (c *organizationHTTP) setupRootRoutes(r chi.Router) {
 	r.Get("/libraries/{libraryId}/franchise", c.getLibraryFranchiseGraph)
 	r.Get("/metadata/reviews", c.listMetadataReviewInbox)
 	r.Post("/metadata/reviews/bulk-apply", c.bulkApplyMetadataReviews)
@@ -162,11 +167,8 @@ func (c *organizationHTTP) setupRoutes(r chi.Router) {
 	r.Put("/ai-grouping/reviews/{reviewId}/collections/{collectionId}", c.updateAIGroupingReviewCollection)
 	r.Post("/ai-grouping/reviews/{reviewId}/collections/{collectionId}/apply", c.applyAIGroupingReviewCollection)
 	r.Post("/ai-grouping/reviews/{reviewId}/collections/{collectionId}/reject", c.rejectAIGroupingReviewCollection)
-	r.Get("/series/{seriesId}/metadata-review", c.listSeriesMetadataReview)
 	r.Post("/metadata/reviews/{reviewId}/apply", c.applyMetadataReview)
 	r.Post("/metadata/reviews/{reviewId}/reject", c.rejectMetadataReview)
-	r.Post("/series/bulk-edit", c.bulkEditSeries)
-	r.Put("/series/info/{seriesId}", c.updateSeriesInfo)
 	r.Post("/system/rebuild-franchises", c.rebuildFranchiseCollectionsHandler)
 	// 合集管理
 	r.Route("/collections", func(r chi.Router) {
@@ -204,9 +206,16 @@ func (c *organizationHTTP) setupRoutes(r chi.Router) {
 	})
 
 	// 系列关联
-	r.Get("/series/{seriesId}/relations", c.getSeriesRelations)
-	r.Get("/series/{seriesId}/franchise", c.getSeriesFranchise)
-	r.Post("/series/{seriesId}/relations", c.createSeriesRelation)
 	r.Delete("/relations/{relationId}", c.deleteSeriesRelation)
 	r.Put("/relations/{relationId}", c.updateSeriesRelation)
+}
+
+// setupSeriesRoutes shares the host series subtree with reader and legacy routes.
+func (c *organizationHTTP) setupSeriesRoutes(r chi.Router) {
+	r.Get("/{seriesId}/metadata-review", c.listSeriesMetadataReview)
+	r.Post("/bulk-edit", c.bulkEditSeries)
+	r.Put("/info/{seriesId}", c.updateSeriesInfo)
+	r.Get("/{seriesId}/relations", c.getSeriesRelations)
+	r.Get("/{seriesId}/franchise", c.getSeriesFranchise)
+	r.Post("/{seriesId}/relations", c.createSeriesRelation)
 }

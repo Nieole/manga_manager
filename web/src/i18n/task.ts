@@ -39,7 +39,7 @@ export function getTaskTypeLabel(task: TaskWithParams, t: Translator) {
   }
   switch (task.type) {
     case 'rebuild_book_hashes':
-      return t('task.type.rebuild_book_hashes', { label: formatKOReaderIndexLabel(task.params, t) });
+      return t('task.type.rebuild_book_hashes', { label: formatKOReaderIndexLabel({ ...task.labels, ...task.params }, t) });
     default:
       return t(`task.type.${task.type}`);
   }
@@ -48,11 +48,11 @@ export function getTaskTypeLabel(task: TaskWithParams, t: Translator) {
 export function getTaskActionHint(task: TaskWithParams, t: Translator) {
   switch (task.type) {
     case 'rebuild_book_hashes':
-      return t('task.hint.rebuild_book_hashes', { label: formatKOReaderIndexLabel(task.params, t) });
+      return t('task.hint.rebuild_book_hashes', { label: formatKOReaderIndexLabel({ ...task.labels, ...task.params }, t) });
     case 'reconcile_koreader_progress':
-      return t('task.hint.reconcile_koreader_progress', { label: formatKOReaderIndexLabel(task.params, t) });
+      return t('task.hint.reconcile_koreader_progress', { label: formatKOReaderIndexLabel({ ...task.labels, ...task.params }, t) });
     case 'refresh_koreader_matching':
-      return t('task.hint.refresh_koreader_matching', { label: formatKOReaderIndexLabel(task.params, t) });
+      return t('task.hint.refresh_koreader_matching', { label: formatKOReaderIndexLabel({ ...task.labels, ...task.params }, t) });
     case 'scan_library':
     case 'generate_covers':
     case 'scan_external_library':

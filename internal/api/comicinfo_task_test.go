@@ -122,7 +122,7 @@ func TestWriteComicInfoDeclarationLandsWhole(t *testing.T) {
 	if task.Total != 2 || task.MessageCode != "task.msg.write_comicinfo.start" {
 		t.Fatalf("首帧的总数 / 起始文案码为 %d / %q, want 2 + ...write_comicinfo.start", task.Total, task.MessageCode)
 	}
-	if task.Params["series_id"] != "7" || task.ScopeName != "Series A" {
+	if len(task.Params) != 0 || task.ScopeName != "Series A" {
 		t.Fatalf("首帧没带齐元数据与作用域名：params=%v scopeName=%q", task.Params, task.ScopeName)
 	}
 	// **作用域**由启动点声明：回写作用在一个系列上，因此它是系列级任务。判成别的作用域不会有
