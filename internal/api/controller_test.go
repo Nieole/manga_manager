@@ -3195,8 +3195,8 @@ func TestRebuildThumbnailsTaskRunsAsCancellableLowImpactTask(t *testing.T) {
 	if task.Status != "completed" {
 		t.Fatalf("expected thumbnail rebuild task to complete, got %+v", task)
 	}
-	if task.Params["execution_mode"] != "low_impact" {
-		t.Fatalf("expected low impact task metadata, got %+v", task.Params)
+	if task.Labels["execution_mode"] != "low_impact" {
+		t.Fatalf("expected low impact declaration label, got %+v", task.Labels)
 	}
 	// 跨资料库的运行没有单一的存储画像可报，理由见 launchRebuildThumbnailsTask。
 	for _, key := range []string{"storage_profile", "volume_key", "cover_concurrency"} {

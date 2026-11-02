@@ -25,7 +25,7 @@ type ReorderReadingListItemsRequest struct {
 
 type readingListItemResponse = organize.ReadingListItem
 
-func (c *Controller) readingLists() *organize.ReadingLists { return organize.NewReadingLists(c.store) }
+func (c *organizationHTTP) readingLists() ReadingListsCapability { return c.lists }
 
 func readingListError(w http.ResponseWriter, err error, fallback string) {
 	switch {
@@ -38,7 +38,7 @@ func readingListError(w http.ResponseWriter, err error, fallback string) {
 	}
 }
 
-func (c *Controller) listReadingLists(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) listReadingLists(w http.ResponseWriter, r *http.Request) {
 	items, err := c.readingLists().List(r.Context())
 	if err != nil {
 		readingListError(w, err, "Failed to list reading lists")
@@ -50,7 +50,7 @@ func (c *Controller) listReadingLists(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) createReadingList(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) createReadingList(w http.ResponseWriter, r *http.Request) {
 	var req CreateReadingListRequest
 	if json.NewDecoder(r.Body).Decode(&req) != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request")
@@ -64,7 +64,7 @@ func (c *Controller) createReadingList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusCreated, item)
 }
 
-func (c *Controller) updateReadingList(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) updateReadingList(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "listId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
@@ -83,7 +83,7 @@ func (c *Controller) updateReadingList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, item)
 }
 
-func (c *Controller) deleteReadingList(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) deleteReadingList(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "listId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
@@ -96,7 +96,7 @@ func (c *Controller) deleteReadingList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-func (c *Controller) listReadingListItems(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) listReadingListItems(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "listId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
@@ -115,7 +115,7 @@ func (c *Controller) listReadingListItems(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) addReadingListItem(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) addReadingListItem(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "listId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
@@ -134,7 +134,7 @@ func (c *Controller) addReadingListItem(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, item)
 }
 
-func (c *Controller) removeReadingListItem(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) removeReadingListItem(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "listId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
@@ -152,7 +152,7 @@ func (c *Controller) removeReadingListItem(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
-func (c *Controller) reorderReadingListItems(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) reorderReadingListItems(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "listId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")

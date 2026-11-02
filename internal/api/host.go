@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/application/diskjobs"
@@ -39,17 +40,12 @@ type Lifecycle interface {
 
 // ReadingDependencies supplies content and reader query projections.
 type ReadingDependencies struct {
+	Capabilities    *ReaderCapabilities
 	Content         *bookcontent.Service
 	ImageCache      *bookcontent.MemoryCache
 	Statistics      *dashboard.Service
 	Recommendations *recommendation.Service
 	KOReader        *koreader.Service
-}
-
-// OrganizationDependencies supplies the established metadata and organization owners.
-type OrganizationDependencies struct {
-	Relations *organize.Relations
-	Proposals *proposal.Service
 }
 
 // RunDependencies joins the transport projection to the same admitted queue.
@@ -157,14 +153,19 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 	c.content, c.imageCache = d.Reading.Content, d.Reading.ImageCache
 	c.stats, c.recommendations = d.Reading.Statistics, d.Reading.Recommendations
 	c.koreader = d.Reading.KOReader
-	c.relations, c.proposals = d.Organization.Relations, d.Organization.Proposals
-	// Retained reader/organization consumers migrate in 43/44. No library
+	c.organizationHTTP = newOrganizationHTTP(d.Organization)
+	c.relations, _ = d.Organization.Relations.(*organize.Relations)
+	c.proposals, _ = d.Organization.Proposals.(*proposal.Service)
+	// Retained scrape/cover consumers use compatibility bindings until 47. No library
 	// application graph is mirrored back onto the compatibility controller.
 	c.intelligence = d.Libraries.Intelligence
 	c.scanner = d.Libraries.Scanner
 	e := c.taskEngine
 	e.engine, e.runs, e.runStore, e.registry = d.Libraries.Runs.Engine, d.Libraries.Runs.Runs, d.Libraries.Runs.Store, d.Libraries.Runs.Registry
 	e.runBackground = d.Lifecycle.Go
+	if d.Reading.Capabilities != nil {
+		c.reader = c.bindReaderHTTP(d.Reading.Capabilities)
+	}
 	cfg := c.config
 	return &Host{compatibility: c, families: bindHTTPFamilies(d.Libraries, d.Reading.Content, cfg.Snapshot, e, func(name string) metadata.Fetcher { return metadata.NewConfiguredProvider(cfg.Snapshot(), name) }, d.Administration.Configuration.DatabasePath, c.invalidateDashboardStatsCache)}
 }

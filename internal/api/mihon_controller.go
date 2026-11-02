@@ -97,7 +97,7 @@ type MihonPageResponse struct {
 	ImageURL  string `json:"image_url"`
 }
 
-func (c *Controller) setupMihonRoutes(r chi.Router) {
+func (c *ReaderHTTP) setupMihonRoutes(r chi.Router) {
 	r.Route("/mihon/v1", func(r chi.Router) {
 		r.Use(c.requireProtocolEnabled("mihon"))
 		// 阅读协议按站点用户 HTTP Basic 鉴权（多用户）；进度读写随之按当前用户。
@@ -130,7 +130,7 @@ func (c *Controller) setupMihonRoutes(r chi.Router) {
 // mihonResourceBase 是 Mihon 响应内所有资源链接的前缀。
 const mihonResourceBase = "/api/mihon/v1"
 
-func (c *Controller) mihonLibraries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonLibraries(w http.ResponseWriter, r *http.Request) {
 	libs, err := c.store.ListLibraries(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch libraries")
@@ -143,7 +143,7 @@ func (c *Controller) mihonLibraries(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) {
 	page := positiveQueryInt(r, "page", 1, 0)
 	limit := positiveQueryInt(r, "limit", 30, 100)
 	libraryID := int64(positiveQueryInt(r, "libraryId", 0, 0))
@@ -175,7 +175,7 @@ func (c *Controller) mihonRecentlyAdded(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonContinueReading(w http.ResponseWriter, r *http.Request) {
 	limit := int64(positiveQueryInt(r, "limit", 30, 100))
 	subject, err := c.currentReadingSubject(r)
 	if err != nil {
@@ -217,7 +217,7 @@ func (c *Controller) mihonContinueReading(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonCollections(w http.ResponseWriter, r *http.Request) {
 	subject, err := c.currentReadingSubject(r)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
@@ -235,7 +235,7 @@ func (c *Controller) mihonCollections(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) mihonReadingLists(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonReadingLists(w http.ResponseWriter, r *http.Request) {
 	lists, err := c.readingLists().List(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch reading lists")
@@ -254,7 +254,7 @@ func (c *Controller) mihonReadingLists(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonReadingListSeries(w http.ResponseWriter, r *http.Request) {
 	listID, err := parseID(r, "listId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading list ID")
@@ -290,7 +290,7 @@ func (c *Controller) mihonReadingListSeries(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (c *Controller) mihonCollectionSeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonCollectionSeries(w http.ResponseWriter, r *http.Request) {
 	collectionID, err := parseID(r, "collectionId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid collection ID")
@@ -320,7 +320,7 @@ func (c *Controller) mihonCollectionSeries(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (c *Controller) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.Request) {
 	filterID, err := parseID(r, "filterId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid smart collection ID")
@@ -360,7 +360,7 @@ func (c *Controller) mihonSmartCollectionSeries(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (c *Controller) mihonTags(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := c.store.GetAllTags(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch tags")
@@ -373,7 +373,7 @@ func (c *Controller) mihonTags(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) mihonAuthors(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonAuthors(w http.ResponseWriter, r *http.Request) {
 	authors, err := c.store.GetAllAuthors(r.Context())
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch authors")
@@ -386,7 +386,7 @@ func (c *Controller) mihonAuthors(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	subject, err := c.currentReadingSubject(r)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
@@ -448,7 +448,7 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 		searchSortBy = "name_ASC"
 	}
 
-	view, err := reading.NewCatalogueQueries(c.store).Search(r.Context(), subject, reading.CatalogueSearch{
+	view, err := c.catalogue.Search(r.Context(), subject, reading.CatalogueSearch{
 		LibraryID: libraryID, Filters: reading.CatalogueFilters{Keyword: query, Status: status, Tags: tags, Authors: authors},
 		Limit: int32(limit), Offset: int32(offset), SortBy: searchSortBy,
 	})
@@ -488,7 +488,7 @@ func (c *Controller) mihonSeries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (c *Controller) mihonSeriesDetail(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonSeriesDetail(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -506,7 +506,7 @@ func (c *Controller) mihonSeriesDetail(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, mihonSeriesFromDetailRow(row))
 }
 
-func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -517,7 +517,7 @@ func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	view, err := reading.NewQueries(c.store).SeriesBooks(r.Context(), subject, seriesID)
+	view, err := c.books.SeriesBooks(r.Context(), subject, seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to fetch books")
 		return
@@ -530,7 +530,7 @@ func (c *Controller) mihonSeriesBooks(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) mihonBookPages(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) mihonBookPages(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")

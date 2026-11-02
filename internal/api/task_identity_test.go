@@ -152,8 +152,8 @@ func TestBackfillRetryDispatchesByVariantNotKey(t *testing.T) {
 	}
 
 	backfill := lastPublishedTask(t, snapshots(), lowPriorityBookHashTaskKey)
-	if backfill.Params["profile"] != "full_hash_low_priority" {
+	if backfill.Labels["profile"] != "full_hash_low_priority" {
 		t.Fatalf("重启出来的档位为 %q, want full_hash_low_priority —— 它跑成了前台档那套抢盘跑法",
-			backfill.Params["profile"])
+			backfill.Labels["profile"])
 	}
 }

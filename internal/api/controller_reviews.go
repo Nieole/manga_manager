@@ -6,9 +6,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"manga-manager/internal/seriesreview"
 	"net/http"
 	"time"
+
+	"manga-manager/internal/seriesreview"
 )
 
 type seriesReviewResponse struct {
@@ -18,7 +19,7 @@ type seriesReviewResponse struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 
-func (c *Controller) getSeriesReview(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) getSeriesReview(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -29,7 +30,7 @@ func (c *Controller) getSeriesReview(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	out, err := seriesreview.New(c.store).Get(r.Context(), subject, seriesID)
+	out, err := c.reviews.Get(r.Context(), subject, seriesID)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load review")
 		return
@@ -37,7 +38,7 @@ func (c *Controller) getSeriesReview(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, seriesReviewResponse(out))
 }
 
-func (c *Controller) putSeriesReview(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) putSeriesReview(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -56,7 +57,7 @@ func (c *Controller) putSeriesReview(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	out, err := seriesreview.New(c.store).Save(r.Context(), subject, seriesID, req.Rating, req.Review)
+	out, err := c.reviews.Save(r.Context(), subject, seriesID, req.Rating, req.Review)
 	if errors.Is(err, seriesreview.ErrRating) {
 		jsonError(w, http.StatusBadRequest, apiText(requestLocale(r), "review.rating_range"))
 		return
@@ -68,7 +69,7 @@ func (c *Controller) putSeriesReview(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, seriesReviewResponse(out))
 }
 
-func (c *Controller) deleteSeriesReview(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) deleteSeriesReview(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -79,7 +80,7 @@ func (c *Controller) deleteSeriesReview(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	if err := seriesreview.New(c.store).Delete(r.Context(), subject, seriesID); err != nil {
+	if err := c.reviews.Delete(r.Context(), subject, seriesID); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to delete review")
 		return
 	}

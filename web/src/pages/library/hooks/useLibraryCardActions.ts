@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useLibraryInvalidation } from '../../../session/ApplicationSessionProvider';
 import { apiClient } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/client';
 
@@ -20,6 +21,7 @@ export function useLibraryCardActions({
   showToast,
   t,
 }: UseLibraryCardActionsParams) {
+  const invalidateLibrary = useLibraryInvalidation();
   const [rescanningId, setRescanningId] = useState<number | null>(null);
 
   // 只管多选：进详情由卡片自身的 <Link> 导航，这里再 navigate 一次会把历史栈压成两条。
@@ -36,13 +38,14 @@ export function useLibraryCardActions({
       event.stopPropagation();
       try {
         await apiClient.post('/api/series/bulk-update', { series_ids: [series.id], is_favorite: !series.is_favorite });
+        invalidateLibrary({ areas: ['catalog', 'collections', 'organize', 'stats'] });
         patchSeries(series.id, { is_favorite: !series.is_favorite });
       } catch (err) {
         console.error('Toggle favorite failed', err);
         showError('home.bulkFavoriteFailed');
       }
     },
-    [patchSeries, showError],
+    [patchSeries, showError, invalidateLibrary],
   );
 
   const handleRescanSeries = useCallback(

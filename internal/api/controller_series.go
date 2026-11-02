@@ -3,19 +3,16 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"log/slog"
-	"manga-manager/internal/seriescontext"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"manga-manager/internal/application/seriesediting"
 	"manga-manager/internal/database"
 	"manga-manager/internal/reading"
-	"manga-manager/internal/seriesmeta"
+	"manga-manager/internal/seriescontext"
 )
 
 // parseReadState 归一化阅读状态查询参数，未识别值按“不筛选”处理。
@@ -57,120 +54,7 @@ func parseNonNegativeInt(v string) int {
 // maxSeriesPageLimit 是 /api/series/search 单页返回的硬上限，防止超大 limit 拉全库导致 OOM/超时。
 const maxSeriesPageLimit = 200
 
-func (c *Controller) searchSeriesPaged(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	libIDStr := r.URL.Query().Get("libraryId")
-	libID, err := strconv.ParseInt(libIDStr, 10, 64)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid library ID")
-		return
-	}
-
-	// 上限保护：limit 只有下限校验时，一个 limit=1000000 就能让本端点物化并 JSON 编码整库
-	// (~24 列含 summary 长文本) 的全部系列，等同单请求 OOM/超时。UI 最大页大小为 100，200 留足余量。
-	limit := queryLimit(r, "limit", 50, maxSeriesPageLimit)
-	// page 同样必须钳制：无上界时 (page-1)*limit 会溢出，offset 再经 int32 截断成 0，
-	// 极大页码会静默返回第一页而不是空页。
-	page := queryPage(r, "page")
-	offset := int(pageOffset(page, limit))
-
-	var tags []string
-	if tagsParam := r.URL.Query().Get("tags"); tagsParam != "" {
-		tags = strings.Split(tagsParam, ",")
-	}
-
-	var authors []string
-	if authorsParam := r.URL.Query().Get("authors"); authorsParam != "" {
-		authors = strings.Split(authorsParam, ",")
-	}
-
-	sortBy := r.URL.Query().Get("sortBy")
-	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
-
-	query := r.URL.Query()
-	filters := reading.CatalogueFilters{
-		Keyword:         query.Get("q"),
-		Letter:          query.Get("letter"),
-		Status:          query.Get("status"),
-		Tags:            tags,
-		Authors:         authors,
-		ReadState:       parseReadState(query.Get("readState")),
-		MinRating:       parseOptionalFloat(query.Get("minRating")),
-		MaxRating:       parseOptionalFloat(query.Get("maxRating")),
-		MinProgress:     parseOptionalFloat(query.Get("minProgress")),
-		MaxProgress:     parseOptionalFloat(query.Get("maxProgress")),
-		AddedWithinDays: parseNonNegativeInt(query.Get("addedWithinDays")),
-	}
-
-	subject, err := c.currentReadingSubject(r)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
-		return
-	}
-	view, err := reading.NewCatalogueQueries(c.store).Search(ctx, subject, reading.CatalogueSearch{
-		LibraryID: libID, Filters: filters, Limit: int32(limit), Offset: int32(offset), SortBy: sortBy, Cursor: cursor,
-	})
-	if err != nil {
-		slog.Error("Series search failed", "error", err)
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
-		return
-	}
-	items := view.Items
-	if items == nil {
-		items = []database.SearchSeriesPagedRow{}
-	}
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"items": items, "total": view.Total, "page": page, "limit": limit, "next_cursor": view.NextCursor, "has_more": view.HasMore,
-	})
-}
-
 // getRecentReadSeries 返回该资源库下含有书籍最新阅读记录的系列
-func (c *Controller) getRecentReadSeries(w http.ResponseWriter, r *http.Request) {
-	libIDStr := r.URL.Query().Get("libraryId")
-	if libIDStr == "" {
-		jsonError(w, http.StatusBadRequest, "libraryId is required")
-		return
-	}
-	libID, err := strconv.ParseInt(libIDStr, 10, 64)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid libraryId")
-		return
-	}
-
-	// 与 /api/series/search 统一口径：limit 必须有上限，否则 limit=1000000 会让单请求物化整库。
-	limit := int64(queryLimit(r, "limit", 10, maxSeriesPageLimit))
-
-	ctx := r.Context()
-	subject, err := c.currentReadingSubject(r)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
-		return
-	}
-	view, err := reading.NewCatalogueQueries(c.store).Recent(ctx, subject, libID, limit)
-	if err != nil {
-		slog.Error("GetRecentReadSeries Failed", "error", err)
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch recent read series")
-		return
-	}
-
-	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"items": view.Items,
-	})
-}
-
-func (c *Controller) getSeriesInfo(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-	series, err := c.store.GetSeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusNotFound, "Series not found")
-		return
-	}
-	jsonResponse(w, http.StatusOK, series)
-}
 
 func (c *Controller) openSeriesDirectory(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
@@ -225,120 +109,6 @@ func (c *Controller) openSeriesDirectory(w http.ResponseWriter, r *http.Request)
 	jsonResponse(w, http.StatusOK, map[string]any{"success": true})
 }
 
-type UpdateAuthorRequest = seriesmeta.Author
-
-type UpdateLinkRequest = seriesmeta.Link
-
-type UpdateSeriesRequest struct {
-	Title        string                `json:"title"`
-	Summary      string                `json:"summary"`
-	Publisher    string                `json:"publisher"`
-	Status       string                `json:"status"`
-	Rating       float64               `json:"rating"`
-	Language     string                `json:"language"`
-	LockedFields string                `json:"locked_fields"`
-	Tags         []string              `json:"tags"`
-	Authors      []UpdateAuthorRequest `json:"authors"`
-	Links        []UpdateLinkRequest   `json:"links"`
-	// ExpectedVersion 是用户开始编辑时手里那份元数据的版本（见 seriesmeta.Version）。
-	// 服务端此刻的版本与它不符，说明编辑期间有别的途径写过这个系列，保存被拒而不是照写不误——
-	// 这份请求是「先清空再重建」的全量替换，照写会把别人新加的标签、作者、链接整批抹掉。
-	//
-	// 它是三态的，所以用指针：字段缺席表示调用方明示不参与并发控制（脚本、旧客户端），
-	// 服务端不做检查，行为与从前一致；带了字段就必须带真版本，空串一律 400。空串只会来自
-	// 「本该带版本却没拿到」的调用方，放行等于把防护栏静默关掉，用户还以为自己受着保护。
-	ExpectedVersion *string `json:"expected_version"`
-}
-
-func (c *Controller) updateSeriesInfo(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-
-	var req UpdateSeriesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-	result, err := seriesediting.New(seriesediting.NewSQLStore(c.store)).Save(r.Context(), seriesID, seriesmeta.ManualInput{
-		Title: req.Title, Summary: req.Summary, Publisher: req.Publisher,
-		Status: req.Status, Rating: req.Rating, Language: req.Language,
-		LockedFields: req.LockedFields, Tags: req.Tags, Authors: req.Authors,
-		Links: req.Links, ExpectedVersion: req.ExpectedVersion,
-	})
-	if errors.Is(err, seriesediting.ErrInvalidVersion) {
-		jsonError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		jsonError(w, http.StatusNotFound, "Series not found")
-		return
-	}
-
-	if errors.Is(err, seriesmeta.ErrConflict) {
-		// 409 而不是 412：请求里带的是我们自己定义的 expected_version 字段，不是 If-Match 前置条件头。
-		// 载荷只报「变了」和最新版本，不报变的是哪几项——版本是内容指纹，服务端手里没有用户那一版的原值。
-		jsonResponse(w, http.StatusConflict, map[string]any{
-			"error":           "Series metadata was changed by someone else while you were editing",
-			"current_version": result.CurrentVersion,
-		})
-		return
-	}
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to update series metadata")
-		return
-	}
-
-	jsonResponse(w, http.StatusOK, result.Series)
-}
-
-func (c *Controller) getSeriesTags(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-	tags, err := c.store.GetTagsForSeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to get tags")
-		return
-	}
-	jsonResponse(w, http.StatusOK, tags)
-}
-
-func (c *Controller) getSeriesAuthors(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-	authors, err := c.store.GetAuthorsForSeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to get authors")
-		return
-	}
-	jsonResponse(w, http.StatusOK, authors)
-}
-
-func (c *Controller) getSeriesLinks(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-	links, err := c.store.GetLinksForSeries(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to get links")
-		return
-	}
-	if links == nil {
-		links = []database.SeriesLink{}
-	}
-	jsonResponse(w, http.StatusOK, links)
-}
-
 type SeriesContextResponse struct {
 	Series            database.Series         `json:"series"`
 	Books             []database.Book         `json:"books"`
@@ -380,66 +150,6 @@ type SeriesMetadataSummary struct {
 	ProvenanceCount    int `json:"provenance_count"`
 }
 
-func (c *Controller) getSeriesContext(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-
-	subject, err := c.currentReadingSubject(r)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
-		return
-	}
-	out, err := seriescontext.New(c.store, c.relations, c.proposals, c.taskEngine.engine).Load(r.Context(), subject, seriesID)
-	if err != nil {
-		if errors.Is(err, seriescontext.ErrMissing) {
-			jsonError(w, http.StatusNotFound, "Series not found")
-		} else {
-			jsonError(w, http.StatusInternalServerError, "Failed to load series context")
-		}
-		return
-	}
-	failedTasks, err := c.taskEngine.statusesFrom(r.Context(), out.FailedRuns)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to load series tasks")
-		return
-	}
-	if failedTasks == nil {
-		failedTasks = []RunSnapshot{}
-	}
-	metadataReview := metadataReviewResponseFrom(out.Proposals)
-	jsonResponse(w, http.StatusOK, SeriesContextResponse{Series: out.Series, Books: readerBookResponses(out.Books.Books), Tags: out.Tags, Authors: out.Authors, Links: out.Links, Volumes: buildSeriesVolumeSummaries(out.Books.Books, false), Relations: out.Relations, MetadataReview: metadataReview, MetadataSummary: SeriesMetadataSummary{PendingReviewCount: out.PendingReviews, ProvenanceCount: out.ProvenanceCount}, FailedTasks: failedTasks, FailedTaskSummary: SeriesFailedTaskSummary{Count: len(out.FailedRuns), LatestAt: out.LatestFailure}, Continue: out.Books.Continue, MetadataVersion: out.MetadataVersion})
-}
-
-func (c *Controller) getSeriesContinueEndpoint(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-
-	ctx := r.Context()
-	if _, err := c.store.GetSeries(ctx, seriesID); err != nil {
-		jsonError(w, http.StatusNotFound, "Series not found")
-		return
-	}
-
-	subject, err := c.currentReadingSubject(r)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
-		return
-	}
-	view, err := reading.NewQueries(c.store).SeriesBooks(ctx, subject, seriesID)
-	if err != nil {
-		slog.Error("Failed to fetch books for continue", "series_id", seriesID, "error", err)
-		jsonError(w, http.StatusInternalServerError, "Failed to compute continue position")
-		return
-	}
-	jsonResponse(w, http.StatusOK, view.Continue)
-}
-
 func buildSeriesVolumeSummaries(books []reading.BookView, includeBooks bool) []SeriesVolumeSummary {
 	volumes := seriescontext.Volumes(books, includeBooks)
 	out := make([]SeriesVolumeSummary, 0, len(volumes))
@@ -449,35 +159,7 @@ func buildSeriesVolumeSummaries(books []reading.BookView, includeBooks bool) []S
 	return out
 }
 
-func (c *Controller) getAllTags(w http.ResponseWriter, r *http.Request) {
-	tags, err := c.store.GetAllTags(r.Context())
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch all tags")
-		return
-	}
-	if tags == nil {
-		tags = []database.Tag{}
-	}
-	jsonResponse(w, http.StatusOK, tags)
-}
-
 // getSeriesCustomFields 返回某系列的自定义字段列表。
-func (c *Controller) getSeriesCustomFields(w http.ResponseWriter, r *http.Request) {
-	seriesID, err := parseID(r, "seriesId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid series ID")
-		return
-	}
-	fields, err := c.store.ListSeriesCustomFields(r.Context(), seriesID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch custom fields")
-		return
-	}
-	if fields == nil {
-		fields = []database.SeriesCustomField{}
-	}
-	jsonResponse(w, http.StatusOK, fields)
-}
 
 // replaceSeriesCustomFields 整体替换某系列的自定义字段。
 func (c *Controller) replaceSeriesCustomFields(w http.ResponseWriter, r *http.Request) {
@@ -576,40 +258,4 @@ func parseFacetSearchLimit(r *http.Request) int {
 		return 100
 	}
 	return limit
-}
-
-func (c *Controller) searchTags(w http.ResponseWriter, r *http.Request) {
-	items, err := c.store.SearchTags(r.Context(), r.URL.Query().Get("q"), parseFacetSearchLimit(r))
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to search tags")
-		return
-	}
-	if items == nil {
-		items = []database.Tag{}
-	}
-	jsonResponse(w, http.StatusOK, items)
-}
-
-func (c *Controller) getAllAuthors(w http.ResponseWriter, r *http.Request) {
-	authors, err := c.store.GetAllAuthors(r.Context())
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch all authors")
-		return
-	}
-	if authors == nil {
-		authors = []database.Author{}
-	}
-	jsonResponse(w, http.StatusOK, authors)
-}
-
-func (c *Controller) searchAuthors(w http.ResponseWriter, r *http.Request) {
-	items, err := c.store.SearchAuthors(r.Context(), r.URL.Query().Get("q"), parseFacetSearchLimit(r))
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to search authors")
-		return
-	}
-	if items == nil {
-		items = []database.Author{}
-	}
-	jsonResponse(w, http.StatusOK, items)
 }

@@ -263,7 +263,7 @@ func metadataReviewIDsFromRequest(w http.ResponseWriter, r *http.Request) ([]int
 	return ids, mode, true
 }
 
-func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) listSeriesMetadataReview(w http.ResponseWriter, r *http.Request) {
 	seriesID, err := parseID(r, "seriesId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid series ID")
@@ -281,7 +281,7 @@ func (c *Controller) listSeriesMetadataReview(w http.ResponseWriter, r *http.Req
 
 // loadSeriesMetadataReview 把模块给出的提案折成响应体。系列详情的上下文接口也用它，
 // 两处因此不会对同一批数据给出两种形状。
-func (c *Controller) loadSeriesMetadataReview(ctx context.Context, seriesID int64) (metadataReviewResponse, error) {
+func (c *organizationHTTP) loadSeriesMetadataReview(ctx context.Context, seriesID int64) (metadataReviewResponse, error) {
 	listed, err := c.proposals.ListBySeries(ctx, seriesID)
 	if err != nil {
 		return metadataReviewResponse{}, err
@@ -305,7 +305,7 @@ func metadataReviewResponseFrom(listed proposal.SeriesProposals) metadataReviewR
 	return payload
 }
 
-func (c *Controller) listMetadataReviewInbox(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) listMetadataReviewInbox(w http.ResponseWriter, r *http.Request) {
 	libraryID, _ := strconv.ParseInt(r.URL.Query().Get("library_id"), 10, 64)
 	if libraryID < 0 {
 		libraryID = 0
@@ -362,7 +362,7 @@ func applyOutcomeCode(status proposal.ApplyStatus) string {
 	}
 }
 
-func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) applyMetadataReview(w http.ResponseWriter, r *http.Request) {
 	reviewID, err := parseID(r, "reviewId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid review ID")
@@ -397,7 +397,7 @@ func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	updated, _ := c.store.GetSeries(r.Context(), outcome.SeriesID)
+	updated, _ := c.series.GetSeries(r.Context(), outcome.SeriesID)
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"success":          true,
 		"applied":          true,
@@ -409,7 +409,7 @@ func (c *Controller) applyMetadataReview(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Request) {
 	ids, mode, ok := metadataReviewIDsFromRequest(w, r)
 	if !ok {
 		return
@@ -456,7 +456,7 @@ func (c *Controller) bulkApplyMetadataReviews(w http.ResponseWriter, r *http.Req
 	jsonResponse(w, http.StatusOK, result)
 }
 
-func (c *Controller) rejectMetadataReview(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) rejectMetadataReview(w http.ResponseWriter, r *http.Request) {
 	reviewID, err := parseID(r, "reviewId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid review ID")
@@ -483,7 +483,7 @@ func (c *Controller) rejectMetadataReview(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (c *Controller) bulkRejectMetadataReviews(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) bulkRejectMetadataReviews(w http.ResponseWriter, r *http.Request) {
 	ids, mode, ok := metadataReviewIDsFromRequest(w, r)
 	if !ok {
 		return

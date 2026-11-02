@@ -86,7 +86,7 @@ func (c *Service) ScanExternal(ctx context.Context, libraryID int64, sessionID s
 		Key:       ExternalScanKey(libraryID, sessionID),
 		StartCode: "task.msg.scan_external_library.start",
 		CanCancel: true, CanPause: true,
-		Args:         map[string]string{"session_id": sessionID},
+		Labels:       map[string]string{"session_id": sessionID},
 		CompleteCode: "task.msg.scan_external_library.complete",
 		CancelCode:   "task.msg.scan_external_library.cancelled",
 		FailCode:     "task.msg.scan_external_library.failed",

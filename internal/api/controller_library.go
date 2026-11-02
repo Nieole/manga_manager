@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/http"
+
 	"manga-manager/internal/application/libraries"
 	"manga-manager/internal/config"
 	"manga-manager/internal/database"
 	"manga-manager/internal/task"
-	"net/http"
 )
 
 type deleteLibraryResponse struct {
@@ -204,26 +205,6 @@ func (c *libraryHTTP) scanSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "Scan initiated"})
-}
-
-func (c *Controller) getSeriesByLibrary(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	libID, err := parseID(r, "libraryId")
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "Invalid library ID")
-		return
-	}
-
-	series, err := c.store.ListSeriesByLibrary(ctx, libID)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, "Failed to fetch series")
-		return
-	}
-
-	if series == nil {
-		series = []database.ListSeriesByLibraryRow{}
-	}
-	jsonResponse(w, http.StatusOK, series)
 }
 
 // launchCleanupLibraryTask adapts legacy inputs to protected application cleanup.

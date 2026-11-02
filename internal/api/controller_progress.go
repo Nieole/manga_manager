@@ -4,21 +4,20 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-
 	"net/http"
 	"time"
 
 	"manga-manager/internal/reading"
 )
 
-func (c *Controller) getNextBook(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) getNextBook(w http.ResponseWriter, r *http.Request) {
 	c.getAdjacentBook(w, r, true)
 }
-func (c *Controller) getPrevBook(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) getPrevBook(w http.ResponseWriter, r *http.Request) {
 	c.getAdjacentBook(w, r, false)
 }
 
-func (c *Controller) getAdjacentBook(w http.ResponseWriter, r *http.Request, next bool) {
+func (c *ReaderHTTP) getAdjacentBook(w http.ResponseWriter, r *http.Request, next bool) {
 	id, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -33,7 +32,7 @@ func (c *Controller) getAdjacentBook(w http.ResponseWriter, r *http.Request, nex
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	book, err := reading.NewQueries(c.store).AdjacentView(r.Context(), subject, id, next)
+	book, err := c.books.AdjacentView(r.Context(), subject, id, next)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, message)
 		return
@@ -47,7 +46,7 @@ type UpdateProgressRequest struct {
 	FactID    string     `json:"fact_id,omitempty"`
 }
 
-func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) updateBookProgress(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -58,7 +57,7 @@ func (c *Controller) updateBookProgress(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	service := reading.New(c.store, func() { c.invalidateVolatileStatsCache("book_progress") })
+	service := c.positions
 	result, err := service.RecordPosition(r.Context(), reading.Position{UserID: c.currentUserID(r), BookID: bookID, Page: req.Page, OccurredAt: req.UpdatedAt, FactID: req.FactID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -82,7 +81,7 @@ type ReadingTimeRequest struct {
 
 // addBookReadingTime 累加当前用户在某书的活跃阅读秒数。经 navigator.sendBeacon 上报（CSRF 豁免，见 isCsrfExempt），
 // 仍要求有效会话；未登录（首启/单用户）静默接受不落库。
-func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) addBookReadingTime(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -98,7 +97,7 @@ func (c *Controller) addBookReadingTime(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if err := reading.New(c.store, nil).RecordTime(r.Context(), reading.TimeReport{Subject: subject, BookID: bookID, Seconds: req.Seconds}); err != nil {
+	if err := c.positions.RecordTime(r.Context(), reading.TimeReport{Subject: subject, BookID: bookID, Seconds: req.Seconds}); err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to record reading time")
 		return
 	}
@@ -124,7 +123,7 @@ type BulkSyncProgressResultItem struct {
 }
 
 // bulkSyncBookProgress translates the ordered offline reports into the reading use case.
-func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request) {
 	var req BulkSyncProgressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid request payload")
@@ -134,7 +133,7 @@ func (c *Controller) bulkSyncBookProgress(w http.ResponseWriter, r *http.Request
 	for _, item := range req.Items {
 		positions = append(positions, reading.Position{UserID: c.currentUserID(r), BookID: item.BookID, Page: item.Page, OccurredAt: item.UpdatedAt, FactID: item.FactID})
 	}
-	service := reading.New(c.store, func() { c.invalidateVolatileStatsCache("bulk_progress_sync") })
+	service := c.positions
 	synced := service.SyncPositions(r.Context(), positions)
 	results := make([]BulkSyncProgressResultItem, 0, len(synced))
 	updated := 0
@@ -152,7 +151,7 @@ type UpsertReadingBookmarkRequest struct {
 	Note string `json:"note"`
 }
 
-func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) listReadingBookmarks(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -163,7 +162,7 @@ func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	items, err := reading.NewBookmarks(c.store).List(r.Context(), subject, bookID)
+	items, err := c.bookmarks.List(r.Context(), subject, bookID)
 	if err != nil {
 		if errors.Is(err, reading.ErrBookmarkBookUnavailable) {
 			jsonError(w, http.StatusNotFound, "Book not found")
@@ -175,7 +174,7 @@ func (c *Controller) listReadingBookmarks(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, items)
 }
 
-func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) upsertReadingBookmark(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -193,7 +192,7 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	item, err := reading.NewBookmarks(c.store).Save(r.Context(), reading.BookmarkInput{
+	item, err := c.bookmarks.Save(r.Context(), reading.BookmarkInput{
 		Subject: subject,
 		BookID:  bookID,
 		Page:    req.Page,
@@ -210,7 +209,7 @@ func (c *Controller) upsertReadingBookmark(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, item)
 }
 
-func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Request) {
+func (c *ReaderHTTP) deleteReadingBookmark(w http.ResponseWriter, r *http.Request) {
 	bookID, err := parseID(r, "bookId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid book ID")
@@ -226,7 +225,7 @@ func (c *Controller) deleteReadingBookmark(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, "Invalid reading subject")
 		return
 	}
-	err = reading.NewBookmarks(c.store).Delete(r.Context(), subject, bookID, bookmarkID)
+	err = c.bookmarks.Delete(r.Context(), subject, bookID, bookmarkID)
 	if err != nil {
 		if errors.Is(err, reading.ErrBookmarkNotFound) {
 			jsonError(w, http.StatusNotFound, "Bookmark not found")

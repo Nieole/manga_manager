@@ -31,7 +31,11 @@
 
 11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
 
-当前完成 35/48：01、02、03、04、05、06、07、08、09、10、11、12、13、14、15、16、17、18、19、20、21、22、23、24、26、27、28、29、30、31、36、38、39、40、41。32、42 在独立工作树实施，25 将按依赖继续推进。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
+当前已关闭 42/48：01–42。34 在计划级复审发现提案应用提交后刷新错误被吞掉的缺口（`rc_d9a20c81`）后重新打开，修复并补 16 项真实消费者回归，已通过组合门禁及计划复审重新关闭；37 同样在独立审查、组合门禁和计划复审后关闭。43/44 已独立审查、经独立合并者组合验证后合入，45/46 待审查/组合，47/48 尚待前置完成。25/32/42 的计划级独立复审通过，另外 33/34/35 的合并后独立审查以 `0b7e2e7` 为目标通过，确认合并保留生产行为与累计 CHANGELOG；该审查未重跑测试，组合测试实际执行记录见下。32 的协议并发保存误报、KOReader 冲突重载后诊断陈旧，以及 34 的自身失效竞争吞掉刷新告警均在修复、回归和复审通过后才合入。
+
+25/33 首次组合验证的前端 104 文件 / 958 项及 lint/build 通过，但全量 Go 实际失败于 scanner 临时目录清理，HTTP race 实际发现 restoration fixture 的 slotLimit 并发读写；两项已完成根因复现和修复（原始失败证据 `.tmp/wave-next-integration-*.log`，修复 `6c7d587`）：前者在四个独立 scanner fixture 注册 Close 以等待异步封面结束，后者在替换装配期回调前 WaitBackground；未修改生产逻辑或削弱断言。32 合入后前端 976 项及 lint/build 通过（`.tmp/settings-integration-web-*.log`）。42 合入后 bootstrap/runtime/relocating/cmd 四包完整 race 实际通过（`.tmp/bootstrap-combined-integration-race.log`），计划级独立审查通过但不代表全仓绿色。34/35 合入后的前端组合门禁实际通过：105 文件 / 990 项线程测试加 16 项 heatmap 子进程测试，共 1006 项，lint/build 通过（`.tmp/frontend-feature-combined-*.log`）。夹具修复同步集成后，完整 `go test ./...`（API 138.202s、bootstrap 1.387s、scanner 20.492s）、gofmt 空输出、lint `0 issues.`、build、restoration 聚焦 race ×5 和 scanner 聚焦 race ×10 均通过（`.tmp/feature-combined-*.log`）。完整 API race 在旧工作树 15 分钟包超时，不是通过；文档检查超时与其他平台/真实设备未执行的限制同样不计通过。
+
+37 合入后完整 Go 测试、7 包 race、fmt/lint/build、前端 1008 项及 lint/build 通过（`.tmp/declarations-combined-*.log`）。34 提案补修复合入后重新执行 106 文件 / 1008 项线程测试及 16 项 heatmap，共 1024 项，lint/build 通过（`.tmp/proposal-combined-*.log`）；计划复审独立运行 16 项提案回归与聚焦后端通过，广泛后端复跑超时未计通过。43 同步集成后 HTTP/bootstrap/cmd 消费者、bootstrap race、fmt/lint/build 通过（43 树 `.tmp/t43-synchronized-*.log`）；43/44 独立合并者解决共用 chi 子树和同一统计/运行时绑定后，组合 HTTP/bootstrap/cmd、双家庭 race、bootstrap race、fmt/lint/build、tsgen 26 类型无漂移均通过（44 树 `.tmp/merge4344-*.log`）。原始集成门禁日志位于主树 `.tmp/merge-*.log`，已完成工作树的日志汇总到 `.tmp/evidence/`；01、02、08、10 工作树已注销。10 残留空目录的删除被自动审批以 blocked by policy 拒绝，不影响分支或源文件。
 
 12 已合入并关闭：主树 AI 分组 owner race 13.910s、数据库窄能力 race 7.706s、集成后全前端 99 文件 / 937 测试及 lint/build 通过，Go lint 0 issues、格式和 diff 检查通过。主树 API 多次被 Application Control 拦截，稳定二进制启动也未确认执行，已停止精确启动器并保留限制；API 实际通过依据为实现树完整 104.921s、focused race 17.835s 和合并集成后 focused 普通 7.710s。日志位于 .tmp/merge-wave10-*.log。
 
@@ -58,3 +62,8 @@
 40 已合入并关闭：主树密码提交与会话撤销、替换会话失败、旧 Basic 在飞回填、设备/强制改密协议及密码探测成本 HTTP race 实际通过 38.782s，私有事务能力隔离 race 1.524s、2 文件/10 项认证恢复与重置界面消费者通过。Go lint 0 issues、gofmt、完整基线 diff 和 tracked 冲突标记扫描通过。实现树合并后完整 API/database 108.123s/8.018s、前端 103 文件/954 项及 lint/build 的真实证据保留在逐票记录。主树日志为 .tmp/merge-wave20-*.log。
 
 31、28 已依次合入并联合关闭：主树资源及内容完整 race、配置/页读取/整书下载 HTTP race 通过；两票合并后 scanner/application/scanning/runtime/task/runtimecfg 完整 race 80.762s/2.134s/26.288s/13.738s/1.912s/1.268s、坏归档事件与嵌套库监听及资源 HTTP 组合 race 36.565s 实际通过。Engine 停止准入与取消通知、实际 body 退出、watcher join 和最终资源退休分别验证；31 用真实 Stopping 边界替代旧 20ms 假定，28 保留坏归档失败及明细覆盖。最终 lint 0 issues、gofmt、完整基线差异与 tracked 冲突标记扫描通过；本波无前端生产或生成契约变更。原始证据为主树 .tmp/merge-wave21-*.log。
+
+
+## 44 resumed worktree evidence (2026-11-02; not integrated)
+
+`codex/refinement-44` at base `da6811b` retains uncommitted organization/metadata HTTP migration. Production routes consume a standalone narrow capability family under the existing auth gate; no second runtime/Engine/Manager/SSE/cache. Full ordinary Go tests, focused family/owner races, Go lint/build/format, TS generation drift and 64 frontend consumers plus web lint/build passed. Full API race exceeded a 6m deadline; whole-repo doc-style script hit MSYS fork/resource limits and a tool deadline. Exact commands, logs and 47 compatibility exit obligations are appended to ticket 44. Ticket remains open; this is worktree evidence, not an integration/closure claim.

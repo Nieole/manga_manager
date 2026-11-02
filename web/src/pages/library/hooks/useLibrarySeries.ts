@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLibraryInvalidation, useSessionQueryScope } from '../../../session/ApplicationSessionProvider';
+import { useSessionQueryScope } from '../../../session/ApplicationSessionProvider';
 import { apiClient, getApiErrorMessage } from '../../../api/client';
 import { type AxiosResponse } from 'axios';
 import {
@@ -83,7 +83,6 @@ export function useLibrarySeries({
   keyword = '',
   appendMode = false,
 }: UseLibrarySeriesParams): UseLibrarySeriesResult {
-  const invalidateLibrary = useLibraryInvalidation();
   const queryScope = useSessionQueryScope();
   const [allSeries, setAllSeries] = useState<Series[]>([]);
   const [totalSeries, setTotalSeries] = useState(0);
@@ -137,10 +136,18 @@ export function useLibrarySeries({
   // 缓存连同作用域一起存，作用域一变就自然读不到旧游标——不依赖任何 effect 谁先谁后。
   const cursorScope = useMemo(() => buildSearchQuery(0, ''), [buildSearchQuery]);
   const pageCursorMap = cursorCache.scope === cursorScope ? cursorCache.cursors : NO_CURSORS;
+  const targetKey = JSON.stringify([cursorScope, page, enabled]);
+  const active = useRef({ key: targetKey });
+  if (active.current.key !== targetKey) active.current = { key: targetKey };
+  const scope = active.current;
+  useEffect(() => {
+    active.current = scope;
+    return () => { if (active.current === scope) active.current = { key: '' }; };
+  }, [scope]);
 
   const fetchPage = useCallback(
     (pageNumber: number, silent = false) => {
-      if (!libId) return;
+      if (!libId || active.current !== scope) return;
       if (!silent) setLoading(true);
       setError(null);
       const cursor = supportsCursorPagination(sortByField) && pageNumber > 1 ? pageCursorMap[pageNumber] : '';
@@ -149,7 +156,7 @@ export function useLibrarySeries({
       latestRequestIDRef.current = requestID;
       requestSeriesSearch(queryScope, refreshTrigger, buildSearchQuery(pageNumber, cursor || ''), silent)
         .then((res) => {
-          if (requestID !== latestRequestIDRef.current) return;
+          if (requestID !== latestRequestIDRef.current || active.current !== scope) return;
           const items = res.data.items || [];
           const total = res.data.total || 0;
           // 无限滚动往前滚（page>1）时按 id 合并：更新已存在项的最新数据、追加新增项，
@@ -192,15 +199,15 @@ export function useLibrarySeries({
           lastLoadedPageRef.current = pageNumber;
         })
         .catch((err) => {
-          if (requestID !== latestRequestIDRef.current) return;
+          if (requestID !== latestRequestIDRef.current || active.current !== scope) return;
           console.error('Failed to fetch series page', err);
           setError(getApiErrorMessage(err, ''));
         })
         .finally(() => {
-          if (requestID === latestRequestIDRef.current) setLoading(false);
+          if (requestID === latestRequestIDRef.current && active.current === scope) setLoading(false);
         });
     },
-    [libId, sortByField, pageCursorMap, cursorScope, appendMode, buildSearchQuery, queryScope, refreshTrigger],
+    [libId, sortByField, pageCursorMap, cursorScope, appendMode, buildSearchQuery, queryScope, refreshTrigger, scope],
   );
 
   /**
@@ -210,14 +217,14 @@ export function useLibrarySeries({
    */
   const refreshLoadedPages = useCallback(
     (lastPage: number) => {
-      if (!libId) return;
+      if (!libId || active.current !== scope) return;
       setError(null);
       const requestID = latestRequestIDRef.current + 1;
       latestRequestIDRef.current = requestID;
       const pages = Array.from({ length: lastPage }, (_, index) => index + 1);
       Promise.all(pages.map((pageNumber) => requestSeriesSearch(queryScope, refreshTrigger, buildSearchQuery(pageNumber, ''), true)))
         .then((responses) => {
-          if (requestID !== latestRequestIDRef.current) return;
+          if (requestID !== latestRequestIDRef.current || active.current !== scope) return;
           const incoming = new Map<number, Series>();
           for (const res of responses) {
             for (const item of res.data.items || []) incoming.set(item.id, item);
@@ -227,12 +234,12 @@ export function useLibrarySeries({
           setTotalSeries(responses[0]?.data.total || 0);
         })
         .catch((err) => {
-          if (requestID !== latestRequestIDRef.current) return;
+          if (requestID !== latestRequestIDRef.current || active.current !== scope) return;
           console.error('Failed to refresh loaded series pages', err);
           setError(getApiErrorMessage(err, ''));
         });
     },
-    [libId, buildSearchQuery, queryScope, refreshTrigger],
+    [libId, buildSearchQuery, queryScope, refreshTrigger, scope],
   );
 
   const lastQuery = useRef({ query: '', refresh: refreshTrigger });
@@ -270,11 +277,10 @@ export function useLibrarySeries({
   // 无限滚动下屏幕上是第 1..page 页的累积结果，只重取当前页会让前几屏停在旧数据上；
   // 分页模式下屏幕上就只有当前页，重取当前页即可（且必须整页替换，才能反映新增与删除）。
   const refreshLoadedSeries = useCallback(() => {
-    if (!libId) return;
+    if (!libId || active.current !== scope) return;
     if (appendMode && page > 1) refreshLoadedPages(page);
     else fetchPage(page, true);
-    invalidateLibrary({ areas: ['collections', 'organize', 'stats', 'reading-lists'] });
-  }, [libId, appendMode, page, refreshLoadedPages, fetchPage, invalidateLibrary]);
+  }, [libId, appendMode, page, refreshLoadedPages, fetchPage, scope]);
 
   // retry：错误条的重试入口，非静默重取当前页（显示 loading 并清除错误）。
   const retry = useCallback(() => {
@@ -282,9 +288,9 @@ export function useLibrarySeries({
   }, [libId, page, fetchPage]);
 
   const patchSeries = useCallback((id: number, partial: Partial<Series>) => {
+    if (active.current !== scope) return;
     setAllSeries((prev) => prev.map((s) => (s.id === id ? { ...s, ...partial } : s)));
-    invalidateLibrary({ areas: ['collections', 'organize', 'stats'] });
-  }, [invalidateLibrary]);
+  }, [scope]);
 
   return {
     allSeries,

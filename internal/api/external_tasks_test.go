@@ -228,8 +228,8 @@ func TestExternalTransferDeclarationLandsWhole(t *testing.T) {
 	if first.ScopeName != "Library A" || first.Scope != "library" {
 		t.Fatalf("首帧的作用域为 %q / %q, want library + Library A", first.Scope, first.ScopeName)
 	}
-	if first.Params["session_id"] != sessionID || first.Params["series_count"] != "1" {
-		t.Fatalf("首帧的任务参数为 %v", first.Params)
+	if first.Labels["session_id"] != sessionID || first.Labels["series_count"] != "1" {
+		t.Fatalf("首帧的声明标签为 %v", first.Labels)
 	}
 	if first.Total != 2 || !first.CanCancel || !first.CanPause {
 		t.Fatalf("首帧为 total=%d canCancel=%v canPause=%v, want 2/true/true", first.Total, first.CanCancel, first.CanPause)
@@ -339,7 +339,7 @@ func TestExternalScanReportsWholeFramesAndCompletes(t *testing.T) {
 	}
 
 	first := firstPublishedTask(t, rig.snapshots(), key)
-	if first.ScopeName != "Library A" || first.Params["session_id"] != snap.SessionID {
+	if first.ScopeName != "Library A" || first.Labels["session_id"] != snap.SessionID {
 		t.Fatalf("首帧为 scopeName=%q params=%v", first.ScopeName, first.Params)
 	}
 	done := lastPublishedTask(t, rig.snapshots(), key)
