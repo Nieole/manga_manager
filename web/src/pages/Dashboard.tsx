@@ -2,7 +2,8 @@ import { useLibraryRefresh } from '../session/ApplicationSessionProvider';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
-import { apiClient } from '../api/client';
+import { useInsightPanel } from './insights/useInsightPanel';
+import { InsightNotice } from './insights/InsightNotice';
 import { BookOpen, Library, Eye, FileText, TrendingUp, ChevronLeft, ChevronRight, Sparkles, RefreshCcw, FolderPlus, Settings as SettingsIcon, ClipboardCheck, ArrowRight } from 'lucide-react';
 import { useI18n } from '../i18n/LocaleProvider';
 import { buildHeatmapCells, monthIndexFromDateStr, formatHeatmapMonthLabel } from '../utils/heatmap';
@@ -55,69 +56,39 @@ interface RecommendedItem {
 }
 
 export default function Dashboard() {
+    const { user } = useAuth();
+    return <DashboardContent key={user?.id ?? 'anonymous'} />;
+}
+
+function DashboardContent() {
   const catalogRefresh = useLibraryRefresh({ area: 'stats' });
     const { isAdmin } = useAuth();
     const { t, formatNumber } = useI18n();
-    const [stats, setStats] = useState<DashboardStats | null>(null);
-    const [libraries, setLibraries] = useState<LibraryOverview[]>([]);
-    const [recentReads, setRecentReads] = useState<RecentReadItem[]>([]);
-    const [recommendations, setRecommendations] = useState<RecommendedItem[]>([]);
-    const [heatmapData, setHeatmapData] = useState<ActivityDay[]>([]);
-    const [reviewPending, setReviewPending] = useState(0);
-    const [loading, setLoading] = useState(true);
     const [recommendationsRequested, setRecommendationsRequested] = useState(false);
-    const [recsLoading, setRecsLoading] = useState(false);
+    const [recommendationGeneration, setRecommendationGeneration] = useState(0);
     const [heatmapWeeks, setHeatmapWeeks] = useState(52);
     const scrollRef = useRef<HTMLDivElement>(null);
     const recommendationsRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        let active = true;
-        Promise.all([
-            // 每个请求各自兜底，避免任一失败 reject 整个 Promise.all：
-            // 否则 dashboard 统计接口一失败，libraries 就不会被设置，UI 会误显示“没有资料库”的新手引导页。
-            apiClient.get('/api/stats/dashboard').catch(() => ({ data: null })),
-            apiClient.get('/api/libraries').catch(() => ({ data: [] })),
-            apiClient.get('/api/stats/recent-read?limit=20').catch(() => ({ data: [] })),
-            apiClient.get('/api/reviews/inbox/summary').catch(() => ({ data: { counts: { total: 0 } } })),
-        ]).then(([statsRes, librariesRes, recentRes, reviewSummaryRes]) => {
-            if (!active) return;
-            if (statsRes.data) setStats(statsRes.data);
-            setLibraries(Array.isArray(librariesRes.data) ? librariesRes.data : []);
-            setRecentReads(Array.isArray(recentRes.data) ? recentRes.data : []);
-            setReviewPending(reviewSummaryRes?.data?.counts?.total ?? 0);
-        }).catch(console.error).finally(() => {
-            if (active) setLoading(false);
-        });
-        return () => {
-            active = false;
-        };
-    }, [catalogRefresh]);
-
-    useEffect(() => {
-        let active = true;
-        apiClient.get(`/api/stats/activity-heatmap?weeks=${heatmapWeeks}`)
-            .then(res => {
-                if (!active) return;
-                setHeatmapData(Array.isArray(res.data) ? res.data : []);
-            })
-            .catch(console.error);
-        return () => {
-            active = false;
-        };
-    }, [heatmapWeeks, catalogRefresh]);
-
+    const statsPanel = useInsightPanel<DashboardStats>('/api/stats/dashboard', catalogRefresh);
+    const librariesPanel = useInsightPanel<LibraryOverview[]>('/api/libraries', catalogRefresh);
+    const recentPanel = useInsightPanel<RecentReadItem[]>('/api/stats/recent-read?limit=20', catalogRefresh);
+    const reviewPanel = useInsightPanel<{ counts: { total: number } }>('/api/reviews/inbox/summary', catalogRefresh, isAdmin);
+    const heatmapPanel = useInsightPanel<ActivityDay[]>(`/api/stats/activity-heatmap?weeks=${heatmapWeeks}`, catalogRefresh);
+    const recommendationsPanel = useInsightPanel<RecommendedItem[]>(recommendationGeneration > 0 ? '/api/stats/recommendations?limit=10&refresh=true' : '/api/stats/recommendations?limit=10', recommendationGeneration, recommendationsRequested);
+    const stats = statsPanel.data;
+    const libraries = librariesPanel.data;
+    const recentReads = recentPanel.data ?? [];
+    const recommendations = recommendationsPanel.data ?? [];
+    const heatmapData = heatmapPanel.data;
+    const reviewPending = reviewPanel.data?.counts?.total ?? 0;
+    const loading = librariesPanel.pending && !libraries;
+    const recsLoading = recommendationsRequested && recommendationsPanel.pending;
     const loadRecommendations = useCallback((forceRefresh = false) => {
-        if (recsLoading) return;
         setRecommendationsRequested(true);
-        setRecsLoading(true);
-        const url = forceRefresh ? '/api/stats/recommendations?limit=10&refresh=true' : '/api/stats/recommendations?limit=10';
-        apiClient.get(url)
-            .then(res => setRecommendations(Array.isArray(res.data) ? res.data : []))
-            .catch(console.error)
-            .finally(() => setRecsLoading(false));
-    }, [recsLoading]);
+        if (forceRefresh) setRecommendationGeneration(value => value + 1);
+    }, []);
 
     useEffect(() => {
         if (loading || recommendationsRequested) return;
@@ -148,9 +119,10 @@ export default function Dashboard() {
         );
     }
 
-    if (libraries.length === 0) {
+    if (libraries?.length === 0) {
         return (
             <div className="p-4 sm:p-8 max-w-5xl mx-auto">
+                <InsightNotice panel={librariesPanel} label={t('insights.libraries')} />
                 <div className="rounded-[28px] border border-gray-800 bg-linear-to-br from-komgaSurface to-gray-950 p-8 sm:p-10 shadow-2xl">
                     <div className="max-w-3xl space-y-6">
                         <div className="inline-flex items-center gap-2 rounded-full border border-komgaPrimary/30 bg-komgaPrimary/10 px-3 py-1 text-sm text-komgaPrimary">
@@ -202,6 +174,10 @@ export default function Dashboard() {
                 <h1 className="text-2xl font-bold text-white tracking-tight">{t('dashboard.title')}</h1>
             </div>
 
+            <InsightNotice panel={librariesPanel} label={t('insights.libraries')} />
+            <InsightNotice panel={statsPanel} label={t('insights.overview')} />
+            <InsightNotice panel={recentPanel} label={t('insights.recent')} />
+            <InsightNotice panel={reviewPanel} label={t('insights.review')} />
             {/* 待审核提示行（仅有挂起项时显示）。审核中心是管理员专属，别把普通用户往守卫上送 */}
             {reviewPending > 0 && isAdmin && (
                 <button
@@ -215,6 +191,9 @@ export default function Dashboard() {
                 </button>
             )}
 
+            {recentPanel.data?.length === 0 && !recentPanel.failed && !recentPanel.pending && (
+                <p className="text-sm text-gray-500">{t('insights.emptyRecent')}</p>
+            )}
             {/* 继续阅读 Hero —— 提至首屏 */}
             {recentReads.length > 0 && (
                 <div>
@@ -376,19 +355,18 @@ export default function Dashboard() {
 
                     {/* 物理存储占用图 */}
                     <StoragePieChart librarySizes={stats.library_sizes} />
-
-                    {/* GitHub 风格活跃热力图 */}
-                    <div className="lg:col-span-2">
-                        <ActivityHeatmap data={heatmapData} activeDays7={stats.active_days_7} weeks={heatmapWeeks} onChangeWeeks={setHeatmapWeeks} />
-                    </div>
                 </div>
             )}
 
+            <div>
+                <InsightNotice panel={heatmapPanel} label={t('insights.activity')} />
+                <ActivityHeatmap data={heatmapData} activeDays7={stats?.active_days_7} weeks={heatmapWeeks} onChangeWeeks={setHeatmapWeeks} />
+            </div>
             {/* 继续阅读横向轮播：原位置内容已移动到 Hero 区 */}
 
             {/* 猜你喜欢 - AI 推荐 */}
             <div ref={recommendationsRef}>
-            {(recsLoading || recommendations.length > 0 || !recommendationsRequested) && (
+            <InsightNotice panel={recommendationsPanel} label={t('insights.recommendations')} />
                 <div>
                     <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
                         <Sparkles className="w-5 h-5 text-amber-400" />
@@ -410,7 +388,7 @@ export default function Dashboard() {
                             {t('dashboard.recommendations.refresh')}
                         </button>
                     </h2>
-                    {recsLoading ? (
+                    {recsLoading && recommendations.length === 0 ? (
                         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
                             {Array.from({ length: 5 }, (_, i) => (
                                 <div key={i} className="animate-pulse">
@@ -424,6 +402,8 @@ export default function Dashboard() {
                         <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-5 text-sm text-gray-500">
                             {t('dashboard.recommendations.deferred')}
                         </div>
+                    ) : recommendationsPanel.data?.length === 0 && !recommendationsPanel.failed ? (
+                        <p className="text-sm text-gray-500">{t('insights.emptyRecommendations')}</p>
                     ) : (
                         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
                             {recommendations.map(item => {
@@ -450,7 +430,6 @@ export default function Dashboard() {
                         </div>
                     )}
                 </div>
-            )}
             </div>
         </div>
     );
@@ -483,16 +462,16 @@ function StatCard({ icon, label, value, subtitle, color, borderColor, iconColor 
 
 
 // GitHub 风格活跃热力图组件
-function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: ActivityDay[]; activeDays7: number; weeks: number; onChangeWeeks: (w: number) => void }) {
+function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: ActivityDay[] | undefined; activeDays7?: number; weeks: number; onChangeWeeks: (w: number) => void }) {
     const { locale, t, formatNumber } = useI18n();
     const TOTAL_DAYS = weeks * 7;
 
     // 构建日期 → 页数的映射
     const activityMap = new Map<string, number>();
-    data.forEach(d => activityMap.set(d.date, d.page_count));
+    (data ?? []).forEach(d => activityMap.set(d.date, d.page_count));
 
     // 计算颜色等级的阈值
-    const maxPages = Math.max(...data.map(d => d.page_count), 1);
+    const maxPages = Math.max(...(data ?? []).map(d => d.page_count), 1);
     const getLevel = (count: number): number => {
         if (count === 0) return 0;
         if (count <= maxPages * 0.25) return 1;
@@ -556,7 +535,7 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
                 <div>
                     <h3 className="text-lg font-semibold text-white">{t('dashboard.activity.title')}</h3>
                     <p className="text-xs text-gray-500 mt-1">
-                        {t('dashboard.activity.summary', { count: formatNumber(activeDays7) })}
+                        {activeDays7 !== undefined && t('dashboard.activity.summary', { count: formatNumber(activeDays7) })}
                     </p>
                 </div>
                 <div className="flex items-center">
@@ -572,6 +551,7 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
                 </div>
             </div>
 
+            {data !== undefined && <>
             <div className="overflow-x-auto">
                 <div className="inline-flex flex-col gap-0.5 min-w-fit">
                     {/* 月份标签行 */}
@@ -634,6 +614,7 @@ function ActivityHeatmap({ data, activeDays7, weeks, onChangeWeeks }: { data: Ac
                 <span className="text-[10px] text-gray-500 ml-1">{t('dashboard.activity.legendMore')}</span>
             </div>
 
+            </>}
             {/* Tooltip */}
             {tooltip && (
                 <div

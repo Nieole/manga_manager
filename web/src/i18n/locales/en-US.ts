@@ -1,6 +1,23 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'insights.emptyRecent': 'No recent reading yet.',
+    'insights.emptyRecommendations': 'No recommendations available yet.',
+    'insights.unavailable': '{{panel}}: unavailable.',
+    'insights.stale': '{{panel}}: showing earlier results; update not confirmed.',
+    'insights.loading': '{{panel}}: loading…',
+    'insights.retry': 'Retry',
+    'insights.retryPanel': 'Retry {{panel}}',
+    'insights.libraries': 'Libraries',
+    'insights.overview': 'Overview',
+    'insights.recent': 'Continue reading',
+    'insights.review': 'Review inbox',
+    'insights.activity': 'Reading activity',
+    'insights.recommendations': 'Recommendations',
+    'insights.streak': 'Reading streak',
+    'insights.time': 'Reading time',
+    'insights.period': 'Period review',
+
     'settings.toast.configSavedRestart': 'Configuration saved and published; some fields still require a server restart.',
     'settings.toast.configSavedNext': 'Configuration saved and published; related fields are read by subsequent requests or jobs.',
     'settings.toast.configRefreshFailed': 'The save succeeded, but refreshing settings failed. Reload to verify the current view.',
