@@ -72,7 +72,7 @@ type aiGroupingViewData struct {
 }
 
 // loadAIGroupingViewData 一次性取齐这批审核的候选合集与涉及的全部系列名。
-func loadAIGroupingViewData(ctx context.Context, q database.Querier, reviewIDs []int64) (aiGroupingViewData, error) {
+func loadAIGroupingViewData(ctx context.Context, q GroupingQueries, reviewIDs []int64) (aiGroupingViewData, error) {
 	data := aiGroupingViewData{
 		collectionsByReview: map[int64][]database.AiGroupingReviewCollection{},
 		seriesByID:          map[int64]database.GetSeriesNamesByIDsRow{},
@@ -111,7 +111,7 @@ func loadAIGroupingViewData(ctx context.Context, q database.Querier, reviewIDs [
 }
 
 // loadAIGroupingViewDataForCollection 给「只渲染单个候选合集」的路径用。
-func loadAIGroupingViewDataForCollection(ctx context.Context, q database.Querier, collection database.AiGroupingReviewCollection) (aiGroupingViewData, error) {
+func loadAIGroupingViewDataForCollection(ctx context.Context, q GroupingQueries, collection database.AiGroupingReviewCollection) (aiGroupingViewData, error) {
 	data := aiGroupingViewData{
 		collectionsByReview: map[int64][]database.AiGroupingReviewCollection{},
 		seriesByID:          map[int64]database.GetSeriesNamesByIDsRow{},
@@ -221,7 +221,7 @@ func aiGroupingReviewFromListRow(row database.ListAIGroupingReviewsRow) database
 	}
 }
 
-func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) listAIGroupingReviews(w http.ResponseWriter, r *http.Request) {
 	libraryID, _ := strconv.ParseInt(r.URL.Query().Get("library_id"), 10, 64)
 	if libraryID < 0 {
 		libraryID = 0
@@ -242,7 +242,7 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 		Offset:    offset,
 		Limit:     limit,
 	}
-	total, err := c.store.CountAIGroupingReviews(r.Context(), database.CountAIGroupingReviewsParams{
+	total, err := c.groupingQueries.CountAIGroupingReviews(r.Context(), database.CountAIGroupingReviewsParams{
 		LibraryID: params.LibraryID,
 		Status:    params.Status,
 	})
@@ -250,7 +250,7 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusInternalServerError, "Failed to count AI grouping reviews")
 		return
 	}
-	rows, err := c.store.ListAIGroupingReviews(r.Context(), params)
+	rows, err := c.groupingQueries.ListAIGroupingReviews(r.Context(), params)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to list AI grouping reviews")
 		return
@@ -271,7 +271,7 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 	}
 	// 预取要么全成功要么整体报错：两步查询的错误都不能被 `_` 吞掉，否则 DB 故障时
 	// 接口会返回 200 且候选合集全为空，用户会以为 AI 一个分组都没分出来。
-	data, err := loadAIGroupingViewData(r.Context(), c.store, reviewIDs)
+	data, err := loadAIGroupingViewData(r.Context(), c.groupingQueries, reviewIDs)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load AI grouping review details")
 		return
@@ -283,9 +283,7 @@ func (c *Controller) listAIGroupingReviews(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, http.StatusOK, payload)
 }
 
-func (c *Controller) aiGroupingActions() *organize.AIGrouping {
-	return organize.NewAIGrouping(c.store, func() { c.PublishEvent("refresh") })
-}
+func (c *organizationHTTP) aiGroupingActions() GroupingCapability { return c.grouping }
 func aiGroupingActionIDs(r *http.Request) (int64, int64, bool) {
 	reviewID, err := parseID(r, "reviewId")
 	if err != nil {
@@ -311,7 +309,7 @@ func aiGroupingActionError(w http.ResponseWriter, r *http.Request, err error, fa
 		jsonError(w, http.StatusInternalServerError, fallback)
 	}
 }
-func (c *Controller) updateAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) updateAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
 	reviewID, id, ok := aiGroupingActionIDs(r)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
@@ -327,14 +325,14 @@ func (c *Controller) updateAIGroupingReviewCollection(w http.ResponseWriter, r *
 		aiGroupingActionError(w, r, err, "Failed to update AI grouping review collection")
 		return
 	}
-	data, err := loadAIGroupingViewDataForCollection(r.Context(), c.store, updated)
+	data, err := loadAIGroupingViewDataForCollection(r.Context(), c.groupingQueries, updated)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, "Failed to load AI grouping collection details")
 		return
 	}
 	jsonResponse(w, http.StatusOK, aiGroupingReviewCollectionToView(data, updated))
 }
-func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) applyAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
 	reviewID, id, ok := aiGroupingActionIDs(r)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
@@ -348,7 +346,7 @@ func (c *Controller) applyAIGroupingReviewCollection(w http.ResponseWriter, r *h
 	view := aiGroupingOutcomeView(result.Snapshot)
 	jsonResponse(w, http.StatusOK, map[string]any{"review": view, "success": true, "review_id": reviewID, "collection_id": id, "created_collection_id": result.CreatedCollectionID})
 }
-func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) applyAIGroupingReview(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "reviewId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid AI grouping review ID")
@@ -362,7 +360,7 @@ func (c *Controller) applyAIGroupingReview(w http.ResponseWriter, r *http.Reques
 	view := aiGroupingOutcomeView(result.Snapshot)
 	jsonResponse(w, http.StatusOK, map[string]any{"review": view, "success": true, "review_id": id, "collections": result.Applied, "skipped": result.Skipped})
 }
-func (c *Controller) rejectAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) rejectAIGroupingReviewCollection(w http.ResponseWriter, r *http.Request) {
 	reviewID, id, ok := aiGroupingActionIDs(r)
 	if !ok {
 		jsonError(w, http.StatusNotFound, "AI grouping review collection not found")
@@ -376,7 +374,7 @@ func (c *Controller) rejectAIGroupingReviewCollection(w http.ResponseWriter, r *
 	view := aiGroupingOutcomeView(result.Snapshot)
 	jsonResponse(w, http.StatusOK, map[string]any{"review": view, "success": true, "review_id": reviewID, "collection_id": id})
 }
-func (c *Controller) rejectAIGroupingReview(w http.ResponseWriter, r *http.Request) {
+func (c *organizationHTTP) rejectAIGroupingReview(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "reviewId")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "Invalid AI grouping review ID")

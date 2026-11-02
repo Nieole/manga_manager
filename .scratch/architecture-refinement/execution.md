@@ -58,3 +58,8 @@
 40 已合入并关闭：主树密码提交与会话撤销、替换会话失败、旧 Basic 在飞回填、设备/强制改密协议及密码探测成本 HTTP race 实际通过 38.782s，私有事务能力隔离 race 1.524s、2 文件/10 项认证恢复与重置界面消费者通过。Go lint 0 issues、gofmt、完整基线 diff 和 tracked 冲突标记扫描通过。实现树合并后完整 API/database 108.123s/8.018s、前端 103 文件/954 项及 lint/build 的真实证据保留在逐票记录。主树日志为 .tmp/merge-wave20-*.log。
 
 31、28 已依次合入并联合关闭：主树资源及内容完整 race、配置/页读取/整书下载 HTTP race 通过；两票合并后 scanner/application/scanning/runtime/task/runtimecfg 完整 race 80.762s/2.134s/26.288s/13.738s/1.912s/1.268s、坏归档事件与嵌套库监听及资源 HTTP 组合 race 36.565s 实际通过。Engine 停止准入与取消通知、实际 body 退出、watcher join 和最终资源退休分别验证；31 用真实 Stopping 边界替代旧 20ms 假定，28 保留坏归档失败及明细覆盖。最终 lint 0 issues、gofmt、完整基线差异与 tracked 冲突标记扫描通过；本波无前端生产或生成契约变更。原始证据为主树 .tmp/merge-wave21-*.log。
+
+
+## 44 resumed worktree evidence (2026-11-02; not integrated)
+
+`codex/refinement-44` at base `da6811b` retains uncommitted organization/metadata HTTP migration. Production routes consume a standalone narrow capability family under the existing auth gate; no second runtime/Engine/Manager/SSE/cache. Full ordinary Go tests, focused family/owner races, Go lint/build/format, TS generation drift and 64 frontend consumers plus web lint/build passed. Full API race exceeded a 6m deadline; whole-repo doc-style script hit MSYS fork/resource limits and a tool deadline. Exact commands, logs and 47 compatibility exit obligations are appended to ticket 44. Ticket remains open; this is worktree evidence, not an integration/closure claim.

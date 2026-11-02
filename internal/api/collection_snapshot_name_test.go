@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"manga-manager/internal/database"
+	"manga-manager/internal/organize"
 )
 
 // preemptingSnapshotStore 在开事务之前抢先建出一个同名合集，精确复现「查到不存在、真正写入时
@@ -80,7 +81,7 @@ func TestSnapshotSmartCollectionRejectsDuplicateName(t *testing.T) {
 
 		// 抢先者走的是同一条写入通路，只是提前一步提交；它落在 WithSmartSnapshot 开事务之前，
 		// 也就是固化路径「查完重、还没写」的那一刻，不靠 sleep 赛跑。
-		controller.store = &preemptingSnapshotStore{Store: store, preempt: func() {
+		controller.organizationHTTP.shelves = organize.NewSmartCollections(&preemptingSnapshotStore{Store: store, preempt: func() {
 			if err := store.ExecTx(ctx, func(q *database.Queries) error {
 				_, err := q.CreateCollection(ctx, database.CreateCollectionParams{
 					Name:        "Frozen Action",
@@ -91,7 +92,7 @@ func TestSnapshotSmartCollectionRejectsDuplicateName(t *testing.T) {
 			}); err != nil {
 				t.Errorf("抢先建合集失败: %v", err)
 			}
-		}}
+		}})
 
 		rec := postSmartSnapshot(t, controller, filterID, `{"name":"Frozen Action","description":"snapshot"}`)
 		if rec.Code != http.StatusConflict {
