@@ -8,7 +8,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiClient, getApiErrorMessage, isAxiosError } from '../api/client';
-import { reconcileOfflineOwner, releaseOfflineOwner, syncQueuedOfflineProgress } from '../pages/book-reader/offlineReader';
+import { reconcileOfflineOwner } from '../features/offline/offlineReader';
+import { endOfflineSession } from '../features/offline/offlineSession';
 import { isBackendUnreachable } from './offlineAccess';
 import { setCsrfToken } from '../utils/apiAuth';
 
@@ -161,28 +162,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applySession]);
 
   const logout = useCallback(async () => {
-    // 先尽力把待回传的进度传上去：登出这一刻会话仍然有效，是队列最后一次能上行的机会。
-    // 传不掉的（断网时登出）随后照清——留着它，下一个在这台设备上登录的人会被
-    // useReaderOffline 自动把它当成自己的进度传上去，那比丢几页更糟。
-    try {
-      await syncQueuedOfflineProgress();
-    } catch {
-      // 回传失败不拦着登出。
-    }
-    try {
-      await apiClient.post('/api/auth/logout');
-    } catch {
-      // 忽略登出错误：无论如何都清本地态。
-    }
+    await endOfflineSession(() => apiClient.post('/api/auth/logout'));
     setCsrfToken('');
     setUser(null);
-    // 登出是「我要离开这台设备」的明确表态，本机离线残留整份交还。三条不经过登出的换人路径
-    //（登录/setup、刷新页面状态探测、上一个人直接关窗口）由 reconcileOfflineOwner 对账。
-    try {
-      releaseOfflineOwner();
-    } catch {
-      // localStorage 不可用（隐私模式/配额）时忽略：登出本身不应因此失败。
-    }
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {

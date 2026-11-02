@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { queueOfflineProgress, reconcileOfflineOwner, releaseOfflineOwner } from './offlineReader';
+import { queueOfflineProgress, reconcileOfflineOwner, releaseOfflineOwner } from '../../features/offline/offlineReader';
 
 const PROGRESS_KEY = 'manga-manager:offline-progress';
 const BOOKS_KEY = 'manga-manager:offline-books';
