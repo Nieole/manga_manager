@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+
 	"manga-manager/internal/application"
 	"manga-manager/internal/application/configuration"
 	"manga-manager/internal/application/diskjobs"
@@ -38,6 +39,7 @@ type Lifecycle interface {
 
 // ReadingDependencies supplies content and reader query projections.
 type ReadingDependencies struct {
+	Capabilities    *ReaderCapabilities
 	Content         *bookcontent.Service
 	ImageCache      *bookcontent.MemoryCache
 	Statistics      *dashboard.Service
@@ -158,6 +160,9 @@ func (t *Transport) Bind(d HostDependencies) *Host {
 	e := c.taskEngine
 	e.engine, e.runs, e.runStore, e.registry = d.Libraries.Runs.Engine, d.Libraries.Runs.Runs, d.Libraries.Runs.Store, d.Libraries.Runs.Registry
 	e.runBackground = d.Lifecycle.Go
+	if d.Reading.Capabilities != nil {
+		c.reader = c.bindReaderHTTP(d.Reading.Capabilities)
+	}
 	return &Host{compatibility: c}
 }
 

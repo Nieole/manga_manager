@@ -4,6 +4,8 @@ package bootstrap
 
 import (
 	"context"
+	"time"
+
 	"manga-manager/internal/api"
 	"manga-manager/internal/application/runtime"
 	"manga-manager/internal/bookcontent"
@@ -14,7 +16,6 @@ import (
 	"manga-manager/internal/runtimecfg"
 	"manga-manager/internal/scanner"
 	"manga-manager/internal/task"
-	"time"
 )
 
 // Options controls process inputs and scheduling at the production assembly seam.
@@ -48,8 +49,10 @@ func Open(ctx context.Context, store database.Store, cfg *config.Manager, option
 		resources.Close()
 		return nil, err
 	}
+	stats := dashboard.New()
+	reader := api.NewReaderCapabilities(store, app.Relations, app.Proposals, app.Engine, func() { stats.InvalidateVolatile("reading") })
 	host := transport.Bind(api.HostDependencies{
-		Reading:        api.ReadingDependencies{Content: content, ImageCache: memory, Statistics: dashboard.New(), Recommendations: recommendation.New(24 * time.Hour), KOReader: app.KOReader},
+		Reading:        api.ReadingDependencies{Capabilities: reader, Content: content, ImageCache: memory, Statistics: stats, Recommendations: recommendation.New(24 * time.Hour), KOReader: app.KOReader},
 		Organization:   api.OrganizationDependencies{Relations: app.Relations, Proposals: app.Proposals},
 		Libraries:      api.LibraryDependencies{Management: app.LibraryManagement, Scans: app.Scans, Maintenance: app.Maintenance, Moves: app.Moves, Disk: app.Disk, Intelligence: app.Intelligence, External: app.External, Relocation: app.Relocation, Scanner: app.Scanner, Watcher: app.Watcher, WatcherError: app.WatcherError, DiskWork: app.DiskWork, Runs: api.RunDependencies{Engine: app.Engine, Runs: app.Runs, Store: app.Tasks, Registry: app.Registry}},
 		Administration: api.AdministrationDependencies{Configuration: app.Configuration},
