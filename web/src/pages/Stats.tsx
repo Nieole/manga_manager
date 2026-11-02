@@ -6,11 +6,12 @@
  */
 
 import { useLibraryRefresh } from '../session/ApplicationSessionProvider';
-import { useEffect, useMemo, useState } from 'react';
-import { Flame, Clock, CalendarRange, BookCheck, Trophy, Loader2, BarChart3 } from 'lucide-react';
-import { apiClient, getApiErrorMessage } from '../api/client';
+import { useMemo, useState } from 'react';
+import { Flame, Clock, CalendarRange, BookCheck, Trophy, BarChart3 } from 'lucide-react';
+import { useAuth } from '../auth/AuthProvider';
+import { useInsightPanel } from './insights/useInsightPanel';
+import { InsightNotice } from './insights/InsightNotice';
 import { useI18n } from '../i18n/LocaleProvider';
-import { useToast } from '../components/ToastProvider';
 
 interface StreakResponse { current: number; longest: number }
 interface BookReadingTime { book_id: number; book_name: string; book_title: string; series_id: number; series_name: string; total_seconds: number }
@@ -21,19 +22,23 @@ interface PeriodResponse { pages: number; read_seconds: number; active_days: num
 const cardClass = 'bg-komgaSurface border border-gray-800 rounded-2xl p-5';
 
 export default function Stats() {
+  const { user } = useAuth();
+  return <StatsContent key={user?.id ?? 'anonymous'} />;
+}
+
+function StatsContent() {
   const catalogRefresh = useLibraryRefresh({ area: 'stats' });
   const { t, formatNumber } = useI18n();
-  const { showToast } = useToast();
-
-  const [streak, setStreak] = useState<StreakResponse>({ current: 0, longest: 0 });
-  const [readingTime, setReadingTime] = useState<ReadingTimeResponse>({ total_seconds: 0, top: [] });
-  const [loading, setLoading] = useState(true);
-
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [month, setMonth] = useState(0); // 0 = 全年
-  const [period, setPeriod] = useState<PeriodResponse | null>(null);
-  const [periodLoading, setPeriodLoading] = useState(true);
+  const streakPanel = useInsightPanel<StreakResponse>('/api/stats/streak', catalogRefresh);
+  const timePanel = useInsightPanel<ReadingTimeResponse>('/api/stats/reading-time?limit=10', catalogRefresh);
+  const q = month > 0 ? `year=${year}&month=${month}` : `year=${year}`;
+  const periodPanel = useInsightPanel<PeriodResponse>(`/api/stats/period?${q}`, catalogRefresh);
+  const streak = streakPanel.data;
+  const readingTime = timePanel.data;
+  const period = periodPanel.data;
 
   const formatDuration = (seconds: number): string => {
     // 先算总分钟再拆时/分，避免分钟分量四舍五入到 60（否则会显示 "1h 60m"）。
@@ -42,43 +47,8 @@ export default function Stats() {
     return t('stats.duration.hoursMinutes', { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 });
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    Promise.all([
-      apiClient.get<StreakResponse>('/api/stats/streak').then((r) => r.data).catch(() => ({ current: 0, longest: 0 })),
-      apiClient.get<ReadingTimeResponse>('/api/stats/reading-time?limit=10').then((r) => r.data).catch(() => ({ total_seconds: 0, top: [] })),
-    ]).then(([s, rt]) => {
-      if (cancelled) return;
-      setStreak(s);
-      setReadingTime(rt);
-    }).catch((err) => {
-      if (!cancelled) showToast(getApiErrorMessage(err, t('stats.loadFailed')), 'error');
-    }).finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [t, showToast, catalogRefresh]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setPeriodLoading(true);
-    const q = month > 0 ? `year=${year}&month=${month}` : `year=${year}`;
-    apiClient.get<PeriodResponse>(`/api/stats/period?${q}`)
-      .then((r) => { if (!cancelled) setPeriod(r.data); })
-      .catch((err) => { if (!cancelled) showToast(getApiErrorMessage(err, t('stats.loadFailed')), 'error'); })
-      .finally(() => { if (!cancelled) setPeriodLoading(false); });
-    return () => { cancelled = true; };
-  }, [year, month, t, showToast, catalogRefresh]);
-
   const years = useMemo(() => Array.from({ length: 6 }, (_, i) => currentYear - i), [currentYear]);
-  const maxTop = useMemo(() => Math.max(1, ...readingTime.top.map((b) => b.total_seconds)), [readingTime.top]);
-
-  if (loading) {
-    return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-komgaPrimary" />
-      </div>
-    );
-  }
+  const maxTop = Math.max(1, ...(readingTime?.top ?? []).map((book) => book.total_seconds));
 
   return (
     <div className="p-4 sm:p-8 max-w-5xl mx-auto space-y-8">
@@ -87,16 +57,18 @@ export default function Stats() {
         <h1 className="text-2xl font-bold text-white">{t('stats.title')}</h1>
       </div>
 
+      <InsightNotice panel={streakPanel} label={t('insights.streak')} />
+      <InsightNotice panel={timePanel} label={t('insights.time')} />
       {/* 概览卡：连续天数 + 累计时长 */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className={cardClass}>
           <div className="flex items-center gap-2 text-orange-400"><Flame className="h-4 w-4" /><span className="text-sm text-gray-400">{t('stats.streak.current')}</span></div>
-          <div className="mt-2 text-3xl font-bold text-white">{t('stats.streak.days', { count: streak.current })}</div>
-          <div className="mt-1 text-xs text-gray-500">{t('stats.streak.longest', { count: streak.longest })}</div>
+          <div className="mt-2 text-3xl font-bold text-white">{streak ? t('stats.streak.days', { count: streak.current }) : '—'}</div>
+          <div className="mt-1 text-xs text-gray-500">{streak && t('stats.streak.longest', { count: streak.longest })}</div>
         </div>
         <div className={cardClass}>
           <div className="flex items-center gap-2 text-sky-400"><Clock className="h-4 w-4" /><span className="text-sm text-gray-400">{t('stats.readingTime.total')}</span></div>
-          <div className="mt-2 text-3xl font-bold text-white">{formatDuration(readingTime.total_seconds)}</div>
+          <div className="mt-2 text-3xl font-bold text-white">{readingTime ? formatDuration(readingTime.total_seconds) : '—'}</div>
           <div className="mt-1 text-xs text-gray-500">{t('stats.readingTime.hint')}</div>
         </div>
         <div className={cardClass}>
@@ -124,9 +96,8 @@ export default function Stats() {
           </div>
         </div>
 
-        {periodLoading || !period ? (
-          <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-komgaPrimary" /></div>
-        ) : (
+        <InsightNotice panel={periodPanel} label={t('insights.period')} />
+        {period && (
           <>
             <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
               <ReviewStat label={t('stats.review.pages')} value={formatNumber(period.pages)} />
@@ -161,7 +132,7 @@ export default function Stats() {
           <Trophy className="h-5 w-5 text-amber-400" />
           <h2 className="text-lg font-semibold text-white">{t('stats.readingTime.topTitle')}</h2>
         </div>
-        {readingTime.top.length === 0 ? (
+        {readingTime && (readingTime.top.length === 0 ? (
           <p className="py-6 text-center text-sm text-gray-500">{t('stats.readingTime.empty')}</p>
         ) : (
           <ul className="space-y-2.5">
@@ -179,7 +150,7 @@ export default function Stats() {
               </li>
             ))}
           </ul>
-        )}
+        ))}
       </div>
     </div>
   );

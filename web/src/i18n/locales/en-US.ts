@@ -1,6 +1,23 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'insights.emptyRecent': 'No recent reading yet.',
+    'insights.emptyRecommendations': 'No recommendations available yet.',
+    'insights.unavailable': '{{panel}}: unavailable.',
+    'insights.stale': '{{panel}}: showing earlier results; update not confirmed.',
+    'insights.loading': '{{panel}}: loading…',
+    'insights.retry': 'Retry',
+    'insights.retryPanel': 'Retry {{panel}}',
+    'insights.libraries': 'Libraries',
+    'insights.overview': 'Overview',
+    'insights.recent': 'Continue reading',
+    'insights.review': 'Review inbox',
+    'insights.activity': 'Reading activity',
+    'insights.recommendations': 'Recommendations',
+    'insights.streak': 'Reading streak',
+    'insights.time': 'Reading time',
+    'insights.period': 'Period review',
+
     'settings.editor.conflict': 'Server settings changed. Your unsaved edits and their original version are preserved. Review them, or explicitly discard this section and reload.',
     'settings.editor.reloadSection': 'Discard this section’s edits and reload',
     'settings.toast.configSavedRestart': 'Configuration saved and published; some fields still require a server restart.',

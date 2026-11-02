@@ -1,6 +1,23 @@
 import type { MessageCatalog } from '../core';
 
 export const messages: MessageCatalog = {
+    'insights.emptyRecent': '还没有最近阅读记录。',
+    'insights.emptyRecommendations': '暂时没有推荐。',
+    'insights.unavailable': '{{panel}}：暂不可用。',
+    'insights.stale': '{{panel}}：正在显示旧结果，更新尚未确认。',
+    'insights.loading': '{{panel}}：加载中…',
+    'insights.retry': '重试',
+    'insights.retryPanel': '重试{{panel}}',
+    'insights.libraries': '资料库',
+    'insights.overview': '概览',
+    'insights.recent': '继续阅读',
+    'insights.review': '审核收件箱',
+    'insights.activity': '阅读活动',
+    'insights.recommendations': '推荐',
+    'insights.streak': '连续阅读',
+    'insights.time': '阅读时长',
+    'insights.period': '期间回顾',
+
     'settings.editor.conflict': '服务器设置已变化。本分区未保存的修改和原版本仍保留；请检查，或明确放弃本分区修改后重新载入。',
     'settings.editor.reloadSection': '放弃本分区修改并重新载入',
     'settings.toast.configSavedRestart': '配置已保存并发布；部分字段仍需重启服务后生效。',
