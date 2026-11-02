@@ -31,7 +31,7 @@
 
 11、23、19 已依次合入并关闭：11 合集/快照及权限 API race 86.945s、organize 8.175s、reading 9.227s、数据库窄能力 race 7.237s 与 41 项页面消费者通过；23 删库 HTTP race 30.846s、libraries 全量 race 19.331s、drain/准入保留 race 4.762s 与 5 项删除界面消费者通过；19 external 全量 race 15.517s、diskjobs 全量 race 15.561s、外部/删除/下载组合 HTTP race 45.801s 与 16 项界面消费者通过。最终前端 lint/build、Go lint 0 issues、gofmt 和 diff 检查通过；原始日志为 `.tmp/merge-wave9-*.log`。本轮部分启动被 Application Control 拦截，重跑实际通过才计入；数据库普通全包在主树仍被拦截，实现树全包实际通过 13.472s，主树新窄能力 race 已实际通过。Windows 跳过的 Unix symlink 测试不计其他平台执行。
 
-当前已关闭 47/48：01–47。34 在计划级复审发现提案应用提交后刷新错误被吞掉的缺口（`rc_d9a20c81`）后重新打开，修复并补 16 项真实消费者回归，已通过组合门禁及计划复审重新关闭；37 同样在独立审查、组合门禁和计划复审后关闭。43–46 均独立审查通过，并经独立合并者逐次组合验证后合入和关闭；47 在 `2744240` 独立工作树完成实现并独立审查通过，经独立合并者聚焦 race 与门禁组合验证后合入；最新主线 `3d82d84` 的 43–46 关闭事实已协调，48 为下一票逐故事联合验收。25/32/42 的计划级独立复审通过，另外 33/34/35 的合并后独立审查以 `0b7e2e7` 为目标通过，确认合并保留生产行为与累计 CHANGELOG；该审查未重跑测试，组合测试实际执行记录见下。32 的协议并发保存误报、KOReader 冲突重载后诊断陈旧，以及 34 的自身失效竞争吞掉刷新告警均在修复、回归和复审通过后才合入。
+当前已关闭 48/48：01–48。34 在计划级复审发现提案应用提交后刷新错误被吞掉的缺口（`rc_d9a20c81`）后重新打开，修复并补 16 项真实消费者回归，已通过组合门禁及计划复审重新关闭；37 同样在独立审查、组合门禁和计划复审后关闭。43–46 均独立审查通过，并经独立合并者逐次组合验证后合入和关闭；47 在 `2744240` 独立工作树完成实现并独立审查通过，经独立合并者聚焦 race 与门禁组合验证后合入；最新主线 `3d82d84` 的 43–46 关闭事实已协调；48 的逐故事证据、独立合并核查和固定基线双轴复审已完成，限制详见末节。25/32/42 的计划级独立复审通过，另外 33/34/35 的合并后独立审查以 `0b7e2e7` 为目标通过，确认合并保留生产行为与累计 CHANGELOG；该审查未重跑测试，组合测试实际执行记录见下。32 的协议并发保存误报、KOReader 冲突重载后诊断陈旧，以及 34 的自身失效竞争吞掉刷新告警均在修复、回归和复审通过后才合入。
 
 25/33 首次组合验证的前端 104 文件 / 958 项及 lint/build 通过，但全量 Go 实际失败于 scanner 临时目录清理，HTTP race 实际发现 restoration fixture 的 slotLimit 并发读写；两项已完成根因复现和修复（原始失败证据 `.tmp/wave-next-integration-*.log`，修复 `6c7d587`）：前者在四个独立 scanner fixture 注册 Close 以等待异步封面结束，后者在替换装配期回调前 WaitBackground；未修改生产逻辑或削弱断言。32 合入后前端 976 项及 lint/build 通过（`.tmp/settings-integration-web-*.log`）。42 合入后 bootstrap/runtime/relocating/cmd 四包完整 race 实际通过（`.tmp/bootstrap-combined-integration-race.log`），计划级独立审查通过但不代表全仓绿色。34/35 合入后的前端组合门禁实际通过：105 文件 / 990 项线程测试加 16 项 heatmap 子进程测试，共 1006 项，lint/build 通过（`.tmp/frontend-feature-combined-*.log`）。夹具修复同步集成后，完整 `go test ./...`（API 138.202s、bootstrap 1.387s、scanner 20.492s）、gofmt 空输出、lint `0 issues.`、build、restoration 聚焦 race ×5 和 scanner 聚焦 race ×10 均通过（`.tmp/feature-combined-*.log`）。完整 API race 在旧工作树 15 分钟包超时，不是通过；文档检查超时与其他平台/真实设备未执行的限制同样不计通过。
 
@@ -90,3 +90,11 @@ Fresh combination gates: focused bootstrap/API race PASS **26.600s/29.141s**, go
 ## 48 integrated acceptance artifact (2026-11-03; OPEN, uncommitted)
 
 At `codex/refinement-48` / `46c20cb`, [acceptance.md](acceptance.md) records 204/204 stories with implementation/consumer symbols, exact executed regression evidence, 25 manual capability records, broader-region dispositions, old-authority exit and explicit limitations. Interrupted attempt artifacts/logs were preserved, inspected and copied into repository-owned `acceptance-evidence/`; same-tree complete ordinary Go and all-package race PASS (API 723.912s), fmt/vet/lint/build, TS26/SQL drift, vulnerability scan and frontend1024/lint/TS/build PASS. Retry freshly reran all1024 with JSON case results; bounded traced doc-style retry PASS after retained timeout. Linux/macOS CGO cross-builds failed for missing target C toolchains; other-platform runtime, physical devices/browser storage and real providers remain unexecuted. No production behavior changed or predecessor omission implemented. Ticket48 stays OPEN pending independent two-axis review after the artifact and parent disposition of findings/limitations; this note does not close it.
+
+## 最终集成与审查结论
+
+验收产物 `9435e7b` 在修正新增证据换行、哈希及 staged whitespace 门禁后提交，由独立合并者从干净已提交工作树核查并批准，已合入集成分支。204 行故事映射、25 项能力人工核对及代表性真实消费者执行证据保存在 [acceptance.md](acceptance.md) 与 `acceptance-evidence/`；证据校验不是 204 条故事在所有环境上的穷尽认证。
+
+固定基线 `badc595541250189586b87e9d1c1c83ac79fd677` 至 `9435e7b` 的最终双轴独立复审均批准：**Standards 0 项可行动发现；Spec 0 项已确立的可行动发现**。Spec 复审的证据校验、基线 whitespace 及 task/content/proposal/configuration 定向检查通过；审查未穷尽所有改动文件，也未独立重跑全套长测试。原始全套 Go/race、1024 前端、格式/lint/build、TS26/SQL 无漂移等实际执行范围与证据仍按验收文档记录。
+
+48 已关闭，当前 48/48 本地票全部关闭。Linux/Darwin CGO 交叉构建因缺少目标 C 工具链失败，非 Windows 运行、真实设备/外部服务与浏览器存储未执行；这些限制保留为失败/未执行，不记为通过。没有已复现而未处置的前置票实现缺口；没有推送或创建远程 PR。

@@ -1,4 +1,4 @@
-# Integrated acceptance — ticket 48 (OPEN)
+# Integrated acceptance — ticket 48
 
 ## Target, provenance and acceptance discipline
 
@@ -6,7 +6,19 @@
 - Ground truth: AGENTS, CONTEXT, agent issue/domain/doc-style guides, architecture spec/design/queue/execution, issue 48 and ADRs 0001/0003/0005–0015. The external inventory is preserved as [input only](acceptance-evidence/inventory-input.md), not accepted evidence: it describes a pre-46/47 source snapshot and explicitly did not execute tests. All current row paths/symbols were checked; three inherited frontend suite/template pointers were replaced by concrete executed cases. The original partial mapping is retained as `stories-inherited.json`.
 - Current gates below were completed by the interrupted 48 attempt on the same HEAD with no tracked source changes; retry inspected commands, logs and exit files, not just filenames. Fresh retry re-executed all 1024 frontend tests with JSON case results. Source digest and retired-boundary/import audit: [structure-audit.json](acceptance-evidence/structure-audit.json). `manifest.json` hashes retained evidence. Documentation-only reconciliation does not change tested production bytes.
 - **Four distinct states:** observed source / test exists / actual scoped execution PASS / unexecuted or failed limitation. The matrix supplies source + consumer + actual executed witness + manual review; it never promotes ticket done, presence, package compilation, cross-compilation or a representative regression to complete story acceptance. Packages with no test files (accounts and several query owners) obtain behavioral evidence through real SQLite HTTP/use-case consumers, not package compilation.
-- 48 stays **OPEN**. This artifact precedes the independent two-axis review: (1) behavior/spec/evidence and (2) architecture/ownership/current documentation. Neither independent review is claimed here. Findings must be fixed and reviewed before closure. A missing predecessor feature goes back to its originating ticket with a concrete reproducer; 48 does not implement it.
+- **Disposition:** integrated artifact `9435e7b` passed independent merger verification and both final review axes against fixed baseline `badc595541250189586b87e9d1c1c83ac79fd677`. Ticket 48 closes with the explicit limitations below retained, not converted to PASS. No reproduced predecessor defect required reopening; future concrete omissions still return to their originating ticket. The 204-row traceability matrix and representative executed regressions are not exhaustive certification of every story or environment.
+
+## Independent final reviews
+
+Both reviewers independently inspected the integration branch at `9435e7b` using `git diff badc595541250189586b87e9d1c1c83ac79fd677...HEAD` and the complete commit list.
+
+### Standards
+
+**APPROVE; 0 actionable findings.** No material documented-standard breach or baseline-smell finding survived the repository-specific boundaries and mitigations. Tests were not rerun by this reviewer.
+
+### Spec
+
+**APPROVE; 0 actionable findings established** for missing requirements, scope creep or incorrect implementation. The reviewer ran the evidence validator, baseline whitespace check and targeted task/content/proposal/configuration tests; task results were cached. Production-consumer inspection covered major boundaries but was not exhaustive across all 768 changed files. Full integration/race/frontend suites were not independently rerun. Evidence validation does not establish exhaustive acceptance of all 204 stories. Failed Linux/Darwin target builds and unexecuted non-Windows runtime, physical devices, live providers and browser storage remain limitations, not waived successful gates.
 
 ## Executed gates and exact evidence
 
