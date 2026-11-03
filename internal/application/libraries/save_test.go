@@ -31,6 +31,7 @@ func TestCreateLibraryKeepsCommittedResultWhenInitialScanAdmissionFails(t *testi
 func TestLibraryValidationRejectsEquivalentRegisteredRootAcrossCreateAndUpdate(t *testing.T) {
 	store, engine, existing, _ := deletionFixture(t)
 	service := libraries.New(store, engine, libraries.Effects{})
+	t.Chdir(filepath.Dir(existing.Path))
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
