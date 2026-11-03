@@ -1,7 +1,7 @@
 ---
 id: mm-proposal
 type: module-design
-status: draft
+status: active
 title: 元数据提案生命周期
 parent: mm-architecture
 ---
@@ -19,8 +19,6 @@ parent: mm-architecture
 - `ListBySeries`、`Inbox` 与 `PendingCount` 提供读取；字段展示重算当前锁和系列当前值，不相信字段行的旧锁/旧值快照。字段行按批查询，分页总数不随当前页缩减。
 
 ## Boundary
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 本包只认字段名，不拥有 HTTP 编解码、展示标签、候选请求或 AI 合集成员裁决。系列来源写入策略不是提案生命周期；共享边归根 `architecture.md`。
 

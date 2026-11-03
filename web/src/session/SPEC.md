@@ -1,14 +1,12 @@
 ---
 id: mm-session
 type: submodule-design
-status: draft
+status: active
 title: 浏览器会话推送与刷新协调
 parent: mm-web
 ---
 
 ## 责任与契约
-
-未确认：以下契约依据当前会话实现与测试整理，待用户审阅。
 
 一个身份/角色作用域内建立一条 `/api/events` SSE 连接，解码推送、跟踪投递链并广播刷新水位、运行帧和恢复通知。身份或角色改变时，通过 keyed 实例释放旧连接、监听集合和投影；不触碰设备偏好或离线数据归属。
 

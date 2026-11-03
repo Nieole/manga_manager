@@ -1,7 +1,7 @@
 ---
 id: mm-config
 type: module-design
-status: draft
+status: active
 title: 配置快照、更新与持久化
 parent: mm-architecture
 ---
@@ -19,8 +19,6 @@ parent: mm-architecture
 - `ResolveStoragePolicy` 按最具体路径策略解析并返回卷键，不改入参；这里只产出策略，不发放 IO 许可。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不导入兄弟包、不拥有 HTTP 设置端点或资料库数据库行。`runtimecfg.Apply` 负责配置派生的进程资源效果，本包通过注入回调协调，不自行重建解析池、图片并发闸或日志资源；不得把快照副本当成第二份可写运行时配置。
 

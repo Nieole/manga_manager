@@ -1,14 +1,12 @@
 ---
 id: mm-runtime
 type: submodule-design
-status: draft
+status: active
 title: 进程能力装配与生命周期
 parent: mm-application
 ---
 
 ## 责任与顺序
-
-未确认：以下生命周期约束由当前实现与集成测试整理，待用户审阅。
 
 `Runtime.New` 构造共享配置、任务引擎、存储、IO 执行器、功能服务和重启注册表，先于任何恢复或发起输入。传入的 `Effects` 仅提供发布、缓存和身份投影叶操作，不把生命周期配方交回 API。
 

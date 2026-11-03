@@ -1,14 +1,12 @@
 ---
 id: mm-scanner
 type: module-design
-status: draft
+status: active
 title: 资料库归档摄取
 parent: mm-architecture
 ---
 
 ## 责任与契约
-
-未确认：以下边界依据当前扫描实现与测试整理，待用户审阅。
 
 将资料库目录中的归档摄取为系列和书，决定扫描深度、增量跳过、改名身份重连、内嵌元数据导入与被触及系列统计。扫描不是把现有书删除重建；相同文件的身份重连由扫描策略决定。
 

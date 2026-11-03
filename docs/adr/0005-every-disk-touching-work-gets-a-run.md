@@ -2,10 +2,9 @@
 id: mm-adr-0005
 type: architecture-design
 title: 后台磁盘工作建运行与单一准入
-status: draft
+status: active
 parent: mm-architecture
-references:
-  - mm-adr-0004
+references: [mm-adr-0004]
 ---
 
 # 凡动磁盘的后台工作都建运行，准入闸门只留一处

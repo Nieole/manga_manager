@@ -1,14 +1,12 @@
 ---
 id: mm-web-reader
 type: submodule-design
-status: draft
+status: active
 title: 浏览器阅读与本机离线
 parent: mm-web
 ---
 
 ## 责任与生命周期
-
-未确认：以下契约依据当前阅读 hooks 和离线测试整理，待用户审阅。
 
 拥有当前书的数据与页图、翻页/瀑布流导航、阅读偏好、书签、进度与时长上报。`BookReader` 组合此目录能力；当前书的响应和报告必须绑定书标识，切书后的迟到回调不能写入新书视图或把旧页当作新书进度。
 

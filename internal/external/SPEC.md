@@ -1,7 +1,7 @@
 ---
 id: mm-external
 type: module-design
-status: draft
+status: active
 title: 外部目录传输会话
 parent: mm-architecture
 ---
@@ -18,8 +18,6 @@ parent: mm-architecture
 - `CopyFile` 返回是否跳过已有目标；复制到同目录临时文件，Sync、关闭并保留源 mtime 后 rename 提交，正常失败路径清理暂存文件。最终目标在提交前不暴露半成品；复制前与提交前均检查目标是否已存在。
 
 ## Boundary
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 `Store` 只有只读查询，没有写库或事务能力；外部文件不入库，不更新藏书内容或阅读事实。本包不持有完整传输任务、磁盘调度及任务生命周期；复制后确认会话由调用方负责。共享协作边见根 `architecture.md`。
 

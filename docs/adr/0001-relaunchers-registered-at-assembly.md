@@ -2,7 +2,7 @@
 id: mm-adr-0001
 type: architecture-design
 title: 重启函数在装配期注册
-status: draft
+status: active
 parent: mm-architecture
 ---
 

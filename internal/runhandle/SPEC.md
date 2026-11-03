@@ -1,7 +1,7 @@
 ---
 id: mm-runhandle
 type: module-design
-status: draft
+status: active
 title: 单次运行的执行资格
 parent: mm-architecture
 ---
@@ -18,8 +18,6 @@ parent: mm-architecture
 - `AdvanceLive` 表达未提交事务的临时计数，提交后仍须 `Advance`；`DisableCancellation` 由注入通道裁决提交边界。并发安全的写入依赖注入实现，句柄自身用锁保护 IO 累计值。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不解释任务键、作用域与终态，不持有数据库或传输协议；资格绑定由构造方闭包决定。`taskcontrol` 的上下文闸门只作用于单次运行的可中断点，不是全局运行槽位，也不是卷 IO 暂停。跨包批循环宜只接收所需窄接口。
 

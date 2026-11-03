@@ -1,7 +1,7 @@
 ---
 id: mm-taskstore
 type: module-design
-status: draft
+status: active
 title: 任务历史 SQLite 存储
 parent: mm-architecture
 references: [mm-adr-0006]
@@ -18,8 +18,6 @@ references: [mm-adr-0006]
 - 时间以 epoch 毫秒存储、按 UTC 读回，运行主要按序号定序；侧表随运行级联删除。指标的设值与累加分开，Args、Labels 按键合并；裁剪不选择活动或排队运行。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不决定任务体、终态裁决、自动重发、全局槽位、暂停或推送；只执行端口表达的存取。侧表一次合并有事务，不等于整次引擎准入及全部侧数据共享一个事务；不得据此宣称完整声明原子落库。跨包依赖归架构节点。
 

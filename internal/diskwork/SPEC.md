@@ -1,7 +1,7 @@
 ---
 id: mm-diskwork
 type: module-design
-status: draft
+status: active
 title: 后台磁盘作业策略执行
 parent: mm-architecture
 ---
@@ -18,8 +18,6 @@ parent: mm-architecture
 - `Stats` 提供策略档位、卷键、申领总等待与其中的 IO 暂停等待；不包含前置单次运行暂停闸门的等待时长。慢申领记录日志。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不持有任务身份、运行槽位或指标累计，也不读取闭包内部业务。`taskcontrol` 只提供前置暂停检查；不得把单次运行闸门与卷调度的后台整体暂停混同。前台阅读取页不走此后台工种策略入口。跨兄弟依赖由架构节点维护。
 

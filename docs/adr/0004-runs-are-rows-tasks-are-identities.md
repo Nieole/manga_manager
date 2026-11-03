@@ -2,7 +2,7 @@
 id: mm-adr-0004
 type: architecture-design
 title: 任务是身份，运行是执行记录
-status: draft
+status: active
 parent: mm-architecture
 ---
 

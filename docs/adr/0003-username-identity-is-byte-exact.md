@@ -2,7 +2,7 @@
 id: mm-adr-0003
 type: architecture-design
 title: 账户身份按字节精确
-status: draft
+status: active
 parent: mm-architecture
 ---
 

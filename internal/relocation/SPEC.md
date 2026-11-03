@@ -1,7 +1,7 @@
 ---
 id: mm-relocation
 type: module-design
-status: draft
+status: active
 title: 保留身份的资料库路径迁移
 parent: mm-architecture
 references: [mm-adr-0009]
@@ -9,7 +9,7 @@ references: [mm-adr-0009]
 
 ## 责任与契约
 
-未确认：以下接口边界依据当前迁移实现与测试整理，待用户审阅；设计理由归 `mm-adr-0009`。
+设计理由归 `mm-adr-0009`。
 
 拥有确定性的根路径映射、检查快照、确认提交、补偿恢复、异常保护和显式解除保护。检查不移动文件或改藏书身份；提交前必须复核已检查事实，避免用过时预检结果改写新状态。
 

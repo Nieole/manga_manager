@@ -2,7 +2,7 @@
 id: mm-adr-0009
 type: architecture-design
 title: 资料库路径迁移保留身份
-status: draft
+status: active
 parent: mm-architecture
 ---
 

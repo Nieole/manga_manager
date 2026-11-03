@@ -2,10 +2,9 @@
 id: mm-adr-0007
 type: architecture-design
 title: 任务键只用于日志辨认
-status: draft
+status: active
 parent: mm-architecture
-references:
-  - mm-adr-0004
+references: [mm-adr-0004]
 ---
 
 # 任务键退出寻址，留在日志里

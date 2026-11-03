@@ -2,10 +2,9 @@
 id: mm-adr-0008
 type: architecture-design
 title: 重启入参与声明标签分离
-status: draft
+status: active
 parent: mm-architecture
-references:
-  - mm-domain-language
+references: [mm-domain-language]
 ---
 
 # 声明分家：重启入参与声明标签，合并据此判有损
