@@ -1,3 +1,13 @@
+---
+id: mm-adr-0007
+type: architecture-design
+title: 任务键只用于日志辨认
+status: draft
+parent: mm-architecture
+references:
+  - mm-adr-0004
+---
+
 # 任务键退出寻址，留在日志里
 
 状态：已实施（2026-09-09）。重试改按**任务 id** 寻址，两处关键词搜索改判在**作用域**显示名上，
