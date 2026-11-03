@@ -1,7 +1,7 @@
 ---
 id: mm-seriesmeta
 type: module-design
-status: draft
+status: active
 title: 来源区分的系列元数据写入
 parent: mm-architecture
 ---
@@ -19,8 +19,6 @@ parent: mm-architecture
 - `EditSelection` 修改非 nil 的状态、出版商，标签先增后删，不改锁和沿革；错误要求整个选择回滚。`Version` 对可编辑内容求指纹，集合去空白、去重排序，不纳入身份、阅读状态和统计；`BuildComicInfoForBook` 只投影已知事实。
 
 ## Boundary
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不持有提案入队、状态推进或裁决事务，不创建系列身份、书目和封面，不执行归档写回。跨模块协作归根 `architecture.md`。
 

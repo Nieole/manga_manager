@@ -1,14 +1,12 @@
 ---
 id: mm-web
 type: module-design
-status: draft
+status: active
 title: 浏览器应用与客户端状态归属
 parent: mm-architecture
 ---
 
 ## 责任与内部边界
-
-未确认：以下状态归属依据当前路由、hooks 与测试整理，待用户审阅。
 
 浏览器应用负责藏书浏览、编排、阅读与管理交互。身份与角色由 `auth` 持有，`App` 配置路由；`session` 协调全站连接和失效；功能 hooks 持有查询、功能投影及补拉；页面拥有筛选、选择、展开、弹窗与待提交草稿。页面卸载不能销毁应持续存在的全站连接，连接重建也不能成为清空页面编辑态的理由。
 

@@ -1,14 +1,12 @@
 ---
 id: mm-reading
 type: module-design
-status: draft
+status: active
 title: 阅读事实与用户投影
 parent: mm-architecture
 ---
 
 ## 责任与契约
-
-未确认：以下契约依据当前服务和测试整理，待用户审阅。
 
 保存显式用户的阅读位置、读态、活动、时长和书签，并构造用户相关的藏书与继续阅读投影。协议适配不能分别实现一套位置规则。
 

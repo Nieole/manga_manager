@@ -1,7 +1,7 @@
 ---
 id: mm-metadata
 type: module-design
-status: draft
+status: active
 title: 元数据源与候选生成
 parent: mm-architecture
 ---
@@ -17,8 +17,6 @@ parent: mm-architecture
 - 五个公共数据源的真实 HTTP 请求共享进程级并发闸门；重试识别 `Retry-After`，退避和等令牌可取消，POST 重试重建请求体。上游错误处理脱敏密钥、截断响应体，不能将完整错误页直接写日志。
 
 ## Boundary
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不写数据库、不落盘、不下载封面，也不拥有提案生命周期、裁决或任务调度。共享依赖归属见根 `architecture.md`。`doc.go` 仍将提案裁决和刮削调度归 API，存在归属漂移；本规格按当前实现区分候选生成、提案裁决与应用编排。
 

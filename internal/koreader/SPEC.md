@@ -1,7 +1,7 @@
 ---
 id: mm-koreader
 type: module-design
-status: draft
+status: active
 title: KOReader 同步与指纹匹配
 parent: mm-architecture
 ---
@@ -20,8 +20,6 @@ parent: mm-architecture
 - 重建与对账要求非 nil `TaskHandle`，分批过暂停闸门并报计数；整文件重建经 `Disk` 读取，路径重建与对账不读书文件。坏文件跳过且推进游标，磁盘入口拒绝则中止。
 
 ## Boundary
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不定义 HTTP 路由、后台任务生命周期或阅读事实规则；协议记录与阅读位置是独立写入，不能宣称跨两者原子。共享依赖与组装边见根 `architecture.md`。
 

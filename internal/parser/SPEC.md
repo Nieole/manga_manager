@@ -1,7 +1,7 @@
 ---
 id: mm-parser
 type: module-design
-status: draft
+status: active
 title: 归档、页面与内嵌元数据解析
 parent: mm-architecture
 ---
@@ -18,8 +18,6 @@ parent: mm-architecture
 - `GetArchiveFromPool` 返回共享句柄与归还函数，借用方必须归还，不能自行关闭共享句柄。池按修改时间与大小判断文件变化；淘汰立即移出池，引用归零才关闭。`InitPool` 可调整容量，`CloseArchivePool` 用于所有者退出后的收尾。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 只识别路径与归档内条目，不认识书、系列、资料库或数据库；不遍历资料库、不处理页图缩放与 HTTP，也不负责卷 IO 许可，调用方须在适当入口申领。无兄弟包导入，归档内页序不得替代系列内卷话排序。
 

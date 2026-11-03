@@ -1,14 +1,12 @@
 ---
 id: mm-organize
 type: module-design
-status: draft
+status: active
 title: 藏书编排与生成建议裁决
 parent: mm-architecture
 ---
 
 ## 责任与契约
-
-未确认：以下边界依据当前用例与测试整理，待用户审阅。
 
 拥有合集成员、智能书架条件、系列关系与推导作品群、AI 分组建议裁决，以及有序阅读列表。人工成员、过滤推导成员和关系连通分量是不同规则，不提供一个任意改写全部对象的通用成员接口。
 

@@ -1,7 +1,7 @@
 ---
 id: mm-database
 type: module-design
-status: draft
+status: active
 title: 藏书数据访问与统一迁移
 parent: mm-architecture
 references: [mm-adr-0003]
@@ -19,8 +19,6 @@ references: [mm-adr-0003]
 - `Migrate` 重放必要 DDL，昂贵回填成功后才更新 `user_version`；它不是包住所有升级步骤的全库原子事务，不应承诺中途失败完全无变更。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不执行藏书文件遍历、归档解码、网络抓取或任务调度；持久化操作可以维护派生数据，但不接管阅读与编排用例裁决。任务表的专属 DDL 不并入 sqlc 模型；跨包迁移安装关系归架构节点。旧 `doc.go` 中任务引擎和作品群计算的 API 归属已漂移，不能据此扩张本包责任。
 

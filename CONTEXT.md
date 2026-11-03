@@ -2,7 +2,7 @@
 id: mm-domain-language
 type: architecture-design
 title: 领域语言
-status: draft
+status: active
 parent: manga-manager
 ---
 

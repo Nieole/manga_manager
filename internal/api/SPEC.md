@@ -1,15 +1,13 @@
 ---
 id: mm-api
 type: module-design
-status: draft
+status: active
 title: HTTP 与客户端协议适配
 parent: mm-architecture
 references: [mm-adr-0003, mm-adr-0007]
 ---
 
 ## 责任与入口
-
-未确认：以下归属依据当前路由、控制器与测试整理，待用户审阅。
 
 把 HTTP 与客户端协议转换成应用调用：解析路径和请求、会话与管理员授权、CSRF、响应及错误映射。Web API、OPDS、Mihon、KOReader 保留各自认证和协议兼容语义，不因共用进程而合成一个授权入口。
 

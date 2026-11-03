@@ -1,7 +1,7 @@
 ---
 id: mm-images
 type: module-design
-status: draft
+status: active
 title: 页图与封面派生处理
 parent: mm-architecture
 ---
@@ -18,8 +18,6 @@ parent: mm-architecture
 - `InitProcessor` 重建 AI 与软件并发闸，软件上限取 CPU 核数；每次申领使用同一通道快照完成释放，重建不追溯限制已在旧通道执行的处理。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不认识书或资料库，不管理原始页读取、缓存、ETag、HTTP 或卷 IO 许可；除 AI 临时沙盒外不承担文件读写。配置派生效果由 `runtimecfg` 转入，不能在这里另建配置来源。图片 CPU/AI 并发闸既不是任务运行槽位，也不是卷 IO 调度。
 

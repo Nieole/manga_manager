@@ -2,10 +2,9 @@
 id: mm-adr-0006
 type: architecture-design
 title: 任务领域与落盘分包
-status: draft
+status: active
 parent: mm-architecture
-references:
-  - mm-adr-0001
+references: [mm-adr-0001]
 ---
 
 # 任务子域拆成领域包与落盘包

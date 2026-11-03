@@ -1,7 +1,7 @@
 ---
 id: mm-storageio
 type: module-design
-status: draft
+status: active
 title: 卷级 IO 调度
 parent: mm-architecture
 ---
@@ -18,8 +18,6 @@ parent: mm-architecture
 - `PauseBackground` 拦后续有效后台申领，不抢占已发出的许可；`ResumeBackground` 唤醒等待者。`Snapshot` 按卷汇总观测，不承诺固定顺序或 FIFO 公平性。包级 `Default` 是共享实例。
 
 ## 边界与限制
-
-未确认：以下边界依据当前实现整理，待用户审阅。
 
 不解析路径或配置、不认识书与资料库、不负责 HTTP 控制端点；调用方提供工种、卷键与上限。这里暂停的是卷调度中的后台 IO 放行，不是任务执行槽位，也不是 `taskcontrol` 的单次运行协作式暂停闸门。
 

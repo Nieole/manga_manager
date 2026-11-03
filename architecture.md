@@ -1,15 +1,13 @@
 ---
 id: mm-architecture
 type: architecture-design
-status: draft
+status: active
 title: 系统架构与依赖边界
 parent: manga-manager
 references: [mm-domain-language, mm-adr-0001, mm-adr-0003, mm-adr-0004, mm-adr-0005, mm-adr-0006, mm-adr-0007, mm-adr-0008, mm-adr-0009]
 ---
 
 ## 系统形状
-
-未确认：以下架构归属与边界依据当前代码和既有文档整理，待用户审阅；有效 ADR 的既有决定仍以原文为准。
 
 单进程 Go 服务使用 chi 接收 HTTP，在 SQLite 中保存索引及用户状态，并内嵌 React/Vite 前端。归档文件仍是藏书内容来源，封面和页图缓存是派生数据；可选元数据源、LLM 与超分引擎在各自适配边界外。
 
@@ -47,4 +45,4 @@ references: [mm-domain-language, mm-adr-0001, mm-adr-0003, mm-adr-0004, mm-adr-0
 
 `mm-adr-0008` 是已裁决但未完整实施的决定，不能把逐次有损合并事件描述成现有保证。ADR 0002 已被 ADR 0005 取代，仅保留原历史文件。`.scratch/` 中的实施规划和验收记录作为输入，不提升为长期节点。
 
-已发现的文档漂移：`internal/api/doc.go` 与 `internal/scanner/doc.go` 的部分归属仍指向 API；当前代码的应用编排归 `application`，藏书编排归 `organize`，提案裁决归 `proposal`。本图谱按实现记录，不据旧注释恢复旧边界。本次不改代码注释或运行行为。
+已发现的文档漂移：`internal/api/doc.go` 与 `internal/scanner/doc.go` 的部分归属仍指向 API；当前代码的应用编排归 `application`，藏书编排归 `organize`，提案裁决归 `proposal`。本图谱按实现记录，不据旧注释恢复旧边界。
