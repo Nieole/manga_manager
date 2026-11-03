@@ -1,3 +1,13 @@
+---
+id: mm-adr-0008
+type: architecture-design
+title: 重启入参与声明标签分离
+status: draft
+parent: mm-architecture
+references:
+  - mm-domain-language
+---
+
 # 声明分家：重启入参与声明标签，合并据此判有损
 
 状态：已裁决，尚未完整实施。`task.RunSpec` 已有 `Args` 与 `Labels`，但扫描声明仍将部分环境字段写入 Args，合并仍只记录首次事件，尚未按入参差异记录每次有损合并。完整落地归 `inputs-are-not-labels`，本次架构深化保留现有声明契约和装配期重启能力。
