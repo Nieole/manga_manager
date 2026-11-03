@@ -9,6 +9,8 @@ references: [mm-domain-language, mm-adr-0001, mm-adr-0003, mm-adr-0004, mm-adr-0
 
 ## 系统形状
 
+未确认：以下架构归属与边界依据当前代码和既有文档整理，待用户审阅；有效 ADR 的既有决定仍以原文为准。
+
 单进程 Go 服务使用 chi 接收 HTTP，在 SQLite 中保存索引及用户状态，并内嵌 React/Vite 前端。归档文件仍是藏书内容来源，封面和页图缓存是派生数据；可选元数据源、LLM 与超分引擎在各自适配边界外。
 
 `cmd/server` 持有配置加载、数据库迁移、HTTP 中间件、静态资源与进程信号。`internal/api` 适配 Web、OPDS、Mihon、KOReader 与 SSE；它通过 `application/runtime` 装配和启动应用能力，而不是持有第二套业务规则或调度器。
