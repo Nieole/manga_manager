@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowLeft, Bookmark, CircleHelp, Download, ImagePlus, ListOrdered, Loader2, Settings } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { ArrowLeft, Bookmark, CircleHelp, Download, Ellipsis, ImagePlus, ListOrdered, Loader2, Settings } from 'lucide-react';
 import type { ProgressSyncStatus } from './useReaderProgressIndicator';
 import type { VolumeBookEntry } from './useReaderSiblings';
 import { downloadBookFile } from '../../utils/download';
@@ -71,9 +71,38 @@ export function ReaderTopBar({
 }: ReaderTopBarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [settingCover, setSettingCover] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const chaptersButtonRef = useRef<HTMLButtonElement>(null);
+  const moreId = useId();
   const { showToast } = useToast();
   // 把当前页设为封面写的是 POST /api/books/{id}/cover，后端只放行管理员；书签、进度与下载不受此限。
   const { isAdmin } = useAuth();
+
+  useEffect(() => {
+    if (!moreOpen && !popoverOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !barRef.current?.contains(event.target)) {
+        setMoreOpen(false);
+        setPopoverOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMoreOpen(false);
+      setPopoverOpen(false);
+      (moreOpen ? moreButtonRef : chaptersButtonRef).current?.focus();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [moreOpen, popoverOpen]);
 
   const handleSetCover = async () => {
     if (currentBookId === null) return;
@@ -88,17 +117,35 @@ export function ReaderTopBar({
     }
   };
 
+  const secondaryActions = [
+    ...(currentBookId !== null && isAdmin ? [{
+      key: 'cover', label: t('reader.setCover'), onClick: handleSetCover, disabled: settingCover, active: false,
+      icon: settingCover ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImagePlus className="w-5 h-5" />,
+    }] : []),
+    ...(currentBookId !== null ? [{
+      key: 'download', label: t('reader.download'), onClick: () => downloadBookFile(currentBookId), disabled: false, active: false,
+      icon: <Download className="w-5 h-5" />,
+    }] : []),
+    {
+      key: 'bookmark', label: isBookmarked ? t('reader.bookmark.update') : t('reader.bookmark.add'),
+      onClick: onSaveBookmark, disabled: savingBookmark || loading, active: isBookmarked,
+      icon: savingBookmark ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bookmark className="w-5 h-5" />,
+    },
+    { key: 'help', label: t('reader.help'), onClick: onToggleHelp, disabled: false, active: showHelp, icon: <CircleHelp className="w-5 h-5" /> },
+  ];
+
   return (
-    <div className="flex items-center justify-between w-full relative">
+    <div ref={barRef} className="flex items-center justify-between gap-2 sm:gap-0 w-full relative">
       <button
         onClick={onBack}
-        className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full px-4 py-2 backdrop-blur-sm border border-white/10 shadow-lg shrink-0 z-10"
+        aria-label={t('reader.back')}
+        className="text-white hover:text-komgaPrimary transition flex items-center justify-center bg-komgaDark/70 rounded-full p-2.5 min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 sm:px-4 sm:py-2 backdrop-blur-sm border border-white/10 shadow-lg shrink-0 z-10"
       >
-        <ArrowLeft className="w-5 h-5 mr-2" />
-        {t('reader.back')}
+        <ArrowLeft className="w-5 h-5 sm:mr-2" />
+        <span className="hidden sm:inline">{t('reader.back')}</span>
       </button>
 
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-32">
+      <div className="flex min-w-0 flex-1 items-center justify-center pointer-events-none sm:absolute sm:inset-0 sm:px-32">
         <div className="flex flex-col items-center max-w-full">
           <div className="flex items-center gap-2 max-w-full">
             {progressStatus && (
@@ -122,8 +169,12 @@ export function ReaderTopBar({
         {allInVolume.length > 1 && (
           <>
             <button
-              onClick={() => setPopoverOpen((v) => !v)}
-              className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border shadow-lg ${popoverOpen ? 'text-komgaPrimary border-komgaPrimary/50' : 'border-white/10'}`}
+              ref={chaptersButtonRef}
+              onClick={() => {
+                setMoreOpen(false);
+                setPopoverOpen((v) => !v);
+              }}
+              className={`text-white hover:text-komgaPrimary transition flex items-center justify-center min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border shadow-lg ${popoverOpen ? 'text-komgaPrimary border-komgaPrimary/50' : 'border-white/10'}`}
               title={t('reader.siblings.volumeChapters')}
               aria-expanded={popoverOpen}
             >
@@ -158,43 +209,60 @@ export function ReaderTopBar({
             )}
           </>
         )}
-        {currentBookId !== null && isAdmin && (
+        <div className="hidden sm:flex items-center gap-2">
+          {secondaryActions.map(action => (
+            <button
+              key={action.key}
+              onClick={action.onClick}
+              disabled={action.disabled}
+              title={action.label}
+              className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg disabled:opacity-60 ${action.active ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+            >
+              {action.icon}
+            </button>
+          ))}
+        </div>
+        <div className="sm:hidden">
           <button
-            onClick={handleSetCover}
-            disabled={settingCover}
-            className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg disabled:opacity-60"
-            title={t('reader.setCover')}
+            ref={moreButtonRef}
+            onClick={() => {
+              setPopoverOpen(false);
+              setMoreOpen(v => !v);
+            }}
+            title={t('reader.moreActions')}
+            aria-label={t('reader.moreActions')}
+            aria-expanded={moreOpen}
+            aria-controls={moreId}
+            className={`text-white hover:text-komgaPrimary transition flex items-center justify-center min-w-11 min-h-11 bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border shadow-lg ${moreOpen ? 'text-komgaPrimary border-komgaPrimary/50' : 'border-white/10'}`}
           >
-            {settingCover ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImagePlus className="w-5 h-5" />}
+            <Ellipsis className="w-5 h-5" />
           </button>
-        )}
-        {currentBookId !== null && (
-          <button
-            onClick={() => downloadBookFile(currentBookId)}
-            className="text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg"
-            title={t('reader.download')}
-          >
-            <Download className="w-5 h-5" />
-          </button>
-        )}
+          {moreOpen && (
+            <div id={moreId} role="group" aria-label={t('reader.moreActions')} className="absolute right-0 top-full mt-2 w-64 max-w-[calc(100vw-3rem)] max-h-[50vh] overflow-y-auto rounded-2xl border border-white/15 bg-komgaDark/95 backdrop-blur-sm p-2 shadow-2xl z-50">
+              {[...secondaryActions].sort((a, b) => Number(b.key === 'bookmark') - Number(a.key === 'bookmark')).map(action => (
+                <button
+                  key={action.key}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    action.onClick();
+                  }}
+                  disabled={action.disabled}
+                  className={`w-full min-h-11 flex items-center gap-3 px-3 py-2 text-sm text-left rounded-lg hover:bg-white/5 transition-colors disabled:opacity-60 ${action.active ? 'text-komgaPrimary' : 'text-gray-200'}`}
+                >
+                  {action.icon}
+                  <span>{action.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
-          onClick={onSaveBookmark}
-          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg ${isBookmarked ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
-          title={isBookmarked ? t('reader.bookmark.update') : t('reader.bookmark.add')}
-          disabled={savingBookmark || loading}
-        >
-          {savingBookmark ? <Loader2 className="w-5 h-5 animate-spin" /> : <Bookmark className="w-5 h-5" />}
-        </button>
-        <button
-          onClick={onToggleHelp}
-          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg ${showHelp ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
-          title={t('reader.help')}
-        >
-          <CircleHelp className="w-5 h-5" />
-        </button>
-        <button
-          onClick={onToggleSettings}
-          className={`text-white hover:text-komgaPrimary transition flex items-center bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
+          onClick={() => {
+            setMoreOpen(false);
+            setPopoverOpen(false);
+            onToggleSettings();
+          }}
+          className={`text-white hover:text-komgaPrimary transition flex items-center justify-center min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 bg-komgaDark/70 rounded-full p-2.5 backdrop-blur-sm border border-white/10 shadow-lg ${showSettings ? 'text-komgaPrimary border-komgaPrimary/50' : ''}`}
           title={t('reader.settings')}
         >
           <Settings className="w-5 h-5" />

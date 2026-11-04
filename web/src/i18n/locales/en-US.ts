@@ -1217,6 +1217,7 @@ export const messages: MessageCatalog = {
     'reader.back': 'Back',
     'reader.help': 'Reading help',
     'reader.settings': 'Reader settings',
+    'reader.moreActions': 'More actions',
     'reader.download': 'Download original file',
     'reader.setCover': 'Set current page as cover',
     'reader.coverSet': 'Current page set as cover',

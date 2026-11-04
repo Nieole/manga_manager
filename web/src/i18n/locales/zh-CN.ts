@@ -1221,6 +1221,7 @@ export const messages: MessageCatalog = {
     'reader.coverSetFailed': '设为封面失败',
     'reader.help': '阅读帮助',
     'reader.settings': '阅读设置',
+    'reader.moreActions': '更多操作',
     'reader.helpShortcuts': '快捷操作',
     'reader.helpArrowKeys': '左右方向键：翻页',
     'reader.helpPageKeys': '空格 / PageDown / PageUp：快速翻页',
