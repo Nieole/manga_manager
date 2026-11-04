@@ -1,5 +1,9 @@
 ---
-status: accepted
+id: mm-adr-0009
+type: architecture-design
+title: 资料库路径迁移保留身份
+status: active
+parent: mm-architecture
 ---
 
 # 资料库路径迁移按根目录映射保留身份，异常记录受持久化保护

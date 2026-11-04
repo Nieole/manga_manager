@@ -1,3 +1,11 @@
+---
+id: mm-adr-0003
+type: architecture-design
+title: 账户身份按字节精确
+status: active
+parent: mm-architecture
+---
+
 # 账户身份按字节精确，不折叠大小写
 
 站点账户的用户名是**字节精确**的：`Alice` 与 `alice` 是两个独立账户。唯一性判据只有一条——

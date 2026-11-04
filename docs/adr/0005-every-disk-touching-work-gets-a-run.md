@@ -1,3 +1,12 @@
+---
+id: mm-adr-0005
+type: architecture-design
+title: 后台磁盘工作建运行与单一准入
+status: active
+parent: mm-architecture
+references: [mm-adr-0004]
+---
+
 # 凡动磁盘的后台工作都建运行，准入闸门只留一处
 
 状态：已实施（2026-09-06）。定时守护扫描、监听器派生的扫描与清理、建库后的首扫都已建**运行**

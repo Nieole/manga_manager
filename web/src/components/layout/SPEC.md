@@ -1,9 +1,10 @@
 ---
 id: sidebar-library-actions
-type: module-design
+type: submodule-design
 status: draft
 title: 侧栏资料库操作浮层
 tags: [frontend, sidebar]
+parent: mm-web
 ---
 
 ## 职责与边界

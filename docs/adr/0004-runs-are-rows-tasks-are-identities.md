@@ -1,3 +1,11 @@
+---
+id: mm-adr-0004
+type: architecture-design
+title: 任务是身份，运行是执行记录
+status: active
+parent: mm-architecture
+---
+
 # 任务是身份，运行才是一行
 
 状态：已实施。任务与运行分别由 `task.Task`、`task.Run` 表达，落盘及活动/排队唯一索引归 `taskstore`。

@@ -1,3 +1,12 @@
+---
+id: mm-adr-0006
+type: architecture-design
+title: 任务领域与落盘分包
+status: active
+parent: mm-architecture
+references: [mm-adr-0001]
+---
+
 # 任务子域拆成领域包与落盘包
 
 状态：已实施。`task.Engine` 保持领域规则，`taskstore.New` 提供落盘，`application/runtime.New` 装配两者。

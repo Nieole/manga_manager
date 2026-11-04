@@ -1,3 +1,11 @@
+---
+id: mm-domain-language
+type: architecture-design
+title: 领域语言
+status: active
+parent: manga-manager
+---
+
 # manga_manager
 
 自托管的漫画/轻小说库管理服务：扫描本地归档、刮削元数据、供阅读与同步。本文件只记录本项目特有的领域词汇，不记录实现方式。
