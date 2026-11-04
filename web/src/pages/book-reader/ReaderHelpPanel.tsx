@@ -6,7 +6,7 @@ interface ReaderHelpPanelProps {
 
 export function ReaderHelpPanel({ t }: ReaderHelpPanelProps) {
   return (
-    <div className="self-end mt-3 bg-komgaSurface border border-gray-800 rounded-xl p-4 shadow-2xl w-[90vw] sm:w-80 max-w-sm text-sm text-gray-300 animate-in fade-in slide-in-from-top-4">
+    <div className="self-end mt-3 bg-komgaSurface border border-gray-800 rounded-xl p-4 shadow-2xl w-[90vw] sm:w-80 max-w-full min-h-0 max-h-[calc(100dvh-6rem)] overflow-y-auto text-sm text-gray-300 animate-in fade-in slide-in-from-top-4">
       <div className="space-y-3">
         <div>
           <p className="text-xs uppercase tracking-wider text-gray-500 mb-1">{t('reader.helpShortcuts')}</p>

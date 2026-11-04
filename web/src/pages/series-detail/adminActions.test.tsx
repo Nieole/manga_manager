@@ -114,6 +114,16 @@ function action(name: string) {
 
 // 书卡的更多操作是悬浮菜单，写回 ComicInfo 与上传封面都藏在里面，要先点开才看得到。
 function openBookMenu() {
+  // jsdom 不做布局；给真实浮层提供可见的入口，不以本测试验证几何避让。
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, left: 0, top: 0, right: 320, bottom: 300, width: 320, height: 300,
+    toJSON: () => ({}),
+  });
+  vi.stubGlobal('ResizeObserver', class {
+    observe() {}
+    disconnect() {}
+    unobserve() {}
+  });
   fireEvent.click(screen.getByRole('button', { name: '更多操作' }));
 }
 
@@ -131,6 +141,7 @@ function panelTab(name: string) {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.localStorage.clear();
   __resetScrapeProvidersCacheForTest();
 });

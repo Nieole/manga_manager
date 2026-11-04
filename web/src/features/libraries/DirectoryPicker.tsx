@@ -43,12 +43,12 @@ export function DirectoryPicker({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={t('directoryPicker.placeholder')}
-          className="flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
+          className="min-w-0 flex-1 bg-gray-900 border border-gray-800 rounded-lg px-4 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-komgaPrimary focus:border-transparent transition-all"
         />
         <button
           type="button"
           onClick={onOpen}
-          className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
+          className="shrink-0 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors whitespace-nowrap"
         >
           <FolderOpen className="w-4 h-4 inline mr-1" />
           {t('directoryPicker.browse')}

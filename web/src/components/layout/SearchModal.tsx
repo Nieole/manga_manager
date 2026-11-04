@@ -49,7 +49,7 @@ export function SearchModal({
     >
       <div className="flex h-full flex-col">
         <div className="flex items-center border-b border-gray-800 px-4 shrink-0">
-          <Search className="w-5 h-5 text-gray-400" />
+          <Search className="w-5 h-5 shrink-0 text-gray-400" />
           <input
             autoFocus
             type="text"
@@ -57,10 +57,10 @@ export function SearchModal({
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             onKeyDown={onSearchKeyDown}
-            className="flex-1 bg-transparent border-none py-4 px-4 text-white focus:outline-hidden focus:ring-0 text-lg placeholder-gray-500"
+            className="min-w-0 flex-1 bg-transparent border-none py-4 px-4 text-white focus:outline-hidden focus:ring-0 text-lg placeholder-gray-500"
           />
           {searchQuery && (
-            <button onClick={onResetSearch} className="p-1 text-gray-500 hover:text-white rounded-md transition-colors">
+            <button onClick={onResetSearch} className="shrink-0 p-1 text-gray-500 hover:text-white rounded-md transition-colors">
               <X className="w-5 h-5" />
             </button>
           )}

@@ -45,22 +45,22 @@ export function CollectionDetailPanel({
   const readOnly = isReadOnlyCollection(selected);
   const canEdit = canManage && !readOnly;
   return (
-    <div className="lg:col-span-2">
+    <div className="min-w-0 lg:col-span-2">
       {selected ? (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-start justify-between w-full">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold text-white">{selected.name}</h2>
-                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-gray-400">{t(`collections.source.${selected.source_type || 'manual'}`)}</span>
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2 w-full">
+              <div className="min-w-0 flex-1 basis-48">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 title={selected.name} className="min-w-0 truncate text-lg font-semibold text-white">{selected.name}</h2>
+                  <span className="shrink-0 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-gray-400">{t(`collections.source.${selected.source_type || 'manual'}`)}</span>
                   {readOnly && (
-                    <span title={t('collections.readOnlyHint')} className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300">{t('collections.readOnly')}</span>
+                    <span title={t('collections.readOnlyHint')} className="shrink-0 whitespace-nowrap rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-300">{t('collections.readOnly')}</span>
                   )}
                   {selected.kind === 'collection' && canEdit && (
                     <button
                       onClick={onEditCollection}
-                      className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors"
+                      className="shrink-0 p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors"
                       title={t('common.edit')}
                     >
                       <Pencil className="w-3.5 h-3.5" />
@@ -68,10 +68,10 @@ export function CollectionDetailPanel({
                   )}
                   {selected.kind === 'smart' && canManage && (
                     <>
-                      <button onClick={onOpenSmartEdit} className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors" title={t('common.edit')}>
+                      <button onClick={onOpenSmartEdit} className="shrink-0 p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors" title={t('common.edit')}>
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={onOpenSnapshot} className="p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors" title={t('collections.snapshot')}>
+                      <button onClick={onOpenSnapshot} className="shrink-0 p-1 rounded-md text-gray-500 hover:text-white hover:bg-gray-800 transition-colors" title={t('collections.snapshot')}>
                         <Camera className="w-3.5 h-3.5" />
                       </button>
                     </>
@@ -79,7 +79,7 @@ export function CollectionDetailPanel({
                 </div>
                 {selected.description && <p className="text-xs text-gray-500 mt-1">{selected.description}</p>}
               </div>
-              <span className="text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">
+              <span className="shrink-0 whitespace-nowrap text-xs text-gray-500 bg-gray-900 px-3 py-1 rounded-full">
                 {partiallyLoaded
                   ? t('collections.loadedOfTotal', { loaded: seriesItems.length, total: seriesTotal })
                   : t('common.seriesCount', { count: seriesTotal })}

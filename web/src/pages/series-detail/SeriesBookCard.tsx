@@ -1,5 +1,5 @@
 import { bookReadingState } from '../../reading/bookState';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BookImage, CheckCircle2, MoreHorizontal } from 'lucide-react';
 import type { Book } from './types';
@@ -9,6 +9,7 @@ import { uploadBookCover } from '../../utils/cover';
 import { getApiErrorMessage } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
 import { useToast } from '../../components/ToastProvider';
+import { AnchoredPopover } from '../../components/ui/AnchoredPopover';
 
 interface SeriesBookCardProps {
   book: Book;
@@ -36,9 +37,11 @@ export function SeriesBookCard({
   // 写回归档与上传封面在后端都是管理员专属（POST /api/books/{id}/comicinfo、/cover/upload）；
   // 导出、下载与复制识别码是读操作，普通用户照旧。快捷已读走每用户的进度端点，不受此限。
   const { isAdmin } = useAuth();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLButtonElement | null>(null);
+  const menuOpen = menuAnchor !== null;
+  const closeMenu = useCallback(() => setMenuAnchor(null), []);
   const [coverBust, setCoverBust] = useState(0);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   const handleCoverUpload = async (file: File | undefined) => {
@@ -51,15 +54,6 @@ export function SeriesBookCard({
       showToast(getApiErrorMessage(err, t('series.book.coverUploadFailed')), 'error');
     }
   };
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    function handle(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    }
-    document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
-  }, [menuOpen]);
 
   const { completed: isFinished, readPages: readPage } = bookReadingState(book);
   const progressPct = isFinished ? 100 : book.page_count > 0 ? Math.min(100, (readPage / book.page_count) * 100) : 0;
@@ -118,7 +112,7 @@ export function SeriesBookCard({
         )}
 
         {!isSelectionMode && (
-          <div className="absolute top-2 right-2 z-30 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className={`absolute top-2 right-2 z-30 flex items-center gap-1 ${menuOpen ? 'opacity-100' : 'opacity-100 md:opacity-0'} md:group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity`}>
             <button
               onClick={(e) => {
                 e.preventDefault();
@@ -130,25 +124,34 @@ export function SeriesBookCard({
             >
               <CheckCircle2 className={`w-4 h-4 ${isFinished ? 'text-green-400 fill-green-400/20' : ''}`} />
             </button>
-            <div className="relative" ref={menuRef}>
+            <div className="relative">
               <button
+                ref={menuButtonRef}
+                type="button"
+                aria-expanded={menuOpen}
+                aria-label={t('series.book.moreActions')}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setMenuOpen((v) => !v);
+                  setMenuAnchor(menuOpen ? null : menuButtonRef.current);
                 }}
-                className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-komgaPrimary hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-colors backdrop-blur-sm"
+                className="p-1.5 rounded-full bg-black/60 border border-white/10 text-white/40 hover:text-komgaPrimary hover:bg-komgaPrimary/20 hover:border-komgaPrimary/40 transition-colors backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-komgaPrimary"
                 title={t('series.book.moreActions')}
               >
                 <MoreHorizontal className="w-4 h-4" />
               </button>
-              {menuOpen && (
-                <div className="absolute right-0 top-full mt-1 w-44 rounded-xl border border-white/10 bg-komgaSurface shadow-2xl z-40 overflow-hidden">
+              {menuAnchor && (
+                <AnchoredPopover
+                  anchor={menuAnchor}
+                  label={t('series.book.moreActions')}
+                  onClose={closeMenu}
+                  className="w-44 rounded-xl border border-white/10 bg-komgaSurface shadow-2xl"
+                >
                   <button
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      setMenuOpen(false);
+                      closeMenu();
                       onExportComicInfo(book);
                     }}
                     className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white"
@@ -161,7 +164,7 @@ export function SeriesBookCard({
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          setMenuOpen(false);
+                          closeMenu();
                           onWriteComicInfo(book);
                         }}
                         className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
@@ -172,7 +175,7 @@ export function SeriesBookCard({
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          setMenuOpen(false);
+                          closeMenu();
                           coverInputRef.current?.click();
                         }}
                         className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
@@ -185,7 +188,7 @@ export function SeriesBookCard({
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      setMenuOpen(false);
+                      closeMenu();
                       downloadBookFile(book.id);
                     }}
                     className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
@@ -196,14 +199,14 @@ export function SeriesBookCard({
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      setMenuOpen(false);
+                      closeMenu();
                       onCopyPath(book);
                     }}
                     className="block w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-komgaPrimary/15 hover:text-white border-t border-white/5"
                   >
                     {t('series.book.copyPath')}
                   </button>
-                </div>
+                </AnchoredPopover>
               )}
             </div>
           </div>

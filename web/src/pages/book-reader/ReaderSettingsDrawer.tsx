@@ -152,8 +152,8 @@ export function ReaderSettingsDrawer({
   }, [mode, t]);
 
   return (
-    <div className="self-center sm:self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-3 sm:p-4 shadow-2xl w-[92vw] sm:w-[360px] max-w-sm text-sm text-gray-300 flex flex-col gap-3 animate-in fade-in slide-in-from-top-4 origin-top sm:origin-top-right">
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-950/80 p-1 border border-gray-800">
+    <div className="self-center sm:self-end mt-4 bg-komgaSurface border border-gray-800 rounded-xl p-3 sm:p-4 shadow-2xl w-[92vw] sm:w-[360px] max-w-full min-h-0 max-h-[calc(100dvh-6rem)] text-sm text-gray-300 flex flex-col gap-3 animate-in fade-in slide-in-from-top-4 origin-top sm:origin-top-right">
+      <div className="grid shrink-0 grid-cols-2 gap-1 rounded-lg bg-gray-950/80 p-1 border border-gray-800">
         <button
           type="button"
           onClick={() => setMode('global')}
@@ -171,7 +171,7 @@ export function ReaderSettingsDrawer({
           <span className="block truncate">{t('reader.settingsMode.book')}</span>
         </button>
       </div>
-      <div className={`grid gap-1 rounded-lg bg-gray-950/80 p-1 ${tabs.length === 2 ? 'grid-cols-2' : 'grid-cols-4'}`}>
+      <div className={`grid shrink-0 gap-1 rounded-lg bg-gray-950/80 p-1 ${tabs.length === 2 ? 'grid-cols-2' : 'grid-cols-4'}`}>
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -184,7 +184,7 @@ export function ReaderSettingsDrawer({
         ))}
       </div>
 
-      <div className="max-h-[70vh] overflow-y-auto pr-1">
+      <div className="min-h-0 flex-1 max-h-[70vh] overflow-y-auto pr-1">
         {activeTab === 'reading' && (
           <div className="space-y-4">
             <div>
