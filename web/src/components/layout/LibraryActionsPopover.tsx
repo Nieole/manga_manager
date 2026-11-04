@@ -29,7 +29,26 @@ export function LibraryActionsPopover({ anchor, label, onClose, children }: Libr
             }
             const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
-            if (rect.bottom <= 0 || rect.top >= viewportHeight || rect.right <= 0 || rect.left >= viewportWidth) {
+            let visibleTop = Math.max(0, rect.top);
+            let visibleBottom = Math.min(viewportHeight, rect.bottom);
+            let visibleLeft = Math.max(0, rect.left);
+            let visibleRight = Math.min(viewportWidth, rect.right);
+            for (let parent = anchor.parentElement; parent; parent = parent.parentElement) {
+                const parentStyle = getComputedStyle(parent);
+                const clipsX = /^(auto|scroll|hidden|clip)$/.test(parentStyle.overflowX || parentStyle.overflow);
+                const clipsY = /^(auto|scroll|hidden|clip)$/.test(parentStyle.overflowY || parentStyle.overflow);
+                if (!clipsX && !clipsY) continue;
+                const bounds = parent.getBoundingClientRect();
+                if (clipsX) {
+                    visibleLeft = Math.max(visibleLeft, bounds.left + parent.clientLeft);
+                    visibleRight = Math.min(visibleRight, bounds.right - (Number.parseFloat(parentStyle.borderRightWidth) || 0));
+                }
+                if (clipsY) {
+                    visibleTop = Math.max(visibleTop, bounds.top + parent.clientTop);
+                    visibleBottom = Math.min(visibleBottom, bounds.bottom - (Number.parseFloat(parentStyle.borderBottomWidth) || 0));
+                }
+            }
+            if (visibleBottom <= visibleTop || visibleRight <= visibleLeft) {
                 onClose();
                 return;
             }

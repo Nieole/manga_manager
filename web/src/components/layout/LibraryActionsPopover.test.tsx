@@ -163,6 +163,48 @@ describe('library actions dismissal', () => {
         expect(onClose).toHaveBeenCalledOnce();
     });
 
+    it('closes when real sidebar scrolling clips the anchor inside the viewport', () => {
+        const sidebar = document.createElement('nav');
+        sidebar.style.overflowY = 'auto';
+        sidebar.getBoundingClientRect = () => rect(0, 450, 280, 150);
+        document.body.append(sidebar);
+        sidebar.append(anchor);
+        anchorRect = rect(220, 469, 28, 28);
+        const { onClose } = openPopover();
+        expect(onClose).not.toHaveBeenCalled();
+        anchorRect = rect(220, 369, 28, 28);
+        fireEvent.scroll(sidebar);
+        expect(onClose).toHaveBeenCalledOnce();
+        sidebar.remove();
+    });
+
+    it('keeps a partially visible anchor attached to its scroll container', () => {
+        const sidebar = document.createElement('nav');
+        sidebar.style.overflowY = 'auto';
+        sidebar.getBoundingClientRect = () => rect(0, 450, 280, 150);
+        document.body.append(sidebar);
+        sidebar.append(anchor);
+        anchorRect = rect(220, 469, 28, 28);
+        const { onClose } = openPopover();
+        anchorRect = rect(220, 438, 28, 28);
+        fireEvent.scroll(sidebar);
+        expect(onClose).not.toHaveBeenCalled();
+        sidebar.remove();
+    });
+
+    it('closes when an overflow-hidden ancestor clips the anchor horizontally', () => {
+        const container = document.createElement('div');
+        container.style.overflowX = 'hidden';
+        container.getBoundingClientRect = () => rect(0, 0, 250, 600);
+        document.body.append(container);
+        container.append(anchor);
+        const { onClose } = openPopover();
+        anchorRect = rect(260, 551, 28, 28);
+        fireEvent.scroll(container);
+        expect(onClose).toHaveBeenCalledOnce();
+        container.remove();
+    });
+
     it('closes on Escape and restores focus to the anchor', () => {
         const { onClose } = openPopover();
         screen.getByRole('button', { name: 'Delete library' }).focus();
