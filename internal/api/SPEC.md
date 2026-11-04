@@ -17,6 +17,6 @@ references: [mm-adr-0003, mm-adr-0007]
 
 控制器可直接使用藏书查询、协议投影与缓存适配，不在此重建阅读、编排、提案或迁移事务。后台工作的声明与重启配方归应用能力；这里映射任务控制、历史和 SSE 快照，不持有另一套准入。
 
-`NewServer` 连接 HTTP 叶效果和运行时；底层服务不回调 HTTP 请求处理器。响应契约与前端生成类型须一致，协议差异在各适配器内消化。
+`NewTransport` 创建认证、事件 broker、运行投影及缓存/内容效果等技术 leaves；`Transport.Bind` 接受显式家庭能力与窄查询，在共享鉴权子树下组合 `Host`。`Host` 不构造应用、不持有 Runtime 或全量 Store，生产资源创建与恢复启动归 `bootstrap.Open`；底层服务不回调 HTTP 请求处理器。响应契约与前端生成类型须一致，协议差异在各适配器内消化。
 
-核对入口：`controller.go`、`auth_username_case_test.go`、`collection_authorization_test.go` 与协议控制器测试。
+核对入口：`host.go`、`auth_username_case_test.go`、`collection_authorization_test.go` 与协议控制器测试。生产装配顺序另经 `bootstrap` 的 HTTP 与恢复回归核对。

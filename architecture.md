@@ -11,15 +11,16 @@ references: [mm-domain-language, mm-adr-0001, mm-adr-0003, mm-adr-0004, mm-adr-0
 
 单进程 Go 服务使用 chi 接收 HTTP，在 SQLite 中保存索引及用户状态，并内嵌 React/Vite 前端。归档文件仍是藏书内容来源，封面和页图缓存是派生数据；可选元数据源、LLM 与超分引擎在各自适配边界外。
 
-`cmd/server` 持有配置加载、数据库迁移、HTTP 中间件、静态资源与进程信号。`internal/api` 适配 Web、OPDS、Mihon、KOReader 与 SSE；它通过 `application/runtime` 装配和启动应用能力，而不是持有第二套业务规则或调度器。
+`cmd/server` 持有配置加载、数据库迁移、HTTP 中间件、静态资源与进程信号，调用 `bootstrap.Open` 完成生产装配。`bootstrap` 创建共享资源与 HTTP 技术 leaves，持有唯一的 `application/runtime.New` 调用，绑定 HTTP leaf effects 后才恢复状态并开放后台输入。`internal/api` 适配 Web、OPDS、Mihon、KOReader 与 SSE；`Host` 只保存已绑定的 HTTP 适配器，不构造应用、不持有 Runtime 或复制全量服务图。装配次序与取舍见 [ADR 0014](docs/adr/0014-use-cases-queries-and-host-assembly.md)。
 
 以下归属由实际导入、完整用例与集成测试核对。禁止反向依赖的表述是既有设计约束，不宣称编译器自动检查了每条边。
 
 ## 功能归属与依赖
 
 - `reading` 持有阅读事实及用户投影；`organize` 持有藏书编排，阅读列表的继续阅读依赖 `reading`。两者使用 `database`，不依赖 HTTP 或应用总对象。
-- `seriesmeta` 持有各来源的系列元数据写入策略；`proposal` 组合 `metadata` 候选与 `seriesmeta` 完成裁决。`scanner` 通过 `seriesmeta` 导入内嵌元数据，并使用 `parser`、`images` 和 `koreader` 的指纹能力。
-- `koreader` 持有设备账号、协议记录与指纹匹配，匹配后的书位置交给 `reading`；`external` 管传输会话，不成为扫描资料库。
+- `seriesmeta` 持有各来源的系列元数据写入策略；`proposal` 组合 `metadata` 候选与 `seriesmeta` 完成裁决。`scanner` 通过 `seriesmeta` 导入内嵌元数据，并使用 `parser`、`images` 和 `bookidentity` 的内容/路径证据能力，不依赖 KOReader 协议。
+- `bookidentity` 持有内容哈希、快速采样及路径证据，`Service.Rebuild` 分批补建缺失身份；整文件读取经调用方提供的磁盘作业资格，路径补建不读书文件，坏文件仍推进游标。证据相同不自动授权合并书籍记录。
+- `koreader` 持有设备账号、协议记录、设备文档匹配与进度对账，使用 `bookidentity` 的证据匹配已有书身份，命中的书位置交给 `reading`；身份补建及其运行生命周期不归本包。`external` 管传输会话，不成为扫描资料库。
 - `application` 组合扫描、维护、外部磁盘作业、智能生成及迁移的完整协作链，使用 `task.Engine` 的统一发起口。`application/runtime` 构造这些能力和重启注册表，并拥有恢复、后台输入和停止等待。
 - `relocation` 持有持久映射、补偿、配置协调与保护；应用迁移编排负责独占访问、监听、阅读缓存与外部会话交接。它不是一个与 IO、任务和数据库无关的纯领域包。
 
@@ -43,6 +44,4 @@ references: [mm-domain-language, mm-adr-0001, mm-adr-0003, mm-adr-0004, mm-adr-0
 
 领域概念只在 `mm-domain-language` 定义；任务身份、准入、寻址、重启、存储分包、用户名和迁移的理由归本节点引用的 ADR，不另复制论证。
 
-`mm-adr-0008` 是已裁决但未完整实施的决定，不能把逐次有损合并事件描述成现有保证。ADR 0002 已被 ADR 0005 取代，仅保留原历史文件。`.scratch/` 中的实施规划和验收记录作为输入，不提升为长期节点。
-
-已发现的文档漂移：`internal/api/doc.go` 与 `internal/scanner/doc.go` 的部分归属仍指向 API；当前代码的应用编排归 `application`，藏书编排归 `organize`，提案裁决归 `proposal`。本图谱按实现记录，不据旧注释恢复旧边界。
+`mm-adr-0008` 已实施，重启入参与声明标签的边界及逐次有损合并事件保证归该决定。ADR 0002 已被 ADR 0005 取代，仅保留原历史文件。`.scratch/` 中的实施规划和验收记录作为输入，不提升为长期节点。

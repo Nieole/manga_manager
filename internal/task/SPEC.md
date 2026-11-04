@@ -21,8 +21,10 @@ references: [mm-adr-0004, mm-adr-0005, mm-adr-0006, mm-adr-0007, mm-adr-0008]
 
 不持有 SQL、HTTP、具体任务类型词汇或文案翻译；落盘经 `Store`，快照与实况经注入函数。`taskcontrol` 只实现每次运行的上下文暂停闸门，不承担运行槽位或卷 IO 许可。落盘端口与临界区内回调不得回调引擎。
 
-ADR 0008 已裁决但尚未完整落实：合并仍保留原排队声明，事件只记一次合并标记并另累计次数，尚非逐次有损事件；`Args` 仍混有部分环境描述。进度等写入失败存在只告警路径，不承诺所有快照与侧数据原子持久化。
+`Args` 只承载行为输入，环境描述归 `Labels` 或已有 `Limits`，IO 累计量归指标。合并保留原排队声明，比较落盘与本次提交的 `Args`，差异每次记录有损合并事件，无损重复仅首次记录；每次仍累计合并次数。事件明细与兼容规则归 `mm-adr-0008`。
+
+进度等写入失败存在只告警路径，不承诺所有快照与侧数据原子持久化。
 
 ## 证据
 
-`Identity.Validate`、`Engine.Start`、`settle`、`MarkInterrupted`、`Store`；`slots_test.go` 的 `TestCoalescedRunOnlyRunsOnce`、`TestCoalescingIsDecidedByTheStore`，`events_test.go` 的 `TestRepeatedCoalescingLandsOneEvent`，以及 `state_machine_test.go`、`terminal_test.go`、`resume_test.go`。
+`Identity.Validate`、`Engine.Start`、`settle`、`MarkInterrupted`、`Store`；`slots_test.go` 的 `TestCoalescedRunOnlyRunsOnce`、`TestCoalescingIsDecidedByTheStore`，`events_test.go` 的 `TestRepeatedCoalescingLandsOneEvent`、`TestEveryLossyCoalesceRetainsIncomingDeclaration`，以及 `state_machine_test.go`、`terminal_test.go`、`resume_test.go`。
