@@ -1,6 +1,5 @@
 import { Outlet, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
-import { createPortal } from 'react-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { useLibraryManagement } from '../features/libraries/useLibraryManagement';
 import { apiClient, isAxiosError } from '../api/client';
@@ -15,6 +14,7 @@ import { ShortcutsPanel } from './ShortcutsPanel';
 import { SidebarTaskBubble } from './SidebarTaskBubble';
 import { SidebarGroup, SidebarLink } from './layout/SidebarNav';
 import { UserMenu } from './layout/UserMenu';
+import { LibraryActionsPopover } from './layout/LibraryActionsPopover';
 import { useTaskBubbles } from '../features/task-observation/useTaskBubbles';
 import { useLayoutShortcuts } from './layout/useLayoutShortcuts';
 
@@ -48,8 +48,7 @@ export default function Layout() {
             return localStorage.getItem('manga_manager_sidebar_collapsed') === 'true';
         } catch { return false; }
     });
-    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-    const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+    const [openLibraryMenu, setOpenLibraryMenu] = useState<{ library: Library; anchor: HTMLButtonElement } | null>(null);
     const [isShelfExpanded, setIsShelfExpanded] = useState(true);
     const [isViewsExpanded, setIsViewsExpanded] = useState(true);
     const [isCurateExpanded, setIsCurateExpanded] = useState(true);
@@ -547,169 +546,157 @@ export default function Layout() {
                                             onClick={(e) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                if (openMenuId === String(lib.id)) {
-                                                    setOpenMenuId(null);
-                                                    setMenuPos(null);
+                                                if (openLibraryMenu?.library.id === lib.id) {
+                                                    setOpenLibraryMenu(null);
                                                 } else {
-                                                    const rect = e.currentTarget.getBoundingClientRect();
-                                                    setMenuPos({ top: rect.bottom + 4, left: rect.right - 192 });
-                                                    setOpenMenuId(String(lib.id));
+                                                    setOpenLibraryMenu({ library: lib, anchor: e.currentTarget });
                                                 }
                                             }}
-                                            className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-sm hover:bg-gray-700 focus:outline-hidden"
+                                            className="text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity p-1 rounded-sm hover:bg-gray-700 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-komgaPrimary"
                                             title={t('common.details')}
+                                            aria-label={`${lib.name}: ${t('common.details')}`}
+                                            aria-expanded={openLibraryMenu?.library.id === lib.id}
                                         >
                                             <MoreHorizontal className="w-5 h-5" />
                                         </button>
 
-                                        {openMenuId === String(lib.id) && menuPos && createPortal(
-                                            <>
-                                                <div
-                                                    className="fixed inset-0 z-40"
+                                        {openLibraryMenu?.library.id === lib.id && (
+                                            <LibraryActionsPopover
+                                                anchor={openLibraryMenu.anchor}
+                                                label={t('layout.libraryActions.title')}
+                                                onClose={() => setOpenLibraryMenu(null)}
+                                            >
+                                                <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
+                                                    {t('layout.libraryActions.title')}
+                                                </div>
+                                                {lib.relocation_protected && <p className="px-3 py-2 text-xs text-amber-200">{t('relocation.protection.active')}</p>}
+                                                {lib.relocation_protected && <button
+                                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenLibraryMenu(null); navigate(`/library/${lib.id}?restoration=1`); }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-amber-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                >{t('restoration.open')}</button>}
+                                                <button
+                                                    onClick={(e) => {
+                                                        setOpenLibraryMenu(null);
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        openEditLibraryModal(lib.id);
+                                                    }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-blue-500 hover:text-white transition-colors"
+                                                >
+                                                    <SettingsIcon className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.edit')}
+                                                </button>
+                                                <button
                                                     onClick={(e) => {
                                                         e.preventDefault();
                                                         e.stopPropagation();
-                                                        setOpenMenuId(null);
-                                                        setMenuPos(null);
+                                                        setOpenLibraryMenu(null);
+                                                        setRelocationTarget(undefined);
+                                                        setRelocationLibraryID(String(lib.id));
                                                     }}
-                                                />
-                                                <div 
-                                                    className="fixed w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in duration-200"
-                                                    style={{ top: menuPos.top, left: menuPos.left }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
                                                 >
-                                                    <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-700 bg-gray-900">
-                                                        {t('layout.libraryActions.title')}
-                                                    </div>
-                                                    {lib.relocation_protected && <p className="px-3 py-2 text-xs text-amber-200">{t('relocation.protection.active')}</p>}
-                                                    {lib.relocation_protected && <button
-                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenMenuId(null); navigate(`/library/${lib.id}?restoration=1`); }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-amber-200 hover:bg-komgaPrimary hover:text-white transition-colors"
-                                                    >{t('restoration.open')}</button>}
-                                                    <button
-                                                        onClick={(e) => {
-                                                            setOpenMenuId(null);
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            openEditLibraryModal(lib.id);
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-blue-500 hover:text-white transition-colors"
-                                                    >
-                                                        <SettingsIcon className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.edit')}
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(null);
-                                                            setRelocationTarget(undefined);
-                                                            setRelocationLibraryID(String(lib.id));
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
-                                                    >
-                                                        <FolderOpen className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.relocate')}
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(null);
-                                                            handleScanLibrary(String(lib.id), false);
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
-                                                    >
-                                                        <RefreshCw className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.scanIncremental')}
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(null);
-                                                            openConfirmDialog({
-                                                                title: t('layout.libraryActions.confirmFullScanTitle'),
-                                                                description: t('layout.libraryActions.confirmFullScanDescription'),
-                                                                confirmLabel: t('layout.libraryActions.confirmRun'),
-                                                                tone: 'warning',
-                                                                onConfirm: () => handleScanLibrary(String(lib.id), true),
-                                                            });
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-orange-500 hover:text-white transition-colors"
-                                                    >
-                                                        <RefreshCw className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.scanFull')}
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(null);
-                                                            openConfirmDialog({
-                                                                title: t('layout.libraryActions.confirmScrapeTitle'),
-                                                                description: t('layout.libraryActions.confirmScrapeDescription'),
-                                                                confirmLabel: t('layout.libraryActions.startScrape'),
-                                                                tone: 'primary',
-                                                                onConfirm: () => handleScrapeLibrary(String(lib.id)),
-                                                            });
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-green-500 hover:text-white transition-colors"
-                                                    >
-                                                        <Download className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.scrape')}
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(null);
-                                                            openConfirmDialog({
-                                                                title: t('layout.libraryActions.confirmCleanupTitle'),
-                                                                description: t('layout.libraryActions.confirmCleanupDescription'),
-                                                                confirmLabel: t('layout.libraryActions.confirmCleanup'),
-                                                                tone: 'warning',
-                                                                onConfirm: () => handleCleanupLibrary(String(lib.id)),
-                                                            });
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-yellow-500 hover:text-white transition-colors"
-                                                    >
-                                                        <Eraser className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.cleanup')}
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(null);
-                                                            openConfirmDialog({
-                                                                title: t('layout.libraryActions.confirmAiGroupingTitle'),
-                                                                description: t('layout.libraryActions.confirmAiGroupingDescription'),
-                                                                confirmLabel: t('layout.libraryActions.startCompute'),
-                                                                tone: 'warning',
-                                                                onConfirm: () => handleAIGrouping(String(lib.id)),
-                                                            });
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-komgaPrimary hover:bg-komgaPrimary hover:text-white transition-colors"
-                                                    >
-                                                        <Sparkles className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.aiGrouping')}
-                                                    </button>
-                                                    <div className="border-t border-gray-700"></div>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            setOpenMenuId(null);
-                                                            setDeleteLibraryTarget(lib);
-                                                        }}
-                                                        className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-red-500 hover:text-white transition-colors"
-                                                    >
-                                                        <Trash2 className="w-4 h-4 mr-2" />
-                                                        {t('layout.libraryActions.delete')}
-                                                    </button>
-                                                </div>
-                                            </>,
-                                            document.body
+                                                    <FolderOpen className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.relocate')}
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setOpenLibraryMenu(null);
+                                                        handleScanLibrary(String(lib.id), false);
+                                                    }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                >
+                                                    <RefreshCw className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.scanIncremental')}
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setOpenLibraryMenu(null);
+                                                        openConfirmDialog({
+                                                            title: t('layout.libraryActions.confirmFullScanTitle'),
+                                                            description: t('layout.libraryActions.confirmFullScanDescription'),
+                                                            confirmLabel: t('layout.libraryActions.confirmRun'),
+                                                            tone: 'warning',
+                                                            onConfirm: () => handleScanLibrary(String(lib.id), true),
+                                                        });
+                                                    }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-orange-500 hover:text-white transition-colors"
+                                                >
+                                                    <RefreshCw className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.scanFull')}
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setOpenLibraryMenu(null);
+                                                        openConfirmDialog({
+                                                            title: t('layout.libraryActions.confirmScrapeTitle'),
+                                                            description: t('layout.libraryActions.confirmScrapeDescription'),
+                                                            confirmLabel: t('layout.libraryActions.startScrape'),
+                                                            tone: 'primary',
+                                                            onConfirm: () => handleScrapeLibrary(String(lib.id)),
+                                                        });
+                                                    }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-green-500 hover:text-white transition-colors"
+                                                >
+                                                    <Download className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.scrape')}
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setOpenLibraryMenu(null);
+                                                        openConfirmDialog({
+                                                            title: t('layout.libraryActions.confirmCleanupTitle'),
+                                                            description: t('layout.libraryActions.confirmCleanupDescription'),
+                                                            confirmLabel: t('layout.libraryActions.confirmCleanup'),
+                                                            tone: 'warning',
+                                                            onConfirm: () => handleCleanupLibrary(String(lib.id)),
+                                                        });
+                                                    }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-yellow-500 hover:text-white transition-colors"
+                                                >
+                                                    <Eraser className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.cleanup')}
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setOpenLibraryMenu(null);
+                                                        openConfirmDialog({
+                                                            title: t('layout.libraryActions.confirmAiGroupingTitle'),
+                                                            description: t('layout.libraryActions.confirmAiGroupingDescription'),
+                                                            confirmLabel: t('layout.libraryActions.startCompute'),
+                                                            tone: 'warning',
+                                                            onConfirm: () => handleAIGrouping(String(lib.id)),
+                                                        });
+                                                    }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-komgaPrimary hover:bg-komgaPrimary hover:text-white transition-colors"
+                                                >
+                                                    <Sparkles className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.aiGrouping')}
+                                                </button>
+                                                <div className="border-t border-gray-700"></div>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setOpenLibraryMenu(null);
+                                                        setDeleteLibraryTarget(lib);
+                                                    }}
+                                                    className="w-full flex items-center px-4 py-2 text-sm text-gray-200 hover:bg-red-500 hover:text-white transition-colors"
+                                                >
+                                                    <Trash2 className="w-4 h-4 mr-2" />
+                                                    {t('layout.libraryActions.delete')}
+                                                </button>
+                                            </LibraryActionsPopover>
                                         )}
                                     </div>
                                     )}
